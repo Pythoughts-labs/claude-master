@@ -10,6 +10,12 @@ All notable changes to Claude Master are recorded here. The format follows
 
 - `/delegate` now asks the user to choose Codex, OpenCode, Pi, or Pythinker when no CLI or agent is named instead of silently defaulting to Codex.
 
+## [0.4.0] - 2026-07-13
+
+### Fixed
+
+- Preserved standard input when the isolated Codex runner starts its process group, restoring the documented prompt-file invocation in both `setsid` and Perl fallback environments.
+
 ## [0.3.0] - 2026-07-13
 
 ### Fixed
@@ -34,6 +40,7 @@ Initial public release.
 - Native OpenCode assets under `.opencode/` and `opencode.json`, so the same lanes and skill work outside Claude Code.
 - SVG banner and shields badges for the README.
 
+[0.4.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.1.0
