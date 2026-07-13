@@ -27,3 +27,9 @@ node tests/plugin-manifest.test.mjs
 node tests/delegate-routing.test.mjs
 "$BASH" tests/codex-lifecycle.test.sh
 "$BASH" tests/validate-release.test.sh
+"$BASH" tests/run-isolated.test.sh
+"$BASH" tests/lane-launchers.test.sh
+"$BASH" tests/install-opencode.test.sh
+node tests/lane-contract.test.mjs
+node tests/lane-model-fallback.test.mjs
+node tests/lane-roster.test.mjs

@@ -53,6 +53,8 @@ Every delegation carries the same five-part spec: the objective, the exact files
 
 There is no implicit lane default. If `/delegate` does not name Codex, OpenCode, Pi, Pythinker, or an implementer, the architect asks which CLI to use before preparing or launching the delegation. Reach for OpenCode when the model you want only lives in its provider pool, Pi when local execution and zero token cost matter, and Pythinker when full unattended execution is the point. Each lane is a harness around a producer. Codex pins its own model; Pi, OpenCode, and Pythinker accept optional model and thinking or variant overrides, and otherwise defer to the selected CLI's configured defaults. Every CLI lane runs a preflight and returns a structured `unavailable` report rather than quietly implementing the work itself. A lane that promises Codex and silently becomes a Claude lane is worse than a loud failure, because you chose that lane for a reason.
 
+Every implementation lane uses one shared process-isolation lifecycle through its own CLI-specific adapter. Codex is uncapped by default. Pi, Pythinker, and OpenCode fail closed after 900 seconds by default; set `PI_TIMEOUT_SECONDS=0`, `PYTHINKER_TIMEOUT_SECONDS=0`, or `OPENCODE_TIMEOUT_SECONDS=0`, respectively, to disable that cap.
+
 ## Install
 
 ### Claude Code

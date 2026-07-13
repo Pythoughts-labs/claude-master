@@ -10,6 +10,9 @@ All notable changes to Claude Master are recorded here. The format follows
 
 - `/delegate` now asks the user to choose Codex, OpenCode, Pi, or Pythinker when no CLI or agent is named instead of silently defaulting to Codex, and the question documents each lane's model and reasoning controls. GPT-5.6 Sol now defaults to low reasoning.
 - Codex lanes now leave long tasks uncapped by default. The isolated runner enforces an explicit positive `CODEX_TIMEOUT_SECONDS` only when a timeout binary is available and rejects invalid values before Codex starts. Release validation now reports actionable diagnostics when the Claude Code or Node.js CLI is missing.
+- Every implementation lane now uses one shared process-isolation lifecycle through its own CLI-specific adapter. Codex remains uncapped by default; Pi, Pythinker, and OpenCode default to a fail-closed 900-second cap, which their respective `PI_TIMEOUT_SECONDS=0`, `PYTHINKER_TIMEOUT_SECONDS=0`, or `OPENCODE_TIMEOUT_SECONDS=0` setting disables.
+- Harness model, thinking, and variant overrides are optional. When absent, the adapters omit the relevant flags and defer to CLI configuration without a plugin-level default.
+- OpenCode project and global installation now package the shared runtime and CLI adapters through `scripts/install-opencode.sh`.
 
 ## [0.4.0] - 2026-07-13
 
