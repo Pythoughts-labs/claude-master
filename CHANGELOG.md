@@ -4,7 +4,11 @@ All notable changes to Claude Master are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-13
+
+### Added
+
+- Each implementation lane now resolves its adapter script through a shared runtime resolver instead of hardcoding `$CLAUDE_PLUGIN_ROOT`, which subagent shells often don't export. The resolver walks up from the working directory for a plugin checkout, falls back to the newest installed copy under `~/.claude/plugins/cache`, and reports a structured error instead of failing silently.
 
 ### Changed
 
@@ -44,6 +48,7 @@ Initial public release.
 - Native OpenCode assets under `.opencode/` and `opencode.json`, so the same lanes and skill work outside Claude Code.
 - SVG banner and shields badges for the README.
 
+[0.5.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.2.0
