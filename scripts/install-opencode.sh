@@ -8,9 +8,9 @@ usage() {
 }
 
 if (( $# == 2 )) && [[ "$1" == --project ]] && [[ -n "$2" && "$2" != --* ]]; then
-  BASE=$2/.opencode
+  DEST_ROOT=$2/.opencode
 elif (( $# == 1 )) && [[ "$1" == --global ]]; then
-  BASE=${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}
+  DEST_ROOT=${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}
 else
   usage
 fi
@@ -22,34 +22,24 @@ else
 fi
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
-SOURCES=(
-  "$ROOT/.opencode/agents/codex-implementer.md"
-  "$ROOT/.opencode/agents/claude-advisor.md"
-  "$ROOT/.opencode/agents/pi-implementer.md"
-  "$ROOT/.opencode/agents/pythinker-implementer.md"
-  "$ROOT/skills/delegate/SKILL.md"
-  "$ROOT/scripts/run-isolated.sh"
-  "$ROOT/scripts/run-codex-isolated.sh"
-  "$ROOT/scripts/run-opencode-isolated.sh"
-  "$ROOT/scripts/run-pi-isolated.sh"
-  "$ROOT/scripts/run-pythinker-isolated.sh"
-)
-DESTINATIONS=(
-  "$BASE/agents/codex-implementer.md"
-  "$BASE/agents/claude-advisor.md"
-  "$BASE/agents/pi-implementer.md"
-  "$BASE/agents/pythinker-implementer.md"
-  "$BASE/skills/delegate/SKILL.md"
-  "$BASE/claude-master/scripts/run-isolated.sh"
-  "$BASE/claude-master/scripts/run-codex-isolated.sh"
-  "$BASE/claude-master/scripts/run-opencode-isolated.sh"
-  "$BASE/claude-master/scripts/run-pi-isolated.sh"
-  "$BASE/claude-master/scripts/run-pythinker-isolated.sh"
+# <source relative to the repository root>:<destination relative to DEST_ROOT>
+MANAGED_FILES=(
+  ".opencode/agents/codex-implementer.md:agents/codex-implementer.md"
+  ".opencode/agents/claude-advisor.md:agents/claude-advisor.md"
+  ".opencode/agents/pi-implementer.md:agents/pi-implementer.md"
+  ".opencode/agents/pythinker-implementer.md:agents/pythinker-implementer.md"
+  "skills/delegate/SKILL.md:skills/delegate/SKILL.md"
+  "scripts/run-isolated.sh:claude-master/scripts/run-isolated.sh"
+  "scripts/run-codex-isolated.sh:claude-master/scripts/run-codex-isolated.sh"
+  "scripts/run-opencode-isolated.sh:claude-master/scripts/run-opencode-isolated.sh"
+  "scripts/run-pi-isolated.sh:claude-master/scripts/run-pi-isolated.sh"
+  "scripts/run-pythinker-isolated.sh:claude-master/scripts/run-pythinker-isolated.sh"
 )
 
-mkdir -p "$BASE/agents" "$BASE/skills/delegate" "$BASE/claude-master/scripts"
+mkdir -p "$DEST_ROOT/agents" "$DEST_ROOT/skills/delegate" "$DEST_ROOT/claude-master/scripts"
 
-for index in "${!SOURCES[@]}"; do
-  cp -p "${SOURCES[$index]}" "${DESTINATIONS[$index]}"
-  printf '%s\n' "${DESTINATIONS[$index]}"
+for entry in "${MANAGED_FILES[@]}"; do
+  destination="$DEST_ROOT/${entry#*:}"
+  cp -p "$ROOT/${entry%%:*}" "$destination"
+  printf '%s\n' "$destination"
 done

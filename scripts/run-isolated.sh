@@ -8,14 +8,14 @@ if (( $# == 0 )); then
 fi
 
 TIMEOUT_SECONDS=${RUN_TIMEOUT_SECONDS:-0}
-CAP=()
+TIMEOUT_PREFIX=()
 
 if [[ "$TIMEOUT_SECONDS" == 0 ]]; then
   :
 elif [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   TIMEOUT_BIN=$(command -v gtimeout || command -v timeout || true)
   if [[ -n "$TIMEOUT_BIN" ]]; then
-    CAP=("$TIMEOUT_BIN" "$TIMEOUT_SECONDS")
+    TIMEOUT_PREFIX=("$TIMEOUT_BIN" "$TIMEOUT_SECONDS")
   else
     printf 'RUN_TIMEOUT_SECONDS=%s requires timeout or gtimeout\n' "$TIMEOUT_SECONDS" >&2
     exit 69
@@ -25,8 +25,8 @@ else
   exit 64
 fi
 
-if (( ${#CAP[@]} )); then
-  COMMAND=("${CAP[@]}" "$@")
+if (( ${#TIMEOUT_PREFIX[@]} )); then
+  COMMAND=("${TIMEOUT_PREFIX[@]}" "$@")
 else
   COMMAND=("$@")
 fi
