@@ -74,12 +74,54 @@ and include its actual output in your final message."]
 SPEC_EOF
 ```
 
-2. Invoke pythinker headless and unattended through the tested adapter:
+2. Resolve the adapter runtime. `$CLAUDE_PLUGIN_ROOT` is only set when the host exports it — subagent shells often lack it — so never hardcode it. Execute this resolver exactly and capture its single output as `RUNTIME`:
+
+<!-- BEGIN CLAUDE_MASTER_RUNTIME_RESOLVER -->
+```bash
+resolve_lane_runtime() {
+  local adapter=run-pythinker-isolated.sh
+  local ancestor candidate
+
+  if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+    candidate=$CLAUDE_PLUGIN_ROOT/scripts/$adapter
+    [[ -f "$candidate" && -f "${candidate%/*}/run-isolated.sh" ]] && { printf '%s\n' "$candidate"; return 0; }
+  fi
+  ancestor=$PWD
+  while :; do
+    candidate=$ancestor/scripts/$adapter
+    if [[ -f "$ancestor/.claude-plugin/plugin.json" && -f "$candidate" && -f "$ancestor/scripts/run-isolated.sh" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    [[ "$ancestor" == / ]] && break
+    ancestor=${ancestor%/*}
+    [[ -n "$ancestor" ]] || ancestor=/
+  done
+  candidate=$(
+    for candidate in "$HOME"/.claude/plugins/cache/*/claude-master/*/scripts/"$adapter"; do
+      [[ -f "$candidate" && -f "${candidate%/*}/run-isolated.sh" ]] && printf '%s\n' "$candidate"
+    done | sort -V | tail -n 1
+  )
+  [[ -n "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  return 1
+}
+
+if RUNTIME=$(resolve_lane_runtime); then
+  printf '%s\n' "$RUNTIME"
+else
+  printf '%s\n' 'PYTHINKER REPORT' 'STATUS: unavailable' \
+    'REASON: claude-master runtime scripts not found — CLAUDE_PLUGIN_ROOT unset or stale, no plugin checkout above the working directory, and no complete installed copy (adapter plus run-isolated.sh) under ~/.claude/plugins/cache. Reinstall or re-enable the claude-master plugin.'
+  exit 69
+fi
+```
+<!-- END CLAUDE_MASTER_RUNTIME_RESOLVER -->
+
+3. Invoke pythinker headless and unattended through the tested adapter:
 
 ```bash
 PYTHINKER_MODEL="${MODEL:-}" \
 PYTHINKER_THINKING_EFFORT="${THINKING_EFFORT:-}" \
-bash "$CLAUDE_PLUGIN_ROOT/scripts/run-pythinker-isolated.sh" "$SPEC" "$FINAL"
+bash "$RUNTIME" "$SPEC" "$FINAL"
 ```
 
 Adapter discipline (non-negotiable):
@@ -97,7 +139,7 @@ Adapter discipline (non-negotiable):
 
 See the configured models in `~/.pythinker/config.toml`. The adapter uses the focused default agent rather than the `ask`, `debug`, or `okabe` profiles.
 
-3. **Verify independently.** Read the diff (`git diff` / `git status`), run the spec's verification command yourself, and read pythinker's final message from `"$FINAL"`. Pythinker's claim of success is not evidence; your re-run is. (It runs under `--yolo`, so it executed edits and commands unattended — your re-run is the only real check.)
+4. **Verify independently.** Read the diff (`git diff` / `git status`), run the spec's verification command yourself, and read pythinker's final message from `"$FINAL"`. Pythinker's claim of success is not evidence; your re-run is. (It runs under `--yolo`, so it executed edits and commands unattended — your re-run is the only real check.)
 
 ## What you return
 

@@ -30,6 +30,7 @@ node tests/delegate-routing.test.mjs
 "$BASH" tests/run-isolated.test.sh
 "$BASH" tests/lane-launchers.test.sh
 "$BASH" tests/install-opencode.test.sh
+"$BASH" tests/claude-runtime-resolver.test.sh
 node tests/lane-contract.test.mjs
 node tests/lane-model-fallback.test.mjs
 node tests/lane-roster.test.mjs
