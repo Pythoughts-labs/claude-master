@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "status",
+    "failure"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "unavailable",
+        "failed",
+        "cancelled",
+        "verified-candidate"
+      ]
+    },
+    "failure": {
+      "enum": [
+        null,
+        "invalid-specification",
+        "unavailable",
+        "authentication-required",
+        "spawn-failure",
+        "cancelled",
+        "timeout",
+        "sandbox-violation",
+        "invalid-output",
+        "producer-failure",
+        "verification-failure"
+      ]
+    }
+  }
+}
