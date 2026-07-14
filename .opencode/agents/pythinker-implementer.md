@@ -17,14 +17,14 @@ Create unique `SPEC=$(mktemp)` and `FINAL=$(mktemp)` files and immediately regis
 
 Execute this resolver exactly and capture its single output as `RUNTIME`:
 
-<!-- BEGIN CLAUDE_MASTER_RUNTIME_RESOLVER -->
+<!-- BEGIN CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->
 ```bash
 resolve_lane_runtime() {
   local adapter=run-pythinker-isolated.sh
   local ancestor candidate
 
-  if [[ -n "${CLAUDE_MASTER_ROOT:-}" ]]; then
-    candidate=$CLAUDE_MASTER_ROOT/scripts/$adapter
+  if [[ -n "${CLAUDE_ARCHITECT_ROOT:-}" ]]; then
+    candidate=$CLAUDE_ARCHITECT_ROOT/scripts/$adapter
     [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
   fi
   ancestor=$PWD
@@ -34,17 +34,17 @@ resolve_lane_runtime() {
       printf '%s\n' "$candidate"
       return 0
     fi
-    candidate=$ancestor/.opencode/claude-master/scripts/$adapter
+    candidate=$ancestor/.opencode/claude-architect/scripts/$adapter
     [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
     [[ "$ancestor" == / ]] && break
     ancestor=${ancestor%/*}
     [[ -n "$ancestor" ]] || ancestor=/
   done
   if [[ -n "${OPENCODE_CONFIG_DIR:-}" ]]; then
-    candidate=$OPENCODE_CONFIG_DIR/claude-master/scripts/$adapter
+    candidate=$OPENCODE_CONFIG_DIR/claude-architect/scripts/$adapter
     [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
   fi
-  candidate=${XDG_CONFIG_HOME:-$HOME/.config}/opencode/claude-master/scripts/$adapter
+  candidate=${XDG_CONFIG_HOME:-$HOME/.config}/opencode/claude-architect/scripts/$adapter
   [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
   return 1
 }
@@ -54,12 +54,12 @@ if RUNTIME=$(resolve_lane_runtime); then
 else
   printf '%s\n' 'PYTHINKER REPORT' 'STATUS: unavailable' \
     'Install the runtime with:' \
-    'bash /path/to/claude-master/scripts/install-opencode.sh --project <project-root>' \
-    'or: bash /path/to/claude-master/scripts/install-opencode.sh --global'
+    'bash /path/to/claude-architect/scripts/install-opencode.sh --project <project-root>' \
+    'or: bash /path/to/claude-architect/scripts/install-opencode.sh --global'
   exit 69
 fi
 ```
-<!-- END CLAUDE_MASTER_RUNTIME_RESOLVER -->
+<!-- END CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->
 
 Invoke the adapter from the workspace:
 

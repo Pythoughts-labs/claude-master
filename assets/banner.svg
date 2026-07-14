@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-label="Claude Master — the strongest model decides, cheaper lanes do the typing">
-  <title>Claude Master</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-label="Claude Architect — CLI coding-agent orchestration for Claude">
+  <title>Claude Architect</title>
 
   <defs>
     <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
@@ -23,18 +23,18 @@
     <circle cx="46" cy="44" r="6.5" fill="#ff5f57"/>
     <circle cx="70" cy="44" r="6.5" fill="#febc2e"/>
     <circle cx="94" cy="44" r="6.5" fill="#28c840"/>
-    <text x="126" y="49" font-size="15" fill="#6e7681">Pythoughts-labs/claude-master · architect session</text>
-    <text x="1158" y="49" font-size="14" fill="#4b5563" text-anchor="end">v0.1.0</text>
+    <text x="126" y="49" font-size="15" fill="#6e7681">Pythoughts-labs/claude-architect · architect session</text>
+    <text x="1158" y="49" font-size="14" fill="#4b5563" text-anchor="end">v0.5.0</text>
   </g>
   <line x1="10" y1="70" x2="1190" y2="70" stroke="#1a212c" stroke-width="1"/>
 
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
     <!-- wordmark -->
     <text x="44" y="150" font-size="62" font-weight="800" letter-spacing="2" fill="#e6edf3"
-          textLength="672" lengthAdjust="spacingAndGlyphs">CLAUDE MASTER</text>
+          textLength="744" lengthAdjust="spacingAndGlyphs">CLAUDE ARCHITECT</text>
 
     <!-- tagline + money line -->
-    <text x="46" y="194" font-size="21" font-weight="500" fill="#9aa4b2">The strongest model decides. Cheaper lanes do the typing.</text>
+    <text x="46" y="194" font-size="21" font-weight="500" fill="#9aa4b2">CLI coding-agent orchestration for Claude.</text>
     <text x="46" y="224" font-size="18" font-weight="700" fill="#d97757">You pay for judgment, not volume.</text>
 
     <!-- session log panel (right) -->

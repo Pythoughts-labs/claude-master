@@ -78,7 +78,7 @@ assert_contains() {
 assert_contains "$ROOT/agents/codex-implementer.md" 'run-codex-isolated\.sh'
 assert_contains "$ROOT/.opencode/agents/codex-implementer.md" '--ignore-user-config'
 assert_contains "$ROOT/.opencode/agents/codex-implementer.md" '--ephemeral'
-assert_contains "$ROOT/skills/delegate/SKILL.md" 'claude-master:codex-implementer'
+assert_contains "$ROOT/skills/delegate/SKILL.md" 'claude-architect:codex-implementer'
 assert_contains "$ROOT/skills/delegate/SKILL.md" 'codex:codex-rescue'
 assert_contains "$ROOT/skills/delegate/SKILL.md" 'app-server'
 
@@ -281,7 +281,7 @@ Insert above `0.3.0` in `CHANGELOG.md`:
 Add this link before the existing `0.3.0` link:
 
 ```markdown
-[0.4.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.4.0
+[0.4.0]: https://github.com/Pythoughts-labs/claude-architect/releases/tag/v0.4.0
 ```
 
 - [ ] **Step 3: Run the manifest test**
@@ -332,7 +332,7 @@ git commit -m "Release 0.4.0 with Codex stdin forwarding"
 
 **Files:**
 - Modify: none in the repository.
-- Verify generated artifact: `~/.claude/plugins/cache/claude-master/claude-master/0.4.0/`
+- Verify generated artifact: `~/.claude/plugins/cache/claude-architect/claude-architect/0.4.0/`
 
 **Interfaces:**
 - Consumes: clean `main` with the Task 1 fix commit and Task 2 release commit.
@@ -367,17 +367,17 @@ Expected: both pushes succeed without force and without skipped hooks.
 - [ ] **Step 4: Refresh through Claude's supported plugin flow**
 
 ```bash
-claude plugin marketplace update claude-master
-claude plugin update claude-master@claude-master
+claude plugin marketplace update claude-architect
+claude plugin update claude-architect@claude-architect
 claude plugin list
 ```
 
-Expected: `claude-master@claude-master` is enabled at version `0.4.0`.
+Expected: `claude-architect@claude-architect` is enabled at version `0.4.0`.
 
 - [ ] **Step 5: Verify the installed artifact came from the release**
 
 ```bash
-LIVE_ROOT="$HOME/.claude/plugins/cache/claude-master/claude-master/0.4.0"
+LIVE_ROOT="$HOME/.claude/plugins/cache/claude-architect/claude-architect/0.4.0"
 test -f "$LIVE_ROOT/scripts/run-codex-isolated.sh"
 cmp scripts/run-codex-isolated.sh "$LIVE_ROOT/scripts/run-codex-isolated.sh"
 bash "$LIVE_ROOT/tests/codex-lifecycle.test.sh"

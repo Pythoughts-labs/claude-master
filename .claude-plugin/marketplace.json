@@ -1,7 +1,7 @@
 {
-  "name": "claude-master",
+  "name": "claude-architect",
   "metadata": {
-    "description": "Model-routing patterns for Claude Code and OpenCode with Codex, the OpenCode provider pool, local open-weight Pi, autonomous Pythinker, and a commitment-boundary advisor."
+    "description": "CLI coding-agent orchestration for Claude through Codex, OpenCode, Pi, and Pythinker Code, with a commitment-boundary advisor."
   },
   "owner": {
     "name": "elkaix",
@@ -9,15 +9,15 @@
   },
   "plugins": [
     {
-      "name": "claude-master",
+      "name": "claude-architect",
       "source": "./",
       "version": "0.5.0",
-      "description": "Architect-first delegation through Codex, the OpenCode provider pool, local open-weight Pi, or autonomous Pythinker, with a commitment-boundary advisor and native OpenCode assets.",
+      "description": "CLI coding-agent orchestration for Claude through Codex, OpenCode, Pi, and Pythinker Code, with architect-led review and native OpenCode assets.",
       "author": {
         "name": "elkaix",
         "url": "https://github.com/elkaix"
       },
-      "homepage": "https://github.com/Pythoughts-labs/claude-master",
+      "homepage": "https://github.com/Pythoughts-labs/claude-architect",
       "license": "MIT",
       "category": "workflow",
       "keywords": [

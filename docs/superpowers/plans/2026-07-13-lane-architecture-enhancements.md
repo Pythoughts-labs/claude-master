@@ -120,12 +120,12 @@ scripts/run-opencode-isolated.sh <spec-file> <final-file>
 
 OpenCode does not define `CLAUDE_PLUGIN_ROOT`. Its agents locate the installed runtime in this order:
 
-1. `CLAUDE_MASTER_ROOT`, when explicitly set.
+1. `CLAUDE_ARCHITECT_ROOT`, when explicitly set.
 2. Starting at `$PWD`, walk parent directories up to the filesystem root. At each ancestor, check:
    - source checkout: `<ancestor>/scripts/run-*-isolated.sh` plus a matching `.claude-plugin/plugin.json`;
-   - project installation: `<ancestor>/.opencode/claude-master/scripts/run-*-isolated.sh`.
-3. Custom OpenCode config: `${OPENCODE_CONFIG_DIR}/claude-master`, when `OPENCODE_CONFIG_DIR` is set.
-4. Global installation: `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/claude-master`.
+   - project installation: `<ancestor>/.opencode/claude-architect/scripts/run-*-isolated.sh`.
+3. Custom OpenCode config: `${OPENCODE_CONFIG_DIR}/claude-architect`, when `OPENCODE_CONFIG_DIR` is set.
+4. Global installation: `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/claude-architect`.
 
 This mirrors OpenCode's project discovery behavior when it is launched from a nested directory. Resolution must not assume `$PWD` equals the project root.
 
@@ -461,7 +461,7 @@ bash scripts/install-opencode.sh --project <project-root>
 bash scripts/install-opencode.sh --global
 ```
 
-- `--project` installs agents under `<project-root>/.opencode/agents`, the delegate skill under `<project-root>/.opencode/skills/delegate`, and runtime scripts under `<project-root>/.opencode/claude-master/scripts`.
+- `--project` installs agents under `<project-root>/.opencode/agents`, the delegate skill under `<project-root>/.opencode/skills/delegate`, and runtime scripts under `<project-root>/.opencode/claude-architect/scripts`.
 - `--global` installs the same assets under `${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}`.
 - Exactly one mode is required. Invalid arguments exit `64` without writing files.
 - The installer copies only tracked source assets, creates missing parent directories, preserves executable bits, and reports each destination.
@@ -524,7 +524,7 @@ Keep OpenCode-host prose concise, but do not rely on the shared skill to supply 
 Replace manual copy instructions with the installer commands. Document:
 
 - project and global installation layouts;
-- `CLAUDE_MASTER_ROOT` as an explicit override;
+- `CLAUDE_ARCHITECT_ROOT` as an explicit override;
 - ancestor lookup for project installations and `OPENCODE_CONFIG_DIR` for custom global config;
 - source-repository execution as a development mode;
 - the need to restart OpenCode after agent or skill installation.
@@ -678,7 +678,7 @@ Confirm the plugin's delegate skill and four Claude implementation agents are vi
 
 - From this repository, confirm OpenCode sees the four `.opencode/agents/` files and delegate skill.
 - Install into a temporary project with `bash scripts/install-opencode.sh --project "$TMP_PROJECT"`.
-- From a nested directory under that temporary project, confirm each OpenCode implementation agent resolves the ancestor `.opencode/claude-master/scripts` without `CLAUDE_PLUGIN_ROOT`.
+- From a nested directory under that temporary project, confirm each OpenCode implementation agent resolves the ancestor `.opencode/claude-architect/scripts` without `CLAUDE_PLUGIN_ROOT`.
 
 ### Step 3: Smoke-test each launcher in an isolated scratch repository
 

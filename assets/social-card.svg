@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="Claude Master — architect-first delegation for Claude Code and OpenCode">
-  <title>Claude Master</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="Claude Architect — CLI coding-agent orchestration for Claude">
+  <title>Claude Architect</title>
 
   <defs>
     <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
@@ -17,13 +17,13 @@
     <circle cx="92" cy="60" r="8" fill="#ff5f57"/>
     <circle cx="120" cy="60" r="8" fill="#febc2e"/>
     <circle cx="148" cy="60" r="8" fill="#28c840"/>
-    <text x="184" y="66" font-size="20" fill="#6e7681">Pythoughts-labs/claude-master · architect session</text>
-    <text x="1216" y="66" font-size="18" fill="#4b5563" text-anchor="end">v0.1.0</text>
+    <text x="184" y="66" font-size="20" fill="#6e7681">Pythoughts-labs/claude-architect · architect session</text>
+    <text x="1216" y="66" font-size="18" fill="#4b5563" text-anchor="end">v0.5.0</text>
     <line x1="64" y1="94" x2="1216" y2="94" stroke="#1a212c" stroke-width="1"/>
 
     <!-- wordmark -->
     <text x="64" y="238" font-size="100" font-weight="800" letter-spacing="3" fill="#e6edf3"
-          textLength="812" lengthAdjust="spacingAndGlyphs">CLAUDE MASTER</text>
+          textLength="812" lengthAdjust="spacingAndGlyphs">CLAUDE ARCHITECT</text>
 
     <!-- session log panel -->
     <rect x="904" y="128" width="312" height="176" rx="12" fill="#0d1220" stroke="#1b2430" stroke-width="1"/>
@@ -35,7 +35,7 @@
     </g>
 
     <!-- tagline + money -->
-    <text x="66" y="382" font-size="30" font-weight="500" fill="#9aa4b2">The strongest model decides. Cheaper lanes do the typing.</text>
+    <text x="66" y="382" font-size="30" font-weight="500" fill="#9aa4b2">CLI coding-agent orchestration for Claude.</text>
     <text x="66" y="424" font-size="26" font-weight="700" fill="#d97757">You pay for judgment, not volume.</text>
 
     <!-- prompt -->
@@ -65,6 +65,6 @@
     <text x="846" y="552" font-size="17" fill="#6e7681">-&gt; architect reviews every diff</text>
 
     <!-- footer -->
-    <text x="66" y="606" font-size="17" fill="#5a6572">Claude Code plugin  ·  OpenCode native  ·  MIT  ·  github.com/Pythoughts-labs/claude-master</text>
+    <text x="66" y="606" font-size="17" fill="#5a6572">Claude Code plugin  ·  OpenCode native  ·  MIT  ·  github.com/Pythoughts-labs/claude-architect</text>
   </g>
 </svg>

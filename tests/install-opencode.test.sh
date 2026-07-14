@@ -27,10 +27,10 @@ assert_managed_layout() {
   cmp -s "$ROOT/skills/delegate/SKILL.md" "$base/skills/delegate/SKILL.md" ||
     fail "$base/skills/delegate/SKILL.md does not byte-match its source"
   for runtime in "${RUNTIMES[@]}"; do
-    cmp -s "$ROOT/scripts/$runtime" "$base/claude-master/scripts/$runtime" ||
-      fail "$base/claude-master/scripts/$runtime does not byte-match its source"
-    [[ -x "$base/claude-master/scripts/$runtime" ]] ||
-      fail "$base/claude-master/scripts/$runtime is not executable"
+    cmp -s "$ROOT/scripts/$runtime" "$base/claude-architect/scripts/$runtime" ||
+      fail "$base/claude-architect/scripts/$runtime does not byte-match its source"
+    [[ -x "$base/claude-architect/scripts/$runtime" ]] ||
+      fail "$base/claude-architect/scripts/$runtime is not executable"
   done
 }
 
@@ -50,11 +50,11 @@ assert_reported_destinations() {
       "$base/agents/pi-implementer.md" \
       "$base/agents/pythinker-implementer.md" \
       "$base/skills/delegate/SKILL.md" \
-      "$base/claude-master/scripts/run-isolated.sh" \
-      "$base/claude-master/scripts/run-codex-isolated.sh" \
-      "$base/claude-master/scripts/run-opencode-isolated.sh" \
-      "$base/claude-master/scripts/run-pi-isolated.sh" \
-      "$base/claude-master/scripts/run-pythinker-isolated.sh"
+      "$base/claude-architect/scripts/run-isolated.sh" \
+      "$base/claude-architect/scripts/run-codex-isolated.sh" \
+      "$base/claude-architect/scripts/run-opencode-isolated.sh" \
+      "$base/claude-architect/scripts/run-pi-isolated.sh" \
+      "$base/claude-architect/scripts/run-pythinker-isolated.sh"
   )
   [[ $(wc -l < "$output" | tr -d ' ') -eq "$count" ]] ||
     fail 'installer reported an unexpected number of destinations'
@@ -72,7 +72,7 @@ assert_project_install() {
   printf 'keep me\n' > "$base/agents/unrelated.md"
   printf '{"keep":true}\n' > "$base/opencode.json"
   printf 'stale\n' > "$base/agents/codex-implementer.md"
-  chmod -x "$base/claude-master/scripts/run-codex-isolated.sh"
+  chmod -x "$base/claude-architect/scripts/run-codex-isolated.sh"
   bash "$INSTALLER" --project "$project" > "$output"
   assert_managed_layout "$base"
   grep -Fxq 'keep me' "$base/agents/unrelated.md" || fail 'reinstall removed an unrelated agent'
@@ -138,8 +138,8 @@ extract_resolver() {
   local output=$2
 
   awk '
-    /<!-- BEGIN CLAUDE_MASTER_RUNTIME_RESOLVER -->/ { inside=1; next }
-    /<!-- END CLAUDE_MASTER_RUNTIME_RESOLVER -->/ { inside=0; found=1; next }
+    /<!-- BEGIN CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->/ { inside=1; next }
+    /<!-- END CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->/ { inside=0; found=1; next }
     inside && $0 !~ /^```/ { print }
     END { if (!found) exit 1 }
   ' "$agent" > "$output"
@@ -156,8 +156,8 @@ assert_resolver_case() {
   bash "$INSTALLER" --project "$project" > /dev/null
   mkdir -p "$nested"
   extract_resolver "$ROOT/.opencode/agents/$agent_name-implementer.md" "$block"
-  resolved=$(cd "$nested" && env -u CLAUDE_MASTER_ROOT -u OPENCODE_CONFIG_DIR bash "$block")
-  [[ "$resolved" == "$project/.opencode/claude-master/scripts/$adapter" ]] ||
+  resolved=$(cd "$nested" && env -u CLAUDE_ARCHITECT_ROOT -u OPENCODE_CONFIG_DIR bash "$block")
+  [[ "$resolved" == "$project/.opencode/claude-architect/scripts/$adapter" ]] ||
     fail "$agent_name nested resolver returned $resolved"
 
   printf 'PASS: %s resolves %s from a nested project directory.\n' "$agent_name" "$adapter"
@@ -174,8 +174,8 @@ assert_custom_global_resolver_case() {
   OPENCODE_CONFIG_DIR="$configured" bash "$INSTALLER" --global > /dev/null
   mkdir -p "$cwd"
   extract_resolver "$ROOT/.opencode/agents/$agent_name-implementer.md" "$block"
-  resolved=$(cd "$cwd" && OPENCODE_CONFIG_DIR="$configured" env -u CLAUDE_MASTER_ROOT bash "$block")
-  [[ "$resolved" == "$configured/claude-master/scripts/$adapter" ]] ||
+  resolved=$(cd "$cwd" && OPENCODE_CONFIG_DIR="$configured" env -u CLAUDE_ARCHITECT_ROOT bash "$block")
+  [[ "$resolved" == "$configured/claude-architect/scripts/$adapter" ]] ||
     fail "$agent_name custom-global resolver returned $resolved"
 
   printf 'PASS: %s resolves %s from OPENCODE_CONFIG_DIR.\n' "$agent_name" "$adapter"

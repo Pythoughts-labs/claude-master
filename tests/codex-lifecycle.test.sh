@@ -17,7 +17,7 @@ assert_contains() {
 assert_contains "$ROOT/agents/codex-implementer.md" 'run-codex-isolated\.sh'
 assert_contains "$ROOT/.opencode/agents/codex-implementer.md" '--ignore-user-config'
 assert_contains "$ROOT/.opencode/agents/codex-implementer.md" '--ephemeral'
-assert_contains "$ROOT/skills/delegate/SKILL.md" 'claude-master:codex-implementer'
+assert_contains "$ROOT/skills/delegate/SKILL.md" 'claude-architect:codex-implementer'
 assert_contains "$ROOT/skills/delegate/SKILL.md" 'codex:codex-rescue'
 assert_contains "$ROOT/skills/delegate/SKILL.md" 'app-server'
 

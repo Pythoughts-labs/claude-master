@@ -16,8 +16,8 @@ extract_resolver() {
   local output=$2
 
   awk '
-    /<!-- BEGIN CLAUDE_MASTER_RUNTIME_RESOLVER -->/ { inside=1; next }
-    /<!-- END CLAUDE_MASTER_RUNTIME_RESOLVER -->/ { inside=0; found=1; next }
+    /<!-- BEGIN CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->/ { inside=1; next }
+    /<!-- END CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->/ { inside=0; found=1; next }
     inside && $0 !~ /^```/ { print }
     END { if (!found) exit 1 }
   ' "$agent" > "$output" || fail "no runtime resolver block in $agent"
@@ -59,19 +59,19 @@ for lane in codex opencode pi pythinker; do
   # and a stale newest version missing run-isolated.sh must be skipped.
   fakehome="$TMP/home-$lane"
   for version in 0.9.0 0.10.0 0.11.0; do
-    mkdir -p "$fakehome/.claude/plugins/cache/mkt/claude-master/$version/scripts"
+    mkdir -p "$fakehome/.claude/plugins/cache/mkt/claude-architect/$version/scripts"
     cp "$ROOT/scripts/$adapter" \
-      "$fakehome/.claude/plugins/cache/mkt/claude-master/$version/scripts/$adapter"
+      "$fakehome/.claude/plugins/cache/mkt/claude-architect/$version/scripts/$adapter"
     if [[ "$version" != 0.11.0 ]]; then
       cp "$ROOT/scripts/run-isolated.sh" \
-        "$fakehome/.claude/plugins/cache/mkt/claude-master/$version/scripts/run-isolated.sh"
+        "$fakehome/.claude/plugins/cache/mkt/claude-architect/$version/scripts/run-isolated.sh"
     fi
-    chmod 644 "$fakehome/.claude/plugins/cache/mkt/claude-master/$version/scripts/"*
+    chmod 644 "$fakehome/.claude/plugins/cache/mkt/claude-architect/$version/scripts/"*
   done
   outside="$TMP/outside-$lane"
   mkdir -p "$outside"
   resolved=$(cd "$outside" && HOME="$fakehome" env -u CLAUDE_PLUGIN_ROOT bash "$block")
-  [[ "$resolved" == "$fakehome/.claude/plugins/cache/mkt/claude-master/0.10.0/scripts/$adapter" ]] ||
+  [[ "$resolved" == "$fakehome/.claude/plugins/cache/mkt/claude-architect/0.10.0/scripts/$adapter" ]] ||
     fail "$lane: cache resolution returned $resolved instead of the newest complete (0.10.0) copy"
 
   # 4) Nothing found -> structured unavailable report and exit 69.

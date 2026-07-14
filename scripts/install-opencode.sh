@@ -29,14 +29,14 @@ MANAGED_FILES=(
   ".opencode/agents/pi-implementer.md:agents/pi-implementer.md"
   ".opencode/agents/pythinker-implementer.md:agents/pythinker-implementer.md"
   "skills/delegate/SKILL.md:skills/delegate/SKILL.md"
-  "scripts/run-isolated.sh:claude-master/scripts/run-isolated.sh"
-  "scripts/run-codex-isolated.sh:claude-master/scripts/run-codex-isolated.sh"
-  "scripts/run-opencode-isolated.sh:claude-master/scripts/run-opencode-isolated.sh"
-  "scripts/run-pi-isolated.sh:claude-master/scripts/run-pi-isolated.sh"
-  "scripts/run-pythinker-isolated.sh:claude-master/scripts/run-pythinker-isolated.sh"
+  "scripts/run-isolated.sh:claude-architect/scripts/run-isolated.sh"
+  "scripts/run-codex-isolated.sh:claude-architect/scripts/run-codex-isolated.sh"
+  "scripts/run-opencode-isolated.sh:claude-architect/scripts/run-opencode-isolated.sh"
+  "scripts/run-pi-isolated.sh:claude-architect/scripts/run-pi-isolated.sh"
+  "scripts/run-pythinker-isolated.sh:claude-architect/scripts/run-pythinker-isolated.sh"
 )
 
-mkdir -p "$DEST_ROOT/agents" "$DEST_ROOT/skills/delegate" "$DEST_ROOT/claude-master/scripts"
+mkdir -p "$DEST_ROOT/agents" "$DEST_ROOT/skills/delegate" "$DEST_ROOT/claude-architect/scripts"
 
 for entry in "${MANAGED_FILES[@]}"; do
   destination="$DEST_ROOT/${entry#*:}"

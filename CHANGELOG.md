@@ -1,8 +1,14 @@
 # Changelog
 
-All notable changes to Claude Master are recorded here. The format follows
+All notable changes to Claude Architect are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Changed
+
+- Renamed the project, plugin, runtime namespace, documentation, and visual assets to Claude Architect (`claude-architect`). Existing installations under the previous identity must add the renamed marketplace and reinstall the plugin or OpenCode assets.
 
 ## [0.5.0] - 2026-07-13
 
@@ -48,8 +54,9 @@ Initial public release.
 - Native OpenCode assets under `.opencode/` and `opencode.json`, so the same lanes and skill work outside Claude Code.
 - SVG banner and shields badges for the README.
 
-[0.5.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.5.0
-[0.4.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.4.0
-[0.3.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.3.0
-[0.2.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.2.0
-[0.1.0]: https://github.com/Pythoughts-labs/claude-master/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Pythoughts-labs/claude-architect/releases/tag/v0.5.0
+[0.4.0]: https://github.com/Pythoughts-labs/claude-architect/releases/tag/v0.4.0
+[0.3.0]: https://github.com/Pythoughts-labs/claude-architect/releases/tag/v0.3.0
+[0.2.0]: https://github.com/Pythoughts-labs/claude-architect/releases/tag/v0.2.0
+[0.1.0]: https://github.com/Pythoughts-labs/claude-architect/releases/tag/v0.1.0

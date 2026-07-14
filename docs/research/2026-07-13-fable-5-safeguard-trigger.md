@@ -11,7 +11,7 @@ The client transcript identifies the category and request precisely:
 - `fallbackModel: "claude-opus-4-8"`
 - `refusedUserMessageUuid` matches the original request asking to test five Codex CLI subagent delegations
 
-Fable had already fallen back to Opus before Opus invoked `claude-master:delegate`. The cached skill content was injected afterward, so it could not have triggered this specific fallback. The exact word or contextual feature that crossed Anthropic's threshold remains unknowable because the transcript contains no classifier explanation or score.
+Fable had already fallen back to Opus before Opus invoked the repository's plugin-qualified `delegate` skill. The cached skill content was injected afterward, so it could not have triggered this specific fallback. The exact word or contextual feature that crossed Anthropic's threshold remains unknowable because the transcript contains no classifier explanation or score.
 
 ## Anthropic-confirmed behavior
 
@@ -21,13 +21,13 @@ Source: [Anthropic Support, “Why Claude switched models in your conversation w
 
 ## Local transcript evidence
 
-Source: `~/.claude/projects/-Users-panda-Projects-active-claude-master/2f249ed3-41f1-4706-99ce-f509b900f571.jsonl`.
+Source: local Claude project transcript `2f249ed3-41f1-4706-99ce-f509b900f571.jsonl`, captured before the rebrand.
 
 The relevant event sequence is:
 
 1. **Line 7:** user asks to test `/delegate` with five Codex CLI subagent tasks; UUID `320dbc3c-cce9-46de-86c4-b58a6f0b52a7`.
 2. **Line 16:** the response stream records fallback from `claude-fable-5` to `claude-opus-4-8`.
-3. **Lines 18–19:** Opus says it will load the skill and calls `Skill` with `claude-master:delegate`.
+3. **Lines 18–19:** Opus says it will load the skill and calls `Skill` with the plugin-qualified `delegate` identifier.
 4. **Line 20:** Claude Code records `model_refusal_fallback`, category `cyber`, and points `refusedUserMessageUuid` to line 7.
 5. **Lines 21–22:** only then does Claude Code inject the cached `/delegate` skill content.
 

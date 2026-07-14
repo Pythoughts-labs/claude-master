@@ -84,7 +84,7 @@ SPEC_EOF
 
 2. Resolve the adapter runtime. `$CLAUDE_PLUGIN_ROOT` is only set when the host exports it — subagent shells often lack it — so never hardcode it. Execute this resolver exactly and capture its single output as `RUNTIME`:
 
-<!-- BEGIN CLAUDE_MASTER_RUNTIME_RESOLVER -->
+<!-- BEGIN CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->
 ```bash
 resolve_lane_runtime() {
   local adapter=run-pi-isolated.sh
@@ -106,7 +106,7 @@ resolve_lane_runtime() {
     [[ -n "$ancestor" ]] || ancestor=/
   done
   candidate=$(
-    for candidate in "$HOME"/.claude/plugins/cache/*/claude-master/*/scripts/"$adapter"; do
+    for candidate in "$HOME"/.claude/plugins/cache/*/claude-architect/*/scripts/"$adapter"; do
       [[ -f "$candidate" && -f "${candidate%/*}/run-isolated.sh" ]] && printf '%s\n' "$candidate"
     done | sort -V | tail -n 1
   )
@@ -118,11 +118,11 @@ if RUNTIME=$(resolve_lane_runtime); then
   printf '%s\n' "$RUNTIME"
 else
   printf '%s\n' 'PI REPORT' 'STATUS: unavailable' \
-    'REASON: claude-master runtime scripts not found — CLAUDE_PLUGIN_ROOT unset or stale, no plugin checkout above the working directory, and no complete installed copy (adapter plus run-isolated.sh) under ~/.claude/plugins/cache. Reinstall or re-enable the claude-master plugin.'
+    'REASON: claude-architect runtime scripts not found — CLAUDE_PLUGIN_ROOT unset or stale, no plugin checkout above the working directory, and no complete installed copy (adapter plus run-isolated.sh) under ~/.claude/plugins/cache. Reinstall or re-enable the claude-architect plugin.'
   exit 69
 fi
 ```
-<!-- END CLAUDE_MASTER_RUNTIME_RESOLVER -->
+<!-- END CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->
 
 3. Invoke pi through the tested adapter. Pi runs in the current working directory (no `--cwd` flag — `cd` first if needed):
 

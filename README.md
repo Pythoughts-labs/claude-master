@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg?v=4" alt="Claude Master: the strongest model decides, cheaper lanes do the typing" width="880">
+  <img src="assets/banner.svg?v=5" alt="Claude Architect: CLI coding-agent orchestration for Claude" width="880">
 </p>
 
 <p align="center">
@@ -18,17 +18,17 @@
   <img alt="license" src="https://img.shields.io/badge/license-MIT-3fb950?style=flat-square&labelColor=0b0e14">
 </p>
 
-# Claude Master
+# Claude Architect
 
-Install the plugin, run `/delegate`, and let Claude handle the handoff. Claude writes the implementation spec, sends the work to Codex, OpenCode, Pi, or Pythinker, then reviews the result before accepting it. Your strongest model stays focused on decisions instead of spending tokens on mechanical edits.
+CLI coding-agent orchestration for Claude through Codex, OpenCode, Pi, and Pythinker Code. Install the plugin, run `/delegate`, and let Claude handle the handoff: it writes the implementation spec, sends the work to the selected CLI, then reviews the result before accepting it. Your strongest model stays focused on decisions instead of spending tokens on mechanical edits.
 
 ## Quick start
 
 ### 1. Install the plugin
 
 ```bash
-claude plugin marketplace add Pythoughts-labs/claude-master
-claude plugin install claude-master@claude-master
+claude plugin marketplace add Pythoughts-labs/claude-architect
+claude plugin install claude-architect@claude-architect
 ```
 
 Restart Claude Code so it loads the plugin.
@@ -41,31 +41,27 @@ Open Claude Code in your project and run:
 /delegate Use Codex to add rate limiting to our public API, run the tests, and review the diff before accepting it.
 ```
 
-Name Codex, OpenCode, Pi, or Pythinker in the request to choose a lane immediately. If you leave the lane out, Claude Master asks which one to use.
+Name Codex, OpenCode, Pi, or Pythinker in the request to choose a lane immediately. If you leave the lane out, Claude Architect asks which one to use.
 
 ### 3. Review the result
 
 Claude prepares the spec and delegates the implementation. When the lane finishes, Claude reads the diff and checks the verification output before accepting the work.
-
-<p align="center">
-  <img src="assets/claud-master.webp" alt="Claude Master delegating an implementation task and reviewing the result" width="880">
-</p>
 
 ## Install with an AI agent
 
 Paste this prompt into Claude Code or another coding agent when you want it to handle setup:
 
 ```text
-Install Claude Master for Claude Code in this environment.
+Install Claude Architect for Claude Code in this environment.
 
 Before making changes:
 1. Confirm that the `claude` CLI is installed and available on PATH.
 2. Check the current marketplace and plugin state. Do not remove or overwrite unrelated configuration.
 3. Add the marketplace with:
-   claude plugin marketplace add Pythoughts-labs/claude-master
+   claude plugin marketplace add Pythoughts-labs/claude-architect
 4. Install the plugin with:
-   claude plugin install claude-master@claude-master
-5. Verify the installation with `claude plugin list --json` and confirm that `claude-master@claude-master` is installed and enabled.
+   claude plugin install claude-architect@claude-architect
+5. Verify the installation with `claude plugin list --json` and confirm that `claude-architect@claude-architect` is installed and enabled.
 6. Tell me to restart Claude Code so the plugin loads.
 7. Check which implementation CLIs are available: `codex`, `opencode`, `pi`, and `pythinker`. Report missing tools, authentication, or local model servers. Do not install those dependencies unless I ask.
 
@@ -76,8 +72,8 @@ Or run the installation yourself:
 
 ```bash
 command -v claude
-claude plugin marketplace add Pythoughts-labs/claude-master
-claude plugin install claude-master@claude-master
+claude plugin marketplace add Pythoughts-labs/claude-architect
+claude plugin install claude-architect@claude-architect
 claude plugin list --json
 ```
 
@@ -87,7 +83,7 @@ Restart Claude Code, open a project, and run `/delegate`. Update commands, OpenC
 
 Top-tier model tokens are expensive, and most of what a coding task spends them on is not judgment. It is boilerplate, test scaffolding, mechanical edits, and reading large files to pull out one answer. None of that needs your best model.
 
-Claude Master splits the two jobs:
+Claude Architect splits the two jobs:
 
 - The **architect** (your session, on Fable 5 or Opus) reasons once, writes the spec, and reviews. That is where the expensive tokens go, and it is a small fraction of the total.
 - The **implementation** runs on a lane you choose for the job. Codex bills against a subscription. The OpenCode pool uses whatever provider credit you already hold. Pi runs an open-weight model on your own hardware at zero marginal token cost. Pythinker runs your own agent unattended.
@@ -119,15 +115,15 @@ Every implementation lane uses one shared process-isolation lifecycle through it
 ### Claude Code
 
 ```bash
-claude plugin marketplace add Pythoughts-labs/claude-master
-claude plugin install claude-master@claude-master
+claude plugin marketplace add Pythoughts-labs/claude-architect
+claude plugin install claude-architect@claude-architect
 ```
 
 Update later with:
 
 ```bash
-claude plugin marketplace update claude-master
-claude plugin update claude-master@claude-master
+claude plugin marketplace update claude-architect
+claude plugin update claude-architect@claude-architect
 ```
 
 The plugin loads the agent definitions in `agents/` and the `delegate` skill in `skills/`.
@@ -139,20 +135,20 @@ This repository ships native OpenCode assets: `opencode.json` registers the shar
 Install into a project, regardless of your current working directory:
 
 ```bash
-bash /path/to/claude-master/scripts/install-opencode.sh --project /path/to/project
+bash /path/to/claude-architect/scripts/install-opencode.sh --project /path/to/project
 ```
 
 Or install globally:
 
 ```bash
-bash /path/to/claude-master/scripts/install-opencode.sh --global
+bash /path/to/claude-architect/scripts/install-opencode.sh --global
 ```
 
-Project installation writes the four agents to `<project>/.opencode/agents`, the delegate skill to `<project>/.opencode/skills/delegate/SKILL.md`, and the shared runtime plus all four CLI adapters to `<project>/.opencode/claude-master/scripts`. Global installation writes the same layout under `${OPENCODE_CONFIG_DIR}` when set, otherwise `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`.
+Project installation writes the four agents to `<project>/.opencode/agents`, the delegate skill to `<project>/.opencode/skills/delegate/SKILL.md`, and the shared runtime plus all four CLI adapters to `<project>/.opencode/claude-architect/scripts`. Global installation writes the same layout under `${OPENCODE_CONFIG_DIR}` when set, otherwise `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`.
 
-The implementation agents locate their adapter from `CLAUDE_MASTER_ROOT/scripts` when `CLAUDE_MASTER_ROOT` is set, then walk from the current directory through every ancestor looking first for a source checkout with `.claude-plugin/plugin.json` and `scripts/`, then for a project `.opencode/claude-master/scripts` install. They next check a custom `OPENCODE_CONFIG_DIR` and finally the default global config location. This makes nested project directories work without assuming a project-root working directory. Running OpenCode directly from this source checkout remains the development mode: it picks up `opencode.json` and `.opencode/agents/`, while the source marker lets agents use the repository's runtime scripts.
+The implementation agents locate their adapter from `CLAUDE_ARCHITECT_ROOT/scripts` when `CLAUDE_ARCHITECT_ROOT` is set, then walk from the current directory through every ancestor looking first for a source checkout with `.claude-plugin/plugin.json` and `scripts/`, then for a project `.opencode/claude-architect/scripts` install. They next check a custom `OPENCODE_CONFIG_DIR` and finally the default global config location. This makes nested project directories work without assuming a project-root working directory. Running OpenCode directly from this source checkout remains the development mode: it picks up `opencode.json` and `.opencode/agents/`, while the source marker lets agents use the repository's runtime scripts.
 
-Quit and restart OpenCode after installing or updating because it loads skills and agents at startup. If a lane reports `STATUS: unavailable` because it cannot find the runtime, rerun one of the installer commands above; use `CLAUDE_MASTER_ROOT=/path/to/claude-master` only when intentionally selecting a checkout at runtime.
+Quit and restart OpenCode after installing or updating because it loads skills and agents at startup. If a lane reports `STATUS: unavailable` because it cannot find the runtime, rerun one of the installer commands above; use `CLAUDE_ARCHITECT_ROOT=/path/to/claude-architect` only when intentionally selecting a checkout at runtime.
 
 ## Use
 
