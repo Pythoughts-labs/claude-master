@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const ps = getPlatformServices();
 const fixture = fileURLToPath(new URL("./fixtures/echo-sleep.mjs", import.meta.url));
 async function run(args: string[], timeoutMs: number, onCancel?: AbortSignal) {
-  const node = await ps.resolveExecutable({ name: "node" });
+  const node = await ps.resolveExecutable({ name: "node", explicitPath: process.execPath });
   return supervise(ps, { executable: node, args: [fixture, ...args], cwd: process.cwd(),
     env: { PATH: process.env.PATH ?? "" }, timeoutMs, maxOutputBytes: 1_000_000 }, { onCancel });
 }
