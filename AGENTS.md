@@ -6,7 +6,7 @@ Claude remains the architect. It creates a versioned Delegation Spec, selects an
 
 External agents are treated as untrusted producers. Their output is returned as a verified candidate artifact, not automatically accepted work. Claude reviews the diff and verification evidence before deciding whether the changes should be integrated.
 
-Claude Architect also includes a strictly read-only Claude advisor, cross-platform process supervision, crash recovery, bounded and redacted run logging, and native Producer adapters for Codex, OpenCode, Pi, and Pythinker. Producer availability depends on the operating system, installed CLI version, authentication state, and required execution capabilities.
+Claude Architect also includes a strictly non-mutating Claude advisor, cross-platform process supervision, crash recovery, bounded and redacted run logging, and Producer adapters for Codex, OpenCode, Pi, and Pythinker. Producer availability depends on the operating system, installed CLI version, authentication state, requested Lane, and required execution capabilities.
 
 
 ## Releases

@@ -56,7 +56,7 @@ Independent executable verification of an Attempt Result and its candidate artif
 
 ### Candidate Artifact
 
-Output produced by an untrusted Producer, such as a patch, report, or review. For implementation work it is a base-bound binary patch plus a manifest of paths, modes, and content hashes. A Candidate Artifact cannot modify the main checkout until Acceptance Verification succeeds.
+Output produced by an untrusted Producer, such as a patch, report, or review. For implementation work the canonical form is a base-bound, content-addressed Git tree constructed by the trusted runtime, accompanied by a changed-path manifest of paths, modes, and content hashes. A full-index, binary-capable patch is exported from that tree for review and portability but is not the artifact's sole identity. A Candidate Artifact cannot modify the main checkout until Acceptance Verification succeeds.
 
 ### Capability Report
 
@@ -76,7 +76,7 @@ The canonical reason a Delegation Attempt did not produce a verified Candidate A
 
 ### Sandbox Backend
 
-An internal adapter used by the Attempt Runtime to enforce the execution policy on a supported operating system. Producer-native confinement may satisfy the policy; otherwise a configured operating-system mechanism must do so.
+An internal adapter used by the Attempt Runtime to enforce the execution policy on a supported operating system. Its defining responsibility is write confinement to the attempt worktree; process-tree supervision alone does not satisfy it. Producer-native confinement may satisfy the policy; otherwise a named, tested operating-system mechanism must. A platform without a proven write-confinement path remains operational for diagnostics but ineligible for the implementation Lane.
 
 ### Platform Services
 
@@ -84,7 +84,11 @@ The operating-system seam for executable resolution, supervised process creation
 
 ### Controlled Integration
 
-A Host-owned action that revalidates a verified Candidate Artifact against the unchanged base commit and clean main checkout before applying it. Controlled Integration is outside the Attempt Runtime.
+The safe mutation of the main checkout with an accepted Candidate Artifact. Claude owns the decision; the trusted runtime owns the mutation, performed through the structured `integrateCandidate` tool rather than by Main Claude executing Git commands. Controlled Integration revalidates the unchanged base commit, clean checkout, artifact tree, and manifest hash before applying and reports `applied`, `conflicted`, or `aborted`. It is a runtime operation distinct from the Attempt Runtime that produced the candidate.
+
+### Producer Configuration Profile
+
+A per-adapter declaration of how a Producer stores credentials and behavioral configuration and whether the two can be separated. It records credential sources, behavioral-config sources, repository-instruction sources, environment dependencies, temporary-home strategy, and an isolation state of `controlled-config-supported`, `controlled-config-with-copied-credentials`, `inherited-config-only`, or `configuration-isolation-unsupported`. The runtime never silently inherits user-global configuration.
 
 ## Architectural Decisions In Force
 
@@ -113,16 +117,21 @@ A Host-owned action that revalidates a verified Candidate Artifact against the u
 - A small native helper is permitted where native Windows process-tree ownership requires it. Shell scripts may support repository development and CI but no shipped runtime feature may require them.
 - P0 allows one active editing Delegation Attempt per base checkout. Parallel candidate generation and queueing are deferred.
 - P0 requires a clean main checkout before an editing Delegation Attempt starts. Dirty-state snapshotting is deferred.
+- P0 defines and tests at least one concrete write-confinement backend for every platform on which any Producer is certified for the implementation Lane. Process-tree supervision alone does not satisfy write confinement. A platform–Producer combination without a proven confinement path remains operational for diagnostics but ineligible for implementation.
 
 ### Plugin Surface And Invocation
 
 - The marketplace-installed public command is the namespaced Skill `/claude-architect:delegate`. Documentation, examples, and screenshots must not present plain `/delegate` as the normal plugin command.
-- The Delegate Skill has Main Claude write a validated Delegation Spec and invoke the Claude Architect runtime through a structured plugin-bundled MCP tool.
-- The plugin MCP server owns schema validation, capability probing, routing, worktree management, process supervision, artifact collection, recovery, and Acceptance Verification. It returns a structured verified-candidate result for Main Claude's review.
+- The Delegate Skill has Main Claude construct a candidate Delegation Spec and invoke the Claude Architect runtime through a structured plugin-bundled MCP tool. Main Claude does not declare its own output valid; the runtime is the validation authority.
+- The plugin MCP server owns schema validation, capability probing, routing, worktree management, process supervision, artifact collection, recovery, Acceptance Verification, and Controlled Integration. It returns a structured verified-candidate result for Main Claude's review.
+- Spec validation is a repair loop. The runtime validates and normalizes the candidate spec and, on failure, returns structured validation errors so Main Claude can repair and resubmit. No Producer is probed or started before validation succeeds.
+- The candidate lifecycle after a verified result is exposed as distinct structured tools: `reviewCandidate(runId)` returns the diff and evidence, `decideCandidate(runId, accepted | rejected | revision-requested)` records the Host Decision, and `integrateCandidate(runId, expectedArtifactHash)` performs Controlled Integration. Main Claude owns the decision; the runtime owns the mutation. `integrateCandidate` acquires the repository lock, revalidates the base commit and clean state, revalidates the artifact tree and manifest hash, applies into a disposable integration worktree or temporary index, detects conflicts or path divergence, updates the main checkout only when the whole operation can succeed, and returns `applied`, `conflicted`, or `aborted`.
+- A `doctor` tool is exposed through MCP, not only through the development CLI, so `/claude-architect:delegate` can return a structured explanation when Node, Git, or Producers are unavailable.
 - Plugin configuration resolves packaged assets through `${CLAUDE_PLUGIN_ROOT}`. Runtime access must not depend on a bare command being added to the Bash tool's `PATH`.
+- `${CLAUDE_PLUGIN_ROOT}` changes on every plugin update and the previous version's directory is ephemeral, so no run state, archive, or lock is ever written under the plugin root. Persistent plugin state, including archived run data, lives in `${CLAUDE_PLUGIN_DATA}`, which survives updates. During a mid-session update, a running plugin MCP server keeps the previous version's path until `/reload-plugins`; the update-during-active-attempt contract builds on this documented Host behavior.
 - The shipped path must not depend on Bash versus PowerShell, Bash shebangs, `chmod +x`, `.sh` launchers, Unix-only path syntax, or Claude composing a shell command string.
 - A development CLI may expose `claude-architect doctor`, `claude-architect probe`, `claude-architect run --spec spec.json`, and `claude-architect recover`, but it is not the normal `/claude-architect:delegate` transport.
-- The plugin-bundled advisor is strictly read-only and uses an explicit `Read, Grep, Glob` tool allowlist. It does not receive Bash, Write, or Edit. Required Git observations are exposed through dedicated read-only operations such as status, diff, log, and changed-file queries.
+- The plugin-bundled advisor is strictly non-mutating and uses an explicit `Read, Grep, Glob` tool allowlist. It does not receive Bash, Write, or Edit. Non-mutating does not imply confidentiality-safe: the advisor can still read sensitive repository content, so it is described as a non-mutating advisor rather than a confidentiality-preserving one. Required Git observations are exposed through dedicated read-only operations such as status, diff, log, and changed-file queries; because Git history and diffs can reveal secrets, their outputs receive the same redaction discipline as run logs. Plugin agents cannot declare their own `mcpServers`, `hooks`, or `permissionMode`, so these Git operations are tools on the plugin-bundled MCP server, allowlisted in the advisor's `tools` frontmatter by their scoped names (`mcp__plugin_claude-architect_<server>__<tool>`).
 
 The preferred shipped layout is:
 
@@ -143,6 +152,27 @@ claude-architect/
       `-- platform helpers
 ```
 
+### MCP Bootstrap And Lifecycle
+
+- `.mcp.json` resolves packaged assets through `${CLAUDE_PLUGIN_ROOT}` and starts a stdio MCP server. The protocol stream is emitted only on stdout; all diagnostics are emitted only on stderr so startup output cannot corrupt the protocol.
+- The server has an explicit bootstrap contract: locate `node` (including native Windows resolution), verify version 22 or later and refuse an earlier version such as Node 20 even when found first, resolve the real runtime `server.js`, report runtime and schema version, acquire per-run or per-repository state, and otherwise fail with actionable installation diagnostics rather than a corrupt stream.
+- Startup timeout, runtime crash behavior, and any automatic restart behavior are defined and tested. Concurrent tool calls against one repository are serialized to preserve the one-active-attempt rule.
+- One server instance may serve multiple repositories; per-repository state and locking keep runs isolated.
+- Updating the plugin while a server process is active has a defined, tested outcome that preserves run evidence and checkout integrity.
+- The runtime, `SKILL.md`, and schemas carry compatible protocol versions; a version mismatch is reported as an actionable diagnostic rather than a silent failure.
+
+```text
+McpBootstrap
+|-- locate Node
+|-- verify >= 22
+|-- resolve real runtime/server.js
+|-- emit protocol only on stdout
+|-- emit diagnostics only on stderr
+|-- report runtime and schema version
+|-- acquire per-run or per-repository state
+`-- fail with actionable installation diagnostics
+```
+
 ### Runtime Components
 
 ```text
@@ -152,7 +182,7 @@ Claude Code
 |     Main Claude writes the Delegation Spec
 |
 |-- claude-architect:advisor
-|     Strictly read-only Claude subagent
+|     Strictly non-mutating Claude subagent
 |
 `-- Claude Architect MCP server
       |-- SpecValidator
@@ -173,7 +203,9 @@ Claude Code
       |     |-- OpenCodeAdapter
       |     |-- PiAdapter
       |     `-- PythinkerAdapter
-      `-- AcceptanceVerifier
+      |-- AcceptanceVerifier
+      |-- ControlledIntegrator
+      `-- Doctor
 ```
 
 ### Specification And Routing
@@ -191,25 +223,60 @@ Claude Code
 ### Worktree And Write Policy
 
 - Each editing Delegation Attempt receives a separate worktree created from the recorded base commit.
-- The Attempt Runtime never modifies the main checkout. After Acceptance Verification, it returns a verified Candidate Artifact for Controlled Integration by the Host.
+- The Attempt Runtime never modifies the main checkout. After Acceptance Verification, it returns a verified Candidate Artifact for Host review and, on an accepted Host Decision, Controlled Integration by the runtime.
 - Acceptance Verification rejects every tracked or untracked non-ignored changed path outside the positive write allowlist.
 - P0 rejects new or modified symbolic links rather than attempting to prove that their targets remain confined.
 - The Attempt Runtime inventories tracked, untracked, and ignored worktree paths before and after Producer execution and verification. Ignored artifacts are recorded but are not included in the candidate patch.
 - The Attempt Runtime verifies that the main checkout's commit and clean state still match the recorded base before returning `verified-candidate`. A changed base preserves the Candidate Artifact but yields `verification-failed`.
-- The Candidate Artifact records the base commit and contains a complete binary-capable patch for allowed tracked and untracked non-ignored changes, including file modes and deletions, plus content hashes in its manifest.
+- The canonical Candidate Artifact is a base-bound, content-addressed Git tree constructed by the trusted runtime. It records the base commit oid, the candidate tree oid, an optional candidate commit oid, the manifest hash, the changed-path manifest, and verification evidence. A full-index, binary-capable patch is exported for review and portability but is not the artifact's identity.
+- After the Producer exits, the runtime stages the allowed tracked and untracked non-ignored changes in an isolated index and uses Git plumbing to write the candidate tree. The Producer does not create the trusted artifact. Content addressing represents file modes natively, makes binary files natural, and lets verification and Controlled Integration prove they operate on the exact tree Claude reviewed.
 - The Candidate Artifact is frozen after Producer execution and structural inspection, before project verification begins.
-- Controlled Integration rechecks the base commit, clean state, patch hash, and changed-path manifest immediately before applying the Candidate Artifact. A failed recheck leaves the main checkout unchanged.
+- Controlled Integration rechecks the base commit, clean state, candidate tree oid, and manifest hash immediately before applying the Candidate Artifact. A failed recheck leaves the main checkout unchanged.
+- The checkout lock is keyed by the canonical Git common directory, not the user-provided repository path, so path aliases, linked worktrees, symlinks, and Windows case differences cannot bypass the one-active-attempt rule.
+- P0 defines an explicit repository precondition matrix rather than discovering unsupported states during execution. Supported states are a normal non-bare repository with an existing commit at `HEAD`, a clean checkout, no in-progress Git operation, no changed submodule entries, and no sparse checkout. Detected-and-rejected states include bare or unborn repositories, in-progress merge, rebase, cherry-pick, or bisect operations, candidate submodule modifications, and unsupported filesystem collisions such as case-only differences on case-insensitive filesystems.
+- Detached `HEAD`, existing linked worktrees, Git LFS, `skip-worktree` or `assume-unchanged` entries, nested repositories, and repository paths reached through symlinks are explicitly classified as supported or rejected before P0, never encountered by accident.
+
+```text
+Supported:
+- Normal non-bare repository
+- Existing commit at HEAD
+- Clean checkout
+- No in-progress Git operation
+- No changed submodule entries
+- No sparse checkout
+
+Detected but rejected:
+- Bare or unborn repositories
+- In-progress operations
+- Candidate submodule modifications
+- Unsupported filesystem collisions
+```
 
 ### Producer Configuration And Environment
 
 - The default Producer behavior policy is controlled configuration plus repository guidance. User-global behavior configuration is excluded.
 - Producer credentials may come from documented credential stores or explicitly allowlisted environment variables without enabling unrelated user-global behavior configuration.
+- Each Producer Adapter declares a Producer Configuration Profile. Because many CLIs store credentials and behavioral configuration under the same home or config directory, setting a temporary `HOME`, `XDG_CONFIG_HOME`, `APPDATA`, or `USERPROFILE` may hide both, while inheriting the real directory may re-enable unwanted global behavior. When a Producer cannot separate credentials from user-global behavior, the runtime marks controlled mode unavailable, offers an explicit inherited-configuration policy, or records the reduced reproducibility in the Run Manifest. It never silently inherits global configuration.
 - Relevant repository instruction paths and content hashes are recorded in the Run Manifest.
-- Producer subprocesses receive a minimal common environment plus variables allowlisted by the selected Producer Adapter and explicit Host-approved additions. The Host environment is not inherited wholesale.
-- Sensitive environment values and known credential forms are redacted before any event, log, or result is persisted.
+- Producer subprocesses receive a layered environment: platform-essential variables, then the selected Producer Adapter's required allowlist, then explicit Delegation Spec additions. The Host environment is not inherited wholesale.
+- Platform-essential variables include `SystemRoot`, `ComSpec`, `TEMP`, `TMP`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, and a canonical `Path` on native Windows, and `HOME`, `PATH`, `TMPDIR`, locale variables, and selected XDG variables on Unix.
+- Sensitive environment values and known credential forms are redacted before any event, log, or result is persisted. The Run Manifest records environment variable names and redacted provenance, not secret values.
 - The Attempt Runtime requires a Sandbox Backend or documented Producer-native confinement that satisfies the write policy. It fails closed when neither is available.
 - Worktree checks detect policy violations but do not substitute for process confinement.
 - P0 denies nested delegation unconditionally. The runtime sets `CLAUDE_ARCHITECT_DELEGATED=1` and refuses to start when that marker is already present.
+
+### Confinement Matrix
+
+- Process-tree control and write confinement are separate mechanisms. A Windows Job Object and a POSIX process group provide lifecycle control, not filesystem confinement.
+- For every certified platform–Producer combination, the runtime records process supervision, write confinement, and network policy as `supported` or `unsupported`, and derives implementation-Lane eligibility from write confinement, not from supervision alone.
+- The named backend for each platform is either documented Producer-native confinement or a tested operating-system mechanism. Combinations without a proven write-confinement path remain diagnostic-only.
+
+```text
+Platform    Process-tree control    Write confinement                              Network policy
+macOS       Process group           Producer-native sandbox or named backend       Defined enforcement
+Linux       Process group           Producer-native sandbox or named backend       Defined enforcement
+Windows     Job Object / helper     Producer-native sandbox or named backend       Defined enforcement
+```
 
 ### Process Supervision
 
@@ -269,7 +336,25 @@ Changes integrated: IntegrationResult = applied
 ### Acceptance Verification
 
 - Acceptance Verification executes only commands authorized by the Host in the validated Delegation Spec. Producer-suggested commands may be recorded as evidence but are not executed automatically.
-- Verification commands are structured executable-and-argument data, not shell command strings.
+- Verification commands are structured executable-and-argument data, not shell command strings. The runtime resolves verification executables through the same `PlatformServices.resolveExecutable()` path used for Producer CLIs. The structure supports monorepos and cross-platform verification without permitting arbitrary shell strings:
+
+```ts
+interface VerificationCommand {
+  id: string;
+  executable: string;
+  args: string[];
+  cwd: string;
+  environment?: Record<string, string>;
+  timeoutMs: number;
+  network: "denied" | "allowed";
+  expectedExitCodes: number[];
+  platform?: {
+    os?: Array<"darwin" | "linux" | "win32">;
+    arch?: string[];
+  };
+}
+```
+
 - Acceptance Verification has two stages. A packaged structural verifier uses trusted runtime and Git executables without importing candidate code; project verification then runs Host-authorized commands as untrusted code under the same confinement and minimal-environment policy.
 - Project verification runs against a disposable materialization of the frozen Candidate Artifact, not the artifact-producing worktree.
 - After each project verification command, the structural verifier recomputes the complete tracked and non-ignored manifest: paths, file types, modes, and content hashes. Any divergence from the frozen Candidate Artifact yields `verification-failed`; verification mutations never enter the Candidate Artifact.
@@ -281,7 +366,7 @@ Changes integrated: IntegrationResult = applied
 
 ### Retention And Recovery
 
-- Attempt finalization archives bounded redacted logs, the Run Manifest, Attempt Result, and candidate patch, then deletes the attempt worktree after every terminal Attempt Result.
+- Attempt finalization archives bounded redacted logs, the Run Manifest, Attempt Result, and candidate patch, then deletes the attempt worktree after every terminal Attempt Result. Archives live under `${CLAUDE_PLUGIN_DATA}` or an explicit user-configured directory, never under the plugin root.
 - Crash recovery detects stale runs, terminates surviving process trees through Platform Services, archives recoverable evidence, releases the checkout lock, and removes stale worktrees.
 - Archived artifacts have configurable size and age limits; truncation and cleanup are recorded rather than silent.
 
@@ -292,7 +377,9 @@ Changes integrated: IntegrationResult = applied
 - Process Supervisor integration tests cover POSIX process-group and Windows process-tree cancellation, timeout escalation, stream saturation, truncation, and orphan cleanup.
 - Acceptance Verification tests cover out-of-scope writes, untracked files, symbolic links, empty success, changed base commits, failed commands, and dishonest Producer claims.
 - Sandbox Backend tests prove fail-closed selection and policy enforcement separately on each supported operating system.
-- Controlled Integration tests cover stale bases, dirty checkouts, artifact tampering, binary files, modes, deletions, and untracked files.
+- Candidate-tree tests prove the runtime, not the Producer, constructs the content-addressed tree and that its oid and manifest hash are stable across freeze, verification, and integration.
+- Controlled Integration tests cover stale bases, dirty checkouts, artifact and tree-oid tampering, binary files, modes, deletions, untracked files, and conflict or path divergence detection.
+- Producer Configuration Profile tests prove that controlled mode isolates behavior without dropping credentials, and that an adapter unable to separate them is reported rather than silently inheriting global configuration.
 - Acceptance Verification tests prove that commands cannot mutate the frozen Candidate Artifact or cause unverified bytes to reach Controlled Integration.
 - Schema compatibility tests protect Delegation Spec and Attempt Result versioning.
 - Existing CLI argument behavior tests move behind Producer Adapter interfaces. Prose-presence tests do not serve as executable behavior tests.
@@ -320,6 +407,9 @@ Claude Architect must not be described as universal until these gates pass.
 - Plugin cache and installation paths containing spaces are tested.
 - `/claude-architect:delegate` is visible and invokable after marketplace installation.
 - The runtime is accessible through the plugin MCP configuration without depending on the Bash tool's `PATH`.
+- MCP bootstrap is tested: Node location and the version-22 floor on every platform, stdout-protocol and stderr-diagnostic separation, startup timeout, crash and restart behavior, per-repository state isolation, serialization of concurrent tool calls, and runtime/schema version-mismatch reporting.
+- The `reviewCandidate`, `decideCandidate`, and `integrateCandidate` tools are tested end to end, including that `integrateCandidate` refuses a stale base, dirty checkout, or mismatched artifact hash without mutating the main checkout.
+- The `doctor` tool is reachable over MCP and returns structured, actionable diagnostics when Node, Git, or Producers are unavailable.
 - Native Windows is tested both without Git Bash and with Git Bash installed.
 - WSL installation is tested and reported as Linux rather than native Windows.
 - Updating the plugin while a Delegation Attempt is active has a defined, tested outcome that preserves run evidence and checkout integrity.
@@ -332,6 +422,7 @@ Claude Architect must not be described as universal until these gates pass.
 - Each adapter publishes tested values for macOS, Linux, native Windows, and WSL, using states such as `certified`, `tested`, `conditional`, `unsupported`, or `unknown` with a reason.
 - Native Windows and WSL results are never merged into one Windows claim.
 - Producer availability reflects the tested CLI version, authentication state, requested Lane, structured-output support, and required confinement backend.
+- Every platform–Producer combination certified for the implementation Lane names a proven write-confinement backend. Combinations without one are published as diagnostic-only, never as implementation-eligible.
 
 The release evidence includes a table in this form, populated only from real test results:
 
@@ -343,6 +434,14 @@ Pi          <result>    <result>    <result>          <result>
 Pythinker   <result>    <result>    <result>          <result>
 ```
 
+### Release Sequencing
+
+The final P0 gate spans three operating systems, four Producers, confinement, verification, recovery, integration, and plugin lifecycle. Implementation is staged so four adapters cannot obscure defects in the core runtime. The public release remains blocked until all required gates pass regardless of stage.
+
+- P0-A — protocol and vertical slice: MCP bootstrap, schemas, Platform Services, the content-addressed Git tree artifact, the Codex adapter, one certified environment per operating system, Acceptance Verification, and Controlled Integration.
+- P0-B — cross-platform hardening: the full claimed architecture matrix, the Windows process-tree helper, concrete Sandbox Backends, path, locking, Unicode, and wrapper tests, and crash recovery.
+- P0-C — producer completion: the OpenCode, Pi, and Pythinker adapters, per-platform capability certification, and the final universal release gates.
+
 ## Product Description
 
 Claude Architect is a cross-platform Claude Code plugin for macOS, Linux, and Windows. It adds `/claude-architect:delegate`, which lets Claude route well-scoped implementation subtasks to supported installations of Codex, OpenCode, Pi, or Pythinker.
@@ -351,7 +450,7 @@ Claude remains the architect. It creates a versioned Delegation Spec, selects an
 
 External agents are untrusted Producers. Their output is returned as a verified Candidate Artifact, not automatically accepted work. Claude reviews the diff and verification evidence before deciding whether the changes should be integrated.
 
-Claude Architect also includes a strictly read-only Claude advisor, cross-platform process supervision, crash recovery, bounded and redacted run logging, and Producer Adapters for Codex, OpenCode, Pi, and Pythinker. Producer availability depends on the operating system, installed CLI version, authentication state, requested Lane, and required execution capabilities.
+Claude Architect also includes a strictly non-mutating Claude advisor, cross-platform process supervision, crash recovery, bounded and redacted run logging, and Producer Adapters for Codex, OpenCode, Pi, and Pythinker. Producer availability depends on the operating system, installed CLI version, authentication state, requested Lane, and required execution capabilities.
 
 The central architectural rule is: make the protocol universal, make native Windows part of P0, and allow individual Producers to be conditionally available. Plugin availability must not depend on every external CLI being equally portable.
 
@@ -362,6 +461,8 @@ The central architectural rule is: make the protocol universal, make native Wind
 - [Claude Code plugin guide](https://code.claude.com/docs/en/plugins) defines namespaced plugin Skills, plugin structure, and the Bash-specific `bin/` `PATH` behavior.
 - [Node.js child process documentation](https://nodejs.org/api/child_process.html) defines cross-platform spawn, detached-process, signal, Windows wrapper, and case-insensitive environment behavior.
 - [OpenCode documentation](https://opencode.ai/docs/) documents native Windows installation options and its WSL recommendation.
+- [Git plumbing documentation](https://git-scm.com/docs) defines the isolated-index, `write-tree`, `read-tree`, and `hash-object` operations used to construct and revalidate the content-addressed Candidate Artifact.
+- [Model Context Protocol specification](https://modelcontextprotocol.io/specification) defines the stdio transport, protocol-versioning, and stdout/stderr separation that the MCP bootstrap contract depends on.
 
 ## Deferred Decisions
 
