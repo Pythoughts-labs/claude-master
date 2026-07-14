@@ -28,8 +28,11 @@ async function exists(filePath: string): Promise<boolean> {
   try {
     await access(filePath);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
   }
 }
 
@@ -135,8 +138,12 @@ export async function checkPreconditions(
   const gitDirectoryResult = await git(canonical, ["rev-parse", "--path-format=absolute", "--git-dir"]);
   if (!succeeded(gitDirectoryResult)) return { ok: false, reason: "git-command-failed" };
   const gitDirectory = gitDirectoryResult.stdout.trim();
-  if ((await Promise.all(IN_PROGRESS_PATHS.map(relative => exists(path.join(gitDirectory, relative))))).some(Boolean)) {
-    return { ok: false, reason: "in-progress-operation" };
+  try {
+    if ((await Promise.all(IN_PROGRESS_PATHS.map(relative => exists(path.join(gitDirectory, relative))))).some(Boolean)) {
+      return { ok: false, reason: "in-progress-operation" };
+    }
+  } catch {
+    return { ok: false, reason: "in-progress-operation-scan-failed" };
   }
 
   const status = await git(canonical, ["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=all"]);

@@ -51,6 +51,20 @@ describe("PosixPlatformServices", () => {
     expect(resolveStateDir()).toBe(process.env.CLAUDE_ARCHITECT_STATE_DIR);
   });
 
+  it("rejects the test-only state-directory override in production", () => {
+    const previousNodeEnvironment = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+
+    try {
+      expect(() => resolveStateDir()).toThrow(
+        "CLAUDE_PLUGIN_DATA is required outside test environments",
+      );
+    } finally {
+      if (previousNodeEnvironment === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnvironment;
+    }
+  });
+
   it("resolves node and captures bounded process output", async () => {
     const originalPath = process.env.PATH;
     // Prefer the running Node binary over host PATH shims that require env beyond the intentionally sanitized PATH.

@@ -1,9 +1,34 @@
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { git } from "../../src/git/git-exec.js";
 import { checkPreconditions } from "../../src/git/repo-preconditions.js";
+
+const filesystemProbe = vi.hoisted(() => ({
+  markerAccessErrorCode: undefined as string | undefined,
+  opendirCalls: 0,
+}));
+
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    access: async (...args: Parameters<typeof actual.access>) => {
+      if (filesystemProbe.markerAccessErrorCode !== undefined
+        && String(args[0]).endsWith("MERGE_HEAD")) {
+        throw Object.assign(new Error("marker probe failed"), {
+          code: filesystemProbe.markerAccessErrorCode,
+        });
+      }
+      return actual.access(...args);
+    },
+    opendir: async (...args: Parameters<typeof actual.opendir>) => {
+      filesystemProbe.opendirCalls += 1;
+      return actual.opendir(...args);
+    },
+  };
+});
 
 const temporaryPaths: string[] = [];
 
@@ -29,6 +54,8 @@ async function initRepo(): Promise<string> {
 }
 
 afterEach(async () => {
+  filesystemProbe.markerAccessErrorCode = undefined;
+  filesystemProbe.opendirCalls = 0;
   await Promise.all(temporaryPaths.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -65,6 +92,16 @@ describe("checkPreconditions", () => {
     await writeFile(join(gitDirectory, "MERGE_HEAD"), "0000000000000000000000000000000000000000\n");
 
     await expect(checkPreconditions(directory)).resolves.toEqual({ ok: false, reason: "in-progress-operation" });
+  });
+
+  it("fails closed when an in-progress marker cannot be scanned", async () => {
+    const directory = await initRepo();
+    filesystemProbe.markerAccessErrorCode = "EACCES";
+
+    await expect(checkPreconditions(directory)).resolves.toEqual({
+      ok: false,
+      reason: "in-progress-operation-scan-failed",
+    });
   });
 
   it("rejects a dirty checkout", async () => {
@@ -118,6 +155,16 @@ describe("checkPreconditions", () => {
     await expect(checkPreconditions(directory, { writeAllowlist: ["nested/file.txt"] })).resolves.toEqual({ ok: false, reason: "nested-repository" });
     await expect(checkPreconditions(directory, { writeAllowlist: ["nested/*"] })).resolves.toEqual({ ok: false, reason: "nested-repository" });
     await expect(checkPreconditions(directory, { writeAllowlist: ["**/*.txt"] })).resolves.toEqual({ ok: false, reason: "nested-repository" });
+  });
+
+  it("streams nested-repository discovery with opendir", async () => {
+    const directory = await initRepo();
+
+    await expect(checkPreconditions(directory, { writeAllowlist: ["src/**"] })).resolves.toMatchObject({
+      ok: true,
+    });
+
+    expect(filesystemProbe.opendirCalls).toBeGreaterThan(0);
   });
 
   it.skipIf(process.platform === "win32")("does not scan an unreadable ignored directory outside the write allowlist", async () => {
