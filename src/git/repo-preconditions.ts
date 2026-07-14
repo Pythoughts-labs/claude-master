@@ -1,4 +1,4 @@
-import { access, lstat, readdir, realpath } from "node:fs/promises";
+import { access, lstat, opendir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { getPlatformServices } from "../platform/select-platform.js";
 import { git, type GitResult } from "./git-exec.js";
@@ -82,12 +82,12 @@ async function findNestedRepositories(
   let scannedEntries = 0;
 
   async function walk(directory: string): Promise<void> {
-    const entries = await readdir(directory, { withFileTypes: true });
-    scannedEntries += entries.length;
-    if (scannedEntries > MAX_NESTED_REPOSITORY_SCAN_ENTRIES) {
-      throw new Error("nested repository scan entry budget exceeded");
-    }
-    for (const entry of entries) {
+    const entries = await opendir(directory);
+    for await (const entry of entries) {
+      scannedEntries += 1;
+      if (scannedEntries > MAX_NESTED_REPOSITORY_SCAN_ENTRIES) {
+        throw new Error("nested repository scan entry budget exceeded");
+      }
       if (entry.name === ".git" || !entry.isDirectory()) continue;
       const child = path.join(directory, entry.name);
       const relativeChild = path.relative(repositoryRoot, child).split(path.sep).join("/");
