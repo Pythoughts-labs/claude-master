@@ -1,11 +1,30 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { freezeCandidate } from "../../src/git/candidate-tree.js";
 import { git } from "../../src/git/git-exec.js";
 
 const temporaryPaths: string[] = [];
+const gitHooks = vi.hoisted(() => ({
+  afterReadTree: undefined as (() => Promise<void>) | undefined,
+}));
+
+vi.mock("../../src/git/git-exec.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../src/git/git-exec.js")>();
+  return {
+    ...actual,
+    git: async (...args: Parameters<typeof actual.git>) => {
+      const result = await actual.git(...args);
+      if (args[1][0] === "read-tree" && gitHooks.afterReadTree !== undefined) {
+        const hook = gitHooks.afterReadTree;
+        gitHooks.afterReadTree = undefined;
+        await hook();
+      }
+      return result;
+    },
+  };
+});
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
   const result = await git(cwd, args);
@@ -36,6 +55,7 @@ async function initRepoAndWorktree(
 }
 
 afterEach(async () => {
+  gitHooks.afterReadTree = undefined;
   await Promise.all(temporaryPaths.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -119,6 +139,25 @@ describe("freezeCandidate", () => {
     expect(result).toEqual({ ok: false, reason: "modified-symlink" });
   });
 
+  it.skipIf(process.platform === "win32")("rejects a symlink introduced after the advisory scan", async () => {
+    const fixture = await initRepoAndWorktree();
+    const candidatePath = join(fixture.worktreePath, "link.txt");
+    await writeFile(candidatePath, "regular file during inventory\n");
+    gitHooks.afterReadTree = async () => {
+      await rm(candidatePath);
+      await symlink("a.txt", candidatePath);
+    };
+
+    const result = await freezeCandidate({
+      ...fixture,
+      runId: "run-symlink-frozen-tree",
+      writeAllowlist: ["link.txt"],
+      forbiddenScope: [],
+    });
+
+    expect(result).toEqual({ ok: false, reason: "modified-symlink" });
+  });
+
   it("rejects an empty candidate", async () => {
     const fixture = await initRepoAndWorktree();
 
@@ -175,6 +214,29 @@ describe("freezeCandidate", () => {
     expect(result).toEqual({ ok: false, reason: "empty-candidate" });
   });
 
+  it("returns sorted ignored paths as successful freeze evidence", async () => {
+    const fixture = await initRepoAndWorktree({ ".gitignore": "*.log\n", "a.txt": "hello\n" });
+    await writeFile(join(fixture.worktreePath, "a.txt"), "changed\n");
+    await writeFile(join(fixture.worktreePath, "z.log"), "ignored\n");
+    await writeFile(join(fixture.worktreePath, "a.log"), "ignored\n");
+    await writeFile(join(fixture.worktreePath, "API_KEY=abcdef123456.log"), "ignored\n");
+
+    const result = await freezeCandidate({
+      ...fixture,
+      runId: "run-ignored-evidence",
+      writeAllowlist: ["a.txt"],
+      forbiddenScope: [],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.evidence).toEqual({
+        ignoredPaths: ["API_KEY=«redacted:env»", "a.log", "z.log"],
+      });
+      expect(result.artifact).not.toHaveProperty("ignoredPaths");
+    }
+  });
+
   it("redacts secrets from the persisted review patch", async () => {
     const fixture = await initRepoAndWorktree();
     await writeFile(join(fixture.worktreePath, "a.txt"), "API_KEY=abcdef123456\n");
@@ -190,6 +252,30 @@ describe("freezeCandidate", () => {
     if (result.ok) {
       expect(result.artifact.patch).toContain("«redacted:env»");
       expect(result.artifact.patch).not.toContain("abcdef123456");
+    }
+  });
+
+  it("replaces every reconstructible binary patch payload with a safe marker", async () => {
+    const fixture = await initRepoAndWorktree({
+      "asset-a.bin": "\0base-a",
+      "asset-b.bin": "\0base-b",
+    });
+    await writeFile(join(fixture.worktreePath, "asset-a.bin"), Buffer.from("\0changed-a"));
+    await writeFile(join(fixture.worktreePath, "asset-b.bin"), Buffer.from("\0changed-b"));
+
+    const result = await freezeCandidate({
+      ...fixture,
+      runId: "run-binary-patch",
+      writeAllowlist: ["*.bin"],
+      forbiddenScope: [],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.artifact.patch).toContain("diff --git a/asset-a.bin b/asset-a.bin");
+      expect(result.artifact.patch).toContain("diff --git a/asset-b.bin b/asset-b.bin");
+      expect(result.artifact.patch.match(/\[\[BINARY_PATCH_PAYLOAD_OMITTED\]\]/g)).toHaveLength(2);
+      expect(result.artifact.patch).not.toMatch(/\n(?:literal|delta) \d+\n/);
     }
   });
 });

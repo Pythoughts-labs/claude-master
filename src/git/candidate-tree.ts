@@ -8,6 +8,7 @@ import { RuntimeError } from "../util/errors.js";
 import { git, type GitResult } from "./git-exec.js";
 
 const MAX_DIAGNOSTIC_LENGTH = 2_000;
+const BINARY_PATCH_PAYLOAD_MARKER = "[[BINARY_PATCH_PAYLOAD_OMITTED]]";
 
 export type FreezeReject = "out-of-scope-write" | "modified-symlink" | "empty-candidate";
 
@@ -20,8 +21,12 @@ export interface FreezeCandidateArgs {
   forbiddenScope: string[];
 }
 
+export interface FreezeEvidence {
+  ignoredPaths: string[];
+}
+
 export type FreezeCandidateResult =
-  | { ok: true; artifact: CandidateArtifact }
+  | { ok: true; artifact: CandidateArtifact; evidence: FreezeEvidence }
   | { ok: false; reason: FreezeReject };
 
 interface WorktreeInventory {
@@ -187,6 +192,24 @@ function sortChangedPaths(changedPaths: ChangedPath[]): ChangedPath[] {
   return changedPaths.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
 }
 
+function sanitizeReviewPatch(patch: string): string {
+  const sanitizedLines: string[] = [];
+  let omittingBinaryPayload = false;
+  for (const line of patch.split(/\r?\n/)) {
+    if (line === "GIT binary patch") {
+      sanitizedLines.push(line, BINARY_PATCH_PAYLOAD_MARKER);
+      omittingBinaryPayload = true;
+      continue;
+    }
+    if (omittingBinaryPayload) {
+      if (!line.startsWith("diff --git ")) continue;
+      omittingBinaryPayload = false;
+    }
+    sanitizedLines.push(line);
+  }
+  return redact(sanitizedLines.join("\n"));
+}
+
 export async function freezeCandidate(args: FreezeCandidateArgs): Promise<FreezeCandidateResult> {
   const inventory = await inventoryWorktree(args.worktreePath);
   if (inventory.changedPaths.some(changedPath =>
@@ -273,7 +296,7 @@ export async function freezeCandidate(args: FreezeCandidateArgs): Promise<Freeze
     const manifestHash = createHash("sha256")
       .update(JSON.stringify(changedPaths))
       .digest("hex");
-    const patch = redact(await checkedGit(args.repoRoot, [
+    const patch = sanitizeReviewPatch(await checkedGit(args.repoRoot, [
       "diff",
       "--binary",
       "--full-index",
@@ -291,6 +314,11 @@ export async function freezeCandidate(args: FreezeCandidateArgs): Promise<Freeze
         manifestHash,
         changedPaths,
         patch,
+      },
+      evidence: {
+        ignoredPaths: inventory.ignoredPaths
+          .map(ignoredPath => redact(ignoredPath))
+          .sort((left, right) => left < right ? -1 : left > right ? 1 : 0),
       },
     };
   } finally {
