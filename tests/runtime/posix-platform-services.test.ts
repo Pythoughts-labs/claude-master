@@ -92,4 +92,37 @@ describe("PosixPlatformServices", () => {
     expect(aliasLock.key).toBe(realLock.key);
     await aliasLock.release();
   });
+
+  it("refuses to terminate a process group for non-positive pids", async () => {
+    const stillRunning = true;
+    await expect(ps.terminateProcessTreeByPid(-1)).resolves.toBeUndefined();
+    await expect(ps.terminateProcessTreeByPid(0)).resolves.toBeUndefined();
+    await expect(ps.terminateProcessTreeByPid(1)).resolves.toBeUndefined();
+    // If any of the calls above had actually signalled a real group (e.g. group 1 == init,
+    // or this test worker's own group via pid 0), the process running this assertion would
+    // be gone. Reaching here proves the guard skipped the kill instead of acting on it.
+    expect(stillRunning).toBe(true);
+  });
+
+  it("terminates a real process tree when given its actual pid", async () => {
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${path.dirname(process.execPath)}${path.delimiter}${originalPath ?? ""}`;
+    try {
+      const executable = await ps.resolveExecutable({ name: "node" });
+      const proc = await ps.spawnSupervised({
+        executable, args: [fixture, "", "", "60000"], cwd: process.cwd(),
+        env: { PATH: process.env.PATH ?? "" }, timeoutMs: 5000, maxOutputBytes: 1_000_000,
+      });
+      expect(proc.pid).toBeGreaterThan(1);
+      await ps.terminateProcessTreeByPid(proc.pid);
+      const exit = await Promise.race([
+        proc.done,
+        delay(2000).then(() => { throw new Error("process was not terminated"); }),
+      ]);
+      expect(exit.signal).toBe("SIGKILL");
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
+  });
 });

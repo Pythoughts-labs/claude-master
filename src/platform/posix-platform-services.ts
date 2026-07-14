@@ -6,6 +6,7 @@ import path from "node:path";
 import nodeProcess from "node:process";
 import { BoundedBuffer } from "../util/bounded-buffer.js";
 import { RuntimeError } from "../util/errors.js";
+import { logger } from "../util/logger.js";
 import type {
   CanonicalPath, CheckoutLock, ExecutableRequest, PlatformServices, ResolvedExecutable,
   SpawnRequest, SupervisedExit, SupervisedProcess,
@@ -41,6 +42,13 @@ async function gitCommonDir(cwd: string): Promise<string> {
 }
 
 function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  // pid <= 1 is never a valid spawned-child group: -1 is the "no pid" sentinel from a failed
+  // spawn(), 0 means "current process group", and 1 is init/a container's PID-1 entrypoint.
+  // Negating any of these into process.kill(-pid, ...) would signal a group we must never touch.
+  if (pid <= 1) {
+    logger.warn("skipped process-group terminate for invalid pid", { pid, signal });
+    return;
+  }
   try { nodeProcess.kill(-pid, signal); }
   catch (error) { if (errorCode(error) !== "ESRCH") throw error; }
 }
