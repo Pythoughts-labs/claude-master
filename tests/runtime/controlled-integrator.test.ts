@@ -290,4 +290,31 @@ describe("applyCandidateTree", () => {
       artifact.candidateCommitOid,
     );
   });
+
+  it.skipIf(process.platform === "win32")("reports an applied tree when lock cleanup fails", async () => {
+    const f = await fixture();
+    await writeFile(path.join(f.worktreePath, "a.txt"), "candidate\n");
+    const artifact = await freeze(f, "lock-cleanup-failure");
+    const lockDirectory = path.join(f.root, "state", "locks");
+    integrationHooks.afterReadTree = async () => {
+      await chmod(lockDirectory, 0o500);
+    };
+
+    let result;
+    try {
+      result = await applyCandidateTree({
+        repoRoot: f.repoRoot,
+        artifact,
+        expectedArtifactHash: artifact.manifestHash,
+      });
+    } finally {
+      await chmod(lockDirectory, 0o700);
+    }
+
+    expect(result.integration).toBe("applied");
+    expect(result.detail).toContain("checkout lock release failed");
+    expect(await readFile(path.join(f.repoRoot, "a.txt"), "utf8")).toBe("candidate\n");
+    const anchor = await git(f.repoRoot, ["show-ref", "--verify", artifact.anchorRef]);
+    expect(anchor.exitCode).not.toBe(0);
+  });
 });

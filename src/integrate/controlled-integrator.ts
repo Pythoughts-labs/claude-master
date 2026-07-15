@@ -51,19 +51,24 @@ export async function applyCandidateTree(args: ApplyCandidateTreeArgs): Promise<
   const ps = getPlatformServices();
   const { canonical } = await ps.canonicalizePath(args.repoRoot);
   const lock = await ps.acquireCheckoutLock(canonical);
+  const terminal: { result: IntegrationResult | null } = { result: null };
+  const finish = (result: IntegrationResult): IntegrationResult => {
+    terminal.result = result;
+    return result;
+  };
   try {
     const preconditions = await checkPreconditions(canonical);
-    if (!preconditions.ok) return aborted(`precondition-failed:${preconditions.reason}`);
+    if (!preconditions.ok) return finish(aborted(`precondition-failed:${preconditions.reason}`));
     if (preconditions.baseCommitOid !== args.artifact.baseCommitOid) {
-      return aborted("base-changed");
+      return finish(aborted("base-changed"));
     }
     if (args.artifact.manifestHash !== args.expectedArtifactHash) {
-      return aborted("artifact-hash-mismatch");
+      return finish(aborted("artifact-hash-mismatch"));
     }
     if (!CANDIDATE_REF.test(args.artifact.anchorRef)
       || !OBJECT_ID.test(args.artifact.candidateCommitOid)
       || !OBJECT_ID.test(args.artifact.candidateTreeOid)) {
-      return aborted("invalid-candidate-identity");
+      return finish(aborted("invalid-candidate-identity"));
     }
 
     const anchor = await git(canonical, [
@@ -73,7 +78,7 @@ export async function applyCandidateTree(args: ApplyCandidateTreeArgs): Promise<
       `${args.artifact.anchorRef}^{commit}`,
     ]);
     if (!succeeded(anchor) || anchor.stdout.trim() !== args.artifact.candidateCommitOid) {
-      return aborted("candidate-anchor-mismatch");
+      return finish(aborted("candidate-anchor-mismatch"));
     }
     const candidateTree = await git(canonical, [
       "rev-parse",
@@ -81,11 +86,13 @@ export async function applyCandidateTree(args: ApplyCandidateTreeArgs): Promise<
       `${args.artifact.candidateCommitOid}^{tree}`,
     ]);
     if (!succeeded(candidateTree) || candidateTree.stdout.trim() !== args.artifact.candidateTreeOid) {
-      return aborted("candidate-tree-mismatch");
+      return finish(aborted("candidate-tree-mismatch"));
     }
 
     const refreshed = await git(canonical, ["update-index", "-q", "--refresh"]);
-    if (!succeeded(refreshed)) return { integration: "conflicted", detail: "index-refresh-failed" };
+    if (!succeeded(refreshed)) {
+      return finish({ integration: "conflicted", detail: "index-refresh-failed" });
+    }
     const applied = await git(canonical, [
       "read-tree",
       "-m",
@@ -93,7 +100,9 @@ export async function applyCandidateTree(args: ApplyCandidateTreeArgs): Promise<
       args.artifact.baseCommitOid,
       args.artifact.candidateTreeOid,
     ]);
-    if (!succeeded(applied)) return { integration: "conflicted", detail: "candidate-apply-conflict" };
+    if (!succeeded(applied)) {
+      return finish({ integration: "conflicted", detail: "candidate-apply-conflict" });
+    }
 
     const status = await git(canonical, [
       "status",
@@ -114,7 +123,7 @@ export async function applyCandidateTree(args: ApplyCandidateTreeArgs): Promise<
       || !succeeded(status)
       || !statusMatchesArtifact(status.stdout, args.artifact.changedPaths)) {
       await rollback(canonical, args.artifact.baseCommitOid);
-      return aborted("post-apply-sanity-failed");
+      return finish(aborted("post-apply-sanity-failed"));
     }
 
     const deleted = await git(canonical, [
@@ -126,10 +135,15 @@ export async function applyCandidateTree(args: ApplyCandidateTreeArgs): Promise<
     ]);
     if (!succeeded(deleted)) {
       await rollback(canonical, args.artifact.baseCommitOid);
-      return aborted("candidate-anchor-delete-failed");
+      return finish(aborted("candidate-anchor-delete-failed"));
     }
-    return { integration: "applied", detail: "candidate tree applied" };
+    return finish({ integration: "applied", detail: "candidate tree applied" });
   } finally {
-    await lock.release();
+    try {
+      await lock.release();
+    } catch (error) {
+      if (terminal.result === null) throw error;
+      terminal.result.detail = `${terminal.result.detail}; checkout lock release failed`;
+    }
   }
 }
