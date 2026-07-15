@@ -368,11 +368,11 @@ git commit -m "feat(platform): Job Object process-tree helper for native Windows
 - Consumes: `WindowsPlatformServices` (Tasks 2–4), `normalizeWindowsEnv`.
 - Produces: `buildEnvironment({ os: "win32", ... })` seeds exactly `["SystemRoot","ComSpec","TEMP","TMP","USERPROFILE","APPDATA","LOCALAPPDATA","Path"]` from a case-normalized view of `process.env` (source `"platform"`), honors `tempHome` by overriding `USERPROFILE` (and `APPDATA`/`LOCALAPPDATA` under it: `<tempHome>\\AppData\\Roaming`, `<tempHome>\\AppData\\Local`), and still forces `CLAUDE_ARCHITECT_DELEGATED=1`.
 
-- [ ] **Step 1: Write failing tests** — with `process.env` polluted by `PATH` and `Path`, `buildEnvironment({os:"win32", adapterAllowlist:[]})` yields exactly one `Path`; `tempHome` set → `USERPROFILE === tempHome` and both AppData vars point under it; provenance entries sorted and sourced `"platform"`; POSIX behavior unchanged (regression: existing suite still green). Doctor test: on win32 selection, `doctor()` no longer emits the unsupported-platform issue.
+- [x] **Step 1: Write failing tests** — with `process.env` polluted by `PATH` and `Path`, `buildEnvironment({os:"win32", adapterAllowlist:[]})` yields exactly one `Path`; `tempHome` set → `USERPROFILE === tempHome` and both AppData vars point under it; provenance entries sorted and sourced `"platform"`; POSIX behavior unchanged (regression: existing suite still green). Doctor test: on win32 selection, `doctor()` no longer emits the unsupported-platform issue.
 
-- [ ] **Step 2: Run to verify failure.**
+- [x] **Step 2: Run to verify failure.**
 
-- [ ] **Step 3: Implement** — in `environment-policy.ts` replace the `args.os === "win32" ? [] : POSIX_ESSENTIAL_ENV` branch (`environment-policy.ts:145`) with a `WIN32_ESSENTIAL_ENV` list read through `normalizeWindowsEnv(process.env)`; keep the XDG skip logic POSIX-only; add the tempHome AppData overrides in the same place the POSIX `HOME` override lives (`:154-156`). `select-platform.ts` becomes:
+- [x] **Step 3: Implement** — in `environment-policy.ts` replace the `args.os === "win32" ? [] : POSIX_ESSENTIAL_ENV` branch (`environment-policy.ts:145`) with a `WIN32_ESSENTIAL_ENV` list read through `normalizeWindowsEnv(process.env)`; keep the XDG skip logic POSIX-only; add the tempHome AppData overrides in the same place the POSIX `HOME` override lives (`:154-156`). `select-platform.ts` becomes:
 
 ```ts
 import { PosixPlatformServices } from "./posix-platform-services.js";
@@ -388,9 +388,9 @@ export function getPlatformServices(): PlatformServices {
 }
 ```
 
-- [ ] **Step 4: Run** — `npm run typecheck && npm test && npm run build` → all green, bundle byte-stable check via `bash scripts/validate-release.sh`.
+- [x] **Step 4: Run** — `npm run typecheck && npm test && npm run build` → all green, bundle byte-stable check via `bash scripts/validate-release.sh`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — landed as `a9a0880`
 
 ```bash
 git add src/platform/select-platform.ts src/runtime/environment-policy.ts src/mcp/doctor.ts tests/runtime/ runtime/server.mjs
