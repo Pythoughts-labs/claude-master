@@ -181,6 +181,26 @@ describe("ArtifactStore", () => {
     ))).resolves.toBeDefined();
   });
 
+  it("preserves allowedMutations on archived verification commands", async () => {
+    const store = new ArtifactStore("run-allowed-mutations");
+    const result = sampleResult("run-allowed-mutations");
+    result.requestedVerification = [{
+      id: "install-deps",
+      executable: "npm",
+      args: ["ci"],
+      cwd: ".",
+      timeoutMs: 60_000,
+      network: "allowed",
+      allowedMutations: "ignored-paths",
+      expectedExitCodes: [0],
+    }];
+
+    await store.writeResult(result);
+
+    const archived = await store.readResult("run-allowed-mutations");
+    expect(archived?.requestedVerification[0]?.allowedMutations).toBe("ignored-paths");
+  });
+
   it("round-trips an AttemptResult under plugin data", async () => {
     const store = new ArtifactStore("run-round-trip");
     const result = sampleResult("run-round-trip");

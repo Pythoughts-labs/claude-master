@@ -175,6 +175,7 @@
         },
         "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 1800000 },
         "network": { "enum": ["denied", "allowed"] },
+        "allowedMutations": { "enum": ["none", "ignored-paths"] },
         "expectedExitCodes": {
           "type": "array",
           "items": { "type": "integer" }

@@ -6,6 +6,17 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-15
+
+### Added
+
+- P0-B Windows groundwork now ships in the runtime: native Windows platform services (PATHEXT-aware executable resolution, supervised spawning, checkout locking, canonical paths, PowerShell process-start tokens), Job Object process-tree helper resolution that fails closed when the helper binary is absent, first-class win32 platform selection with the Windows essential environment set (canonical `Path` casing, `USERPROFILE`/`APPDATA`/`LOCALAPPDATA` isolation under a temporary home), and a named write-confinement backend registry — edit attempts fail closed before spawning when the capability report names no recognized, supported backend. The Windows helper binary and CI promotion land with the P0-B release gate.
+
+### Fixed
+
+- A freeze rejected for out-of-scope writes now names the offending repository paths (bounded to 25) in `evidence.freezeRejectPaths`, so a sandbox violation is diagnosable from the archived result instead of only reporting `out-of-scope-write`.
+- Archived attempt results now preserve each verification command's `allowedMutations` policy, restoring post-hoc auditability of the effective verification policy.
+
 ## [0.9.3] - 2026-07-15
 
 ### Added
@@ -105,7 +116,8 @@ Initial public release.
 - Native OpenCode assets under `.opencode/` and `opencode.json`, so the same lanes and skill work outside Claude Code.
 - SVG banner and shields badges for the README.
 
-[Unreleased]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.9.3...v0.10.0
 [0.9.3]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.9.0...v0.9.1

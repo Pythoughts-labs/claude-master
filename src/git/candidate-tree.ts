@@ -8,6 +8,7 @@ import { RuntimeError } from "../util/errors.js";
 import { git, type GitResult } from "./git-exec.js";
 
 const MAX_DIAGNOSTIC_LENGTH = 2_000;
+const MAX_REJECT_PATHS = 25;
 const BINARY_PATCH_PAYLOAD_MARKER = "[[BINARY_PATCH_PAYLOAD_OMITTED]]";
 
 export type FreezeReject = "out-of-scope-write" | "modified-symlink" | "empty-candidate";
@@ -27,7 +28,7 @@ export interface FreezeEvidence {
 
 export type FreezeCandidateResult =
   | { ok: true; artifact: CandidateArtifact; evidence: FreezeEvidence }
-  | { ok: false; reason: FreezeReject };
+  | { ok: false; reason: FreezeReject; paths?: string[] };
 
 interface WorktreeInventory {
   changedPaths: string[];
@@ -218,9 +219,11 @@ function sanitizeReviewPatch(patch: string): string {
 
 export async function freezeCandidate(args: FreezeCandidateArgs): Promise<FreezeCandidateResult> {
   const inventory = await inventoryWorktree(args.worktreePath);
-  if (inventory.changedPaths.some(changedPath =>
-    !isAllowed(changedPath, args.writeAllowlist, args.forbiddenScope))) {
-    return { ok: false, reason: "out-of-scope-write" };
+  const outOfScope = inventory.changedPaths.filter(changedPath =>
+    !isAllowed(changedPath, args.writeAllowlist, args.forbiddenScope));
+  if (outOfScope.length > 0) {
+    // Name the offending paths (bounded) so a rejected freeze is diagnosable.
+    return { ok: false, reason: "out-of-scope-write", paths: outOfScope.slice(0, MAX_REJECT_PATHS) };
   }
 
   if (await advisoryLstatScan(args.worktreePath, inventory.changedPaths)) {

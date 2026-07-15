@@ -83,7 +83,7 @@ describe("freezeCandidate", () => {
       forbiddenScope: [],
     });
 
-    expect(result).toEqual({ ok: false, reason: "out-of-scope-write" });
+    expect(result).toEqual({ ok: false, reason: "out-of-scope-write", paths: ["b.txt"] });
   });
 
   it("freezes an allowed edit into a content-addressed tree", async () => {
@@ -271,7 +271,11 @@ describe("freezeCandidate", () => {
       forbiddenScope: ["src/private.txt"],
     });
 
-    expect(result).toEqual({ ok: false, reason: "out-of-scope-write" });
+    expect(result).toEqual({
+      ok: false,
+      reason: "out-of-scope-write",
+      paths: ["src/private.txt"],
+    });
   });
 
   it("rejects case variants of forbidden paths", async () => {
@@ -286,7 +290,11 @@ describe("freezeCandidate", () => {
       forbiddenScope: ["src/private/**"],
     });
 
-    expect(result).toEqual({ ok: false, reason: "out-of-scope-write" });
+    expect(result).toEqual({
+      ok: false,
+      reason: "out-of-scope-write",
+      paths: ["src/Private/secret.txt"],
+    });
   });
 
   it("stages paths containing pathspec metacharacters literally", async () => {

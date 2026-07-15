@@ -21930,7 +21930,7 @@ var StdioServerTransport = class {
 var PROTOCOL_VERSION = "1.0.0";
 var DELEGATION_SPEC_VERSION = "1";
 var ATTEMPT_RESULT_VERSION = "1";
-var RUNTIME_VERSION = "0.8.0";
+var RUNTIME_VERSION = "0.10.0";
 
 // src/util/errors.ts
 var RuntimeError = class extends Error {
@@ -23986,6 +23986,7 @@ var attempt_result_v1_default = {
         },
         timeoutMs: { type: "integer", minimum: 1, maximum: 18e5 },
         network: { enum: ["denied", "allowed"] },
+        allowedMutations: { enum: ["none", "ignored-paths"] },
         expectedExitCodes: {
           type: "array",
           items: { type: "integer" }
@@ -24459,6 +24460,9 @@ function sanitizeVerificationCommand(command) {
     network: command.network,
     expectedExitCodes: [...command.expectedExitCodes]
   };
+  if (command.allowedMutations !== void 0) {
+    sanitized.allowedMutations = command.allowedMutations;
+  }
   if (command.environment !== void 0) {
     sanitized.environment = redactRecord(command.environment);
   }
@@ -25119,6 +25123,7 @@ import { lstat as lstat3, mkdtemp, rm as rm2 } from "node:fs/promises";
 import { tmpdir as tmpdir4 } from "node:os";
 import path5 from "node:path";
 var MAX_DIAGNOSTIC_LENGTH3 = 2e3;
+var MAX_REJECT_PATHS = 25;
 var BINARY_PATCH_PAYLOAD_MARKER = "[[BINARY_PATCH_PAYLOAD_OMITTED]]";
 function gitFailure2(action, result) {
   const diagnostic = redact(result.stderr || result.stdout).trim().slice(0, MAX_DIAGNOSTIC_LENGTH3);
@@ -25273,8 +25278,9 @@ function sanitizeReviewPatch(patch) {
 }
 async function freezeCandidate(args) {
   const inventory = await inventoryWorktree(args.worktreePath);
-  if (inventory.changedPaths.some((changedPath) => !isAllowed2(changedPath, args.writeAllowlist, args.forbiddenScope))) {
-    return { ok: false, reason: "out-of-scope-write" };
+  const outOfScope = inventory.changedPaths.filter((changedPath) => !isAllowed2(changedPath, args.writeAllowlist, args.forbiddenScope));
+  if (outOfScope.length > 0) {
+    return { ok: false, reason: "out-of-scope-write", paths: outOfScope.slice(0, MAX_REJECT_PATHS) };
   }
   if (await advisoryLstatScan(args.worktreePath, inventory.changedPaths)) {
     return { ok: false, reason: "modified-symlink" };
@@ -26082,7 +26088,10 @@ async function runAttempt(checkoutPath, spec, deps) {
         if (frozen.reason === "empty-candidate") signals["verification-failure"] = true;
         else signals["sandbox-violation"] = true;
         unresolvedIssues = [frozen.reason];
-        evidence = { freezeReject: frozen.reason };
+        evidence = {
+          freezeReject: frozen.reason,
+          ...frozen.paths === void 0 ? {} : { freezeRejectPaths: frozen.paths }
+        };
       } else {
         candidate = frozen.artifact;
         evidence = { ...frozen.evidence };

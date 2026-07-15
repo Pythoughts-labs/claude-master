@@ -407,6 +407,9 @@ function sanitizeVerificationCommand(command: VerificationCommand): Verification
     network: command.network,
     expectedExitCodes: [...command.expectedExitCodes],
   };
+  if (command.allowedMutations !== undefined) {
+    sanitized.allowedMutations = command.allowedMutations;
+  }
   if (command.environment !== undefined) {
     sanitized.environment = redactRecord(command.environment);
   }

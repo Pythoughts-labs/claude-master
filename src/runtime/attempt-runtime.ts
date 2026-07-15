@@ -633,7 +633,10 @@ export async function runAttempt(
         if (frozen.reason === "empty-candidate") signals["verification-failure"] = true;
         else signals["sandbox-violation"] = true;
         unresolvedIssues = [frozen.reason];
-        evidence = { freezeReject: frozen.reason };
+        evidence = {
+          freezeReject: frozen.reason,
+          ...(frozen.paths === undefined ? {} : { freezeRejectPaths: frozen.paths }),
+        };
       } else {
         candidate = frozen.artifact;
         evidence = { ...frozen.evidence };
