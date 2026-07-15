@@ -171,6 +171,35 @@ describe("MCP tool handlers", () => {
     expect(attempted).toBe(false);
   });
 
+  it("accepts a JSON-encoded string spec from schemaless MCP clients", async () => {
+    const calls: string[] = [];
+    const deps = dependencies();
+    deps.runAttempt = async (checkoutPath, spec) => {
+      calls.push(checkoutPath);
+      expect(spec).toEqual(validSpec);
+      return result;
+    };
+
+    const output = await handleDelegate("/repo", JSON.stringify(validSpec), deps);
+
+    expect(output).toEqual({ ok: true, result });
+    expect(calls).toEqual(["/canonical/repo"]);
+  });
+
+  it("reports a repairable error for a string spec that is not valid JSON", async () => {
+    let attempted = false;
+    const deps = dependencies();
+    deps.runAttempt = async () => {
+      attempted = true;
+      return result;
+    };
+
+    const output = await handleDelegate("/repo", "{not json", deps);
+
+    expect(output).toMatchObject({ ok: false, error: "invalid-specification" });
+    expect(attempted).toBe(false);
+  });
+
   it("returns an actionable protocol mismatch without touching a producer", async () => {
     let attempted = false;
     const deps = dependencies();

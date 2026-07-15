@@ -26225,6 +26225,17 @@ function schemaCompatibility(input) {
 async function handleDelegate(checkoutPath, input, deps = {}) {
   const protocol = checkVersionCompat(deps.skillProtocolVersion ?? PROTOCOL_VERSION);
   if (!protocol.ok) return { ok: false, diagnostic: protocol.diagnostic };
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      return {
+        ok: false,
+        error: "invalid-specification",
+        validationErrors: [{ path: "#", message: "string spec is not valid JSON" }]
+      };
+    }
+  }
   const schema = schemaCompatibility(input);
   if (!schema.ok) return schema;
   const validation = validateSpec(input);

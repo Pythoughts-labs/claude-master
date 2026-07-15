@@ -164,6 +164,19 @@ export async function handleDelegate(
 > {
   const protocol = checkVersionCompat(deps.skillProtocolVersion ?? PROTOCOL_VERSION);
   if (!protocol.ok) return { ok: false, diagnostic: protocol.diagnostic! };
+  // Schemaless MCP clients (spec is z.unknown → empty JSON schema) may serialize the
+  // nested spec object as a JSON string; accept that encoding before validation.
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input) as unknown;
+    } catch {
+      return {
+        ok: false,
+        error: "invalid-specification",
+        validationErrors: [{ path: "#", message: "string spec is not valid JSON" }],
+      };
+    }
+  }
   const schema = schemaCompatibility(input);
   if (!schema.ok) return schema;
   const validation = validateSpec(input);

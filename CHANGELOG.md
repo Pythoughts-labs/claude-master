@@ -6,6 +6,12 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-15
+
+### Fixed
+
+- `delegate` now accepts a JSON-encoded string Delegation Spec. The tool declares `spec` as an untyped value, so schemaless MCP clients serialize the nested spec object as a string; the handler parses it before validation instead of rejecting every delegation with `#/type must be object`.
+
 ## [0.8.0] - 2026-07-14
 
 ### Added
@@ -77,7 +83,8 @@ Initial public release.
 - Native OpenCode assets under `.opencode/` and `opencode.json`, so the same lanes and skill work outside Claude Code.
 - SVG banner and shields badges for the README.
 
-[Unreleased]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Pythoughts-labs/claude-architect/releases/tag/v0.6.0
