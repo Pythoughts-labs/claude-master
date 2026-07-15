@@ -112,7 +112,11 @@ export function buildRunManifest(args: BuildRunManifestArgs): RunManifest {
     promptHash: sha256(args.prompt),
     executionPolicy: redactRecord(args.executionPolicy),
     environment: args.environment
-      .map(entry => ({ name: redact(entry.name), source: entry.source })),
+      .map(entry => ({ name: redact(entry.name), source: entry.source }))
+      .sort((left, right) => {
+        const nameOrder = compareText(left.name, right.name);
+        return nameOrder === 0 ? compareText(left.source, right.source) : nameOrder;
+      }),
     runtimeVersion: RUNTIME_VERSION,
     protocolVersion: PROTOCOL_VERSION,
     schemaVersions: {

@@ -68,19 +68,27 @@ function redactValue(value: unknown): unknown {
   if (value === null || typeof value !== "object") return value;
 
   const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
+  for (const [key, child] of Object.entries(value).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0)) {
     const redacted = redactValue(child);
-    if (DANGEROUS_KEYS.has(key)) {
+    const redactedKeyBase = redact(key);
+    let redactedKey = redactedKeyBase;
+    let suffix = 2;
+    while (Object.prototype.hasOwnProperty.call(result, redactedKey)) {
+      redactedKey = `${redactedKeyBase}#${suffix}`;
+      suffix += 1;
+    }
+    if (DANGEROUS_KEYS.has(redactedKey)) {
       // Define as an own data property instead of assigning, so a
       // `__proto__` key from untrusted input can't hijack result's prototype.
-      Object.defineProperty(result, key, {
+      Object.defineProperty(result, redactedKey, {
         value: redacted,
         writable: true,
         enumerable: true,
         configurable: true,
       });
     } else {
-      result[key] = redacted;
+      result[redactedKey] = redacted;
     }
   }
   return result;

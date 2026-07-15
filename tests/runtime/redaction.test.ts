@@ -97,4 +97,15 @@ describe("redact", () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(output.safe).toBe("ok");
   });
+
+  it("redacts registered secret values used as property names", () => {
+    clearRegisteredSecrets();
+    const registration = registerSecretValue("enterprise-secret-key");
+
+    const output = redactRecord({ "enterprise-secret-key": "ordinary" });
+
+    expect(JSON.stringify(output)).not.toContain("enterprise-secret-key");
+    expect(JSON.stringify(output)).toContain("«redacted:secret»");
+    registration.dispose();
+  });
 });
