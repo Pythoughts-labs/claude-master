@@ -64,11 +64,13 @@ async function runServerWith(nodePath, entrypoint) {
       windowsHide: true,
     });
     const forwardSignal = signal => child.kill(signal);
-    const signalHandlers = new Map([
-      ["SIGHUP", () => forwardSignal("SIGHUP")],
-      ["SIGINT", () => forwardSignal("SIGINT")],
-      ["SIGTERM", () => forwardSignal("SIGTERM")],
-    ]);
+    const forwardedSignals = process.platform === "win32"
+      ? ["SIGINT", "SIGTERM", "SIGBREAK"]
+      : ["SIGHUP", "SIGINT", "SIGTERM", "SIGQUIT", "SIGUSR1", "SIGUSR2"];
+    const signalHandlers = new Map(forwardedSignals.map(signal => [
+      signal,
+      () => forwardSignal(signal),
+    ]));
     for (const [signal, handler] of signalHandlers) process.on(signal, handler);
     const cleanup = () => {
       for (const [signal, handler] of signalHandlers) process.off(signal, handler);
