@@ -72,6 +72,8 @@ function outcomesMatchHostCommands(
 ): boolean {
   const byId = new Map(commands.map(command => [command.id, command]));
   if (byId.size !== commands.length) return false;
+  const outcomeIds = new Set(outcomes.map(outcome => outcome.id));
+  if (outcomes.length !== commands.length || outcomeIds.size !== outcomes.length) return false;
   return outcomes.every(outcome => {
     const command = byId.get(outcome.id);
     return command !== undefined

@@ -196,6 +196,54 @@ describe("AcceptanceVerifier", () => {
     expect(result.failures).toContain("command-outcome-mismatch");
   });
 
+  it("independently rejects a missing outcome for a Host-declared command", async () => {
+    const structural = vi.fn(async (): Promise<StructuralVerifyResult> => ({
+      ok: true,
+      failures: [],
+      manifestHash: artifact.manifestHash,
+    }));
+    const project = vi.fn(async (): Promise<ProjectVerifyResult> => ({
+      commandOutcomes: [],
+      mutated: false,
+      failures: [],
+      evidence: { commands: [] },
+      outputLogs: [],
+    }));
+
+    const result = await new AcceptanceVerifier({ structural, project }).verify(args());
+
+    expect(result.failures).toContain("command-outcome-mismatch");
+  });
+
+  it("independently rejects duplicate outcomes for one Host-declared command", async () => {
+    const structural = vi.fn(async (): Promise<StructuralVerifyResult> => ({
+      ok: true,
+      failures: [],
+      manifestHash: artifact.manifestHash,
+    }));
+    const duplicate = {
+      ...outcome,
+      stdoutRef: "logs/verification-1-stdout.log",
+      stderrRef: "logs/verification-1-stderr.log",
+    };
+    const project = vi.fn(async (): Promise<ProjectVerifyResult> => ({
+      commandOutcomes: [outcome, duplicate],
+      mutated: false,
+      failures: [],
+      evidence: { commands: [] },
+      outputLogs: [
+        { name: "verification-0-stdout", text: "" },
+        { name: "verification-0-stderr", text: "" },
+        { name: "verification-1-stdout", text: "" },
+        { name: "verification-1-stderr", text: "" },
+      ],
+    }));
+
+    const result = await new AcceptanceVerifier({ structural, project }).verify(args());
+
+    expect(result.failures).toContain("command-outcome-mismatch");
+  });
+
   it("rejects an empty verification success", async () => {
     const structural = vi.fn(async (): Promise<StructuralVerifyResult> => ({
       ok: true,
@@ -212,7 +260,8 @@ describe("AcceptanceVerifier", () => {
 
     const result = await new AcceptanceVerifier({ structural, project }).verify(args());
 
-    expect(result).toMatchObject({ ok: false, failures: ["empty-verification"] });
+    expect(result.ok).toBe(false);
+    expect(result.failures).toEqual(["empty-verification", "command-outcome-mismatch"]);
   });
 
   it("rejects mismatched project log refs before writing partial archive evidence", async () => {
