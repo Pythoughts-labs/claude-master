@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -37,6 +37,36 @@ async function waitForFile(filePath: string, timeoutMs = 2_000): Promise<string>
     await new Promise(resolve => setTimeout(resolve, 20));
   }
   throw new Error(`timed out waiting for ${filePath}`);
+}
+
+async function waitForExit(child: ChildProcess, timeoutMs = 2_000): Promise<{
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { code: child.exitCode, signal: child.signalCode };
+  }
+  return await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("timed out waiting for bootstrap exit")), timeoutMs);
+    child.once("error", error => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout);
+      resolve({ code, signal });
+    });
+  });
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+    throw error;
+  }
 }
 
 afterEach(async () => {
@@ -113,6 +143,33 @@ describe("runtime bootstrap", () => {
     expect(result.stderr).toContain("fake server ready");
   });
 
+  it.skipIf(process.platform === "win32")("propagates a re-executed server exit code", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ca-bootstrap-exit-code-"));
+    temporaryPaths.push(root);
+    const serverPath = path.join(root, "exit-server.mjs");
+    const preludePath = await nodeVersionPrelude(root, "20.19.0");
+    const bin = path.join(root, "bin");
+    await mkdir(bin);
+    await symlink(process.execPath, path.join(bin, "node"));
+    await writeFile(serverPath, "process.exit(7);\n");
+
+    const result = spawnSync(
+      process.execPath,
+      ["--import", preludePath, bootstrapPath],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: bin,
+          CLAUDE_ARCHITECT_SERVER_PATH: serverPath,
+        },
+      },
+    );
+
+    expect(result.status).toBe(7);
+    expect(result.stdout).toBe("");
+  });
+
   it("fails on stderr when no supported node exists on PATH", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ca-bootstrap-missing-"));
     temporaryPaths.push(root);
@@ -171,10 +228,13 @@ describe("runtime bootstrap", () => {
       serverPid = Number(await waitForFile(pidFile));
       child.kill("SIGTERM");
       await waitForFile(terminatedFile);
+      const exit = await waitForExit(child);
       expect(Number.isSafeInteger(serverPid) && serverPid > 1).toBe(true);
+      expect(exit).toEqual({ code: 0, signal: null });
+      expect(isProcessAlive(serverPid)).toBe(false);
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-      if (serverPid > 1) {
+      if (serverPid > 1 && isProcessAlive(serverPid)) {
         try {
           process.kill(serverPid, "SIGKILL");
         } catch (error) {

@@ -79,6 +79,12 @@ claude plugin list --json
 
 Restart Claude Code, open a project, and run `/delegate`. Update commands, OpenCode installation, and lane requirements are documented below.
 
+### Runtime bootstrap and recovery
+
+The Claude Code MCP runtime requires Node.js 22 or newer. The host must be able to resolve an initial `node` executable on `PATH` before the plugin bootstrap can run; if that executable is older, the bootstrap searches `PATH` for a supported Node.js and re-executes the server with it. Install Node.js 22+ and reload the plugin when no supported runtime is available.
+
+Claude Code owns MCP startup timeout and restart behavior. If the server does not complete the MCP `initialize` handshake within the host timeout, Claude Code surfaces that startup failure. A crashed delegation attempt is not resumed automatically in P0; recovery reclaims stale locks and worktrees on the next server start, and a new delegation must be submitted.
+
 ## Why it saves money
 
 Top-tier model tokens are expensive, and most of what a coding task spends them on is not judgment. It is boilerplate, test scaffolding, mechanical edits, and reading large files to pull out one answer. None of that needs your best model.
