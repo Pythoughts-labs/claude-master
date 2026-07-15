@@ -306,13 +306,13 @@ git commit -m "feat(platform): Windows spawn, checkout locking, canonical paths,
 - Consumes: `${CLAUDE_PLUGIN_ROOT}` resolution (same pattern the runtime already uses for `runtime/bootstrap.mjs`).
 - Produces: `terminateProcessTree(process)` / `terminateProcessTreeByPid(pid, token?)` on win32 that reliably kill all descendants. Helper protocol: `win32-job-kill.exe <pid>` — opens the process, assigns/queries its Job, `TerminateJobObject`, exit 0 on success, 2 when the pid is already gone, 1 on failure. When the helper binary is missing on win32, `spawnSupervised` **fails closed** with a structured `RuntimeError("windows process-tree helper missing", { path })` BEFORE spawning a Producer (no supervision without termination capability).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 All-OS: `resolveJobKillHelper(pluginRoot, arch)` returns `<root>/native/bin/win32-job-kill-<arch>.exe` and a `checkAvailable()` that reports missing files. Win32-gated: spawn a Node fixture that spawns a grandchild writing a heartbeat file every 100ms; call `terminateProcessTree`; assert the heartbeat stops within 2s (no surviving descendants).
 
-- [ ] **Step 2: Run to verify failure.**
+- [x] **Step 2: Run to verify failure.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `native/win32-job-kill.c` (complete file):
 
@@ -347,7 +347,7 @@ Better containment (same task): create the Job at spawn time — spawn the helpe
 
 - [ ] **Step 4: Build the binary on Windows (CI or a Windows box), commit it, run the win32-gated test there** — Expected: heartbeat stops, no survivors. On POSIX: resolution tests PASS, gated skip.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — landed as `491ff04` (Step 4's Windows binary build remains pending CI)
 
 ```bash
 git add native/ src/platform/windows-platform-services.ts tests/runtime/
