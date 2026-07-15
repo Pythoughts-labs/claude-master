@@ -294,7 +294,7 @@ describe("freezeCandidate", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.evidence).toEqual({
-        ignoredPaths: ["API_KEY=«redacted:env»", "a.log", "z.log"],
+        ignoredPaths: ["API_KEY=[x]", "a.log", "z.log"],
       });
       expect(result.artifact).not.toHaveProperty("ignoredPaths");
     }
@@ -313,7 +313,7 @@ describe("freezeCandidate", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.artifact.patch).toContain("«redacted:env»");
+      expect(result.artifact.patch).toContain("[x]");
       expect(result.artifact.patch).not.toContain("abcdef123456");
     }
   });

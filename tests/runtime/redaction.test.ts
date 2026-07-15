@@ -9,7 +9,7 @@ describe("redact", () => {
   it("masks bearer tokens and known key prefixes", () => {
     expect(redact("Authorization: Bearer abc.def.ghi")).not.toContain("abc.def.ghi");
     expect(redact("key sk-ABCDEF0123456789")).not.toContain("sk-ABCDEF0123456789");
-    expect(redact("AWS AKIAIOSFODNN7EXAMPLE here")).toContain("«redacted:");
+    expect(redact("AWS AKIAIOSFODNN7EXAMPLE here")).toContain("[x]");
     expect(redact("AWS AKIAIOSFODNN7EXAMPLE here")).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
   it("leaves ordinary text intact", () => {
@@ -44,7 +44,7 @@ describe("redact", () => {
     );
 
     clearRegisteredSecrets();
-    expect(redact("hunter2-enterprise-token appears again")).not.toContain("«redacted:");
+    expect(redact("hunter2-enterprise-token appears again")).not.toContain("[x]");
   });
 
   it("ignores registered values shorter than six characters", () => {
@@ -62,6 +62,7 @@ describe("redact", () => {
     const once = redact("secret");
 
     expect(redact(once)).toBe(once);
+    expect(once).not.toContain("secret");
     registration.dispose();
   });
 
@@ -79,7 +80,7 @@ describe("redact", () => {
       attempt: 2,
       complete: false,
       detail: null,
-      nested: ["Bearer «redacted:bearer»", { message: "ordinary" }],
+      nested: ["Bearer [x]", { message: "ordinary" }],
     });
   });
 
@@ -115,7 +116,7 @@ describe("redact", () => {
     const output = redactRecord({ "enterprise-secret-key": "ordinary" });
 
     expect(JSON.stringify(output)).not.toContain("enterprise-secret-key");
-    expect(JSON.stringify(output)).toContain("«redacted:secret»");
+    expect(JSON.stringify(output)).toContain("[x]");
     registration.dispose();
   });
 });

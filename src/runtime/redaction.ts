@@ -1,33 +1,21 @@
 const registeredSecrets = new Map<string, number>();
-const SECRET_MARKER = "«redacted:secret»";
-const REDACTION_MARKER = /«redacted:(?:secret|bearer|key|github|aws|slack|jwt|env)»/g;
+const REDACTION_MARKER_TEXT = "[x]";
+const REDACTION_MARKER = /\[x\]/g;
 
 export interface SecretRegistration {
   dispose(): void;
 }
 
-const rules: Array<{ kind: string; re: RegExp }> = [
-  { kind: "bearer", re: /(?<=\bBearer[ \t]+)[A-Za-z0-9._~+/=-]+/gi },
-  { kind: "key", re: /\bsk-[A-Za-z0-9_-]{8,}\b/g },
-  { kind: "github", re: /\bgh[pousr]_[A-Za-z0-9]{8,}\b/g },
-  { kind: "aws", re: /\bAKIA[A-Z0-9]{12,}\b/g },
-  { kind: "slack", re: /\bxox[baprs]-[A-Za-z0-9-]{8,}\b/g },
-  {
-    kind: "jwt",
-    re: /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
-  },
-  {
-    kind: "env",
-    re: /(?<=\b(?:(?:[A-Za-z][A-Za-z0-9]*_)*(?:TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL)(?:_[A-Za-z0-9]+)*)=")[^"\r\n]+/gi,
-  },
-  {
-    kind: "env",
-    re: /(?<=\b(?:(?:[A-Za-z][A-Za-z0-9]*_)*(?:TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL)(?:_[A-Za-z0-9]+)*)=')[^'\r\n]+/gi,
-  },
-  {
-    kind: "env",
-    re: /(?<=\b(?:(?:[A-Za-z][A-Za-z0-9]*_)*(?:TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL)(?:_[A-Za-z0-9]+)*)=)[^\s,;"']+/gi,
-  },
+const rules: RegExp[] = [
+  /(?<=\bBearer[ \t]+)[A-Za-z0-9._~+/=-]+/gi,
+  /\bsk-[A-Za-z0-9_-]{8,}\b/g,
+  /\bgh[pousr]_[A-Za-z0-9]{8,}\b/g,
+  /\bAKIA[A-Z0-9]{12,}\b/g,
+  /\bxox[baprs]-[A-Za-z0-9-]{8,}\b/g,
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+  /(?<=\b(?:(?:[A-Za-z][A-Za-z0-9]*_)*(?:TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL)(?:_[A-Za-z0-9]+)*)=")[^"\r\n]+/gi,
+  /(?<=\b(?:(?:[A-Za-z][A-Za-z0-9]*_)*(?:TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL)(?:_[A-Za-z0-9]+)*)=')[^'\r\n]+/gi,
+  /(?<=\b(?:(?:[A-Za-z][A-Za-z0-9]*_)*(?:TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL)(?:_[A-Za-z0-9]+)*)=)[^\s,;"']+/gi,
 ];
 
 export function registerSecretValue(value: string): SecretRegistration {
@@ -51,6 +39,10 @@ export function clearRegisteredSecrets(): void {
   registeredSecrets.clear();
 }
 
+export function containsRegisteredSecret(text: string): boolean {
+  return [...registeredSecrets.keys()].some(secret => text.includes(secret));
+}
+
 function replaceRegisteredSecrets(text: string): string {
   const secrets = [...registeredSecrets.keys()];
   if (secrets.length === 0) return text;
@@ -69,7 +61,7 @@ function replaceRegisteredSecrets(text: string): string {
       }
     }
     if (nextIndex < 0) break;
-    result += text.slice(cursor, nextIndex) + SECRET_MARKER;
+    result += text.slice(cursor, nextIndex) + REDACTION_MARKER_TEXT;
     cursor = nextIndex + nextSecret.length;
   }
   return result + text.slice(cursor);
@@ -77,9 +69,7 @@ function replaceRegisteredSecrets(text: string): string {
 
 function redactUnmarked(text: string): string {
   let result = replaceRegisteredSecrets(text);
-  for (const rule of rules) {
-    result = result.replace(rule.re, `«redacted:${rule.kind}»`);
-  }
+  for (const rule of rules) result = result.replace(rule, REDACTION_MARKER_TEXT);
   return result;
 }
 

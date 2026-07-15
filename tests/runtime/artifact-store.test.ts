@@ -143,13 +143,13 @@ describe("ArtifactStore", () => {
   });
 
   it("preserves required result keys when their names equal registered values", async () => {
-    const registration = registerSecretValue("summary");
+    const registration = registerSecretValue("ummary");
     const store = new ArtifactStore("run-required-key");
 
     await store.writeResult(sampleResult("run-required-key"));
 
     const stored = await readFile(join(store.runDirectory, "result.json"), "utf8");
-    expect(stored).not.toContain('"summary"');
+    expect(stored).not.toContain("ummary");
     await expect(store.readResult("run-required-key")).resolves.toMatchObject({
       summary: "producer exited non-zero",
     });
@@ -165,7 +165,7 @@ describe("ArtifactStore", () => {
     expect(ref).toBe("logs/producer.log");
     const stored = await readFile(join(process.env.CLAUDE_PLUGIN_DATA!, "runs", "run-log", ref), "utf8");
     expect(stored).not.toContain("enterprise-secret-value");
-    expect(stored).toContain("«redacted:secret»");
+    expect(stored).toContain("[x]");
     registration.dispose();
   });
 
@@ -186,7 +186,7 @@ describe("ArtifactStore", () => {
     ), "utf8");
     expect(stored).not.toContain(secret);
     const parsed = JSON.parse(stored) as AttemptResult;
-    expect(Object.keys(parsed.evidence)).toContain("«redacted:secret»");
+    expect(Object.keys(parsed.evidence)).toContain("[x]");
     registration.dispose();
   });
 
@@ -630,6 +630,21 @@ describe("buildRunManifest", () => {
       .update(JSON.stringify(canonicalize(persisted)))
       .digest("hex"));
     expect(JSON.stringify(persisted)).not.toContain("platform");
+    registration.dispose();
+  });
+
+  it("fails closed when the final manifest hash equals a registered secret", async () => {
+    const manifest = buildRunManifest(manifestArgs(
+      "run-manifest-hash-collision",
+      "/canonical/repo",
+    ));
+    const registration = registerSecretValue(manifest.manifestHash);
+    const store = new ArtifactStore("run-manifest-hash-collision");
+
+    await expect(store.writeManifest(manifest)).rejects.toThrow(/safely persist/);
+    await expect(access(join(store.runDirectory, "manifest.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     registration.dispose();
   });
 });

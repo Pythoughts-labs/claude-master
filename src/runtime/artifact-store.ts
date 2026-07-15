@@ -13,7 +13,12 @@ import path from "node:path";
 import { git } from "../git/git-exec.js";
 import type { AttemptResult } from "../protocol/attempt-result.js";
 import { RuntimeError } from "../util/errors.js";
-import { redact, redactRecord, redactValues } from "./redaction.js";
+import {
+  containsRegisteredSecret,
+  redact,
+  redactRecord,
+  redactValues,
+} from "./redaction.js";
 import { sanitizeRunManifest, type RunManifest } from "./run-manifest.js";
 import { resolveStateDir } from "./state-dir.js";
 
@@ -193,20 +198,22 @@ function escapeJsonPropertyKeys(serialized: string): string {
     }
 
     const key = JSON.parse(token) as string;
-    if (key.length === 0) {
-      result += token;
-    } else {
-      const first = key.charCodeAt(0).toString(16).padStart(4, "0");
-      const rest = JSON.stringify(key.slice(1)).slice(1, -1);
-      result += `"\\u${first}${rest}"`;
+    let escaped = "";
+    for (let index = 0; index < key.length; index += 1) {
+      escaped += `\\u${key.charCodeAt(index).toString(16).padStart(4, "0")}`;
     }
+    result += `"${escaped}"`;
     cursor = end + 1;
   }
   return result;
 }
 
 function serializeJson(value: unknown, indentation?: number): string {
-  return escapeJsonPropertyKeys(JSON.stringify(value, null, indentation));
+  const serialized = escapeJsonPropertyKeys(JSON.stringify(value, null, indentation));
+  if (containsRegisteredSecret(serialized)) {
+    throw new RuntimeError("archive JSON cannot be safely persisted after redaction");
+  }
+  return serialized;
 }
 
 export class ArtifactStore {
@@ -310,8 +317,12 @@ export class ArtifactStore {
     }
   }
 
-  private async writeJson(relativePath: string, value: unknown): Promise<void> {
-    const sanitized = redactValues(value);
+  private async writeJson(
+    relativePath: string,
+    value: unknown,
+    sanitizeValues = true,
+  ): Promise<void> {
+    const sanitized = sanitizeValues ? redactValues(value) : value;
     const serialized = `${serializeJson(sanitized, 2)}\n`;
     await this.writeArchiveFile(relativePath, serialized);
   }
@@ -343,7 +354,7 @@ export class ArtifactStore {
     if (manifest.runId !== this.runId) {
       throw new RuntimeError("run manifest id does not match artifact store");
     }
-    await this.writeJson("manifest.json", sanitizeRunManifest(manifest));
+    await this.writeJson("manifest.json", sanitizeRunManifest(manifest), false);
   }
 
   async readResult(runId: string): Promise<AttemptResult | null> {
