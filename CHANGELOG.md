@@ -6,6 +6,12 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-15
+
+### Added
+
+- The Codex capability report's `authState` now reflects auth-store presence: `authenticated` or `unauthenticated` from a presence-only check of `auth.json` in the `CODEX_HOME`-or-`~/.codex` store (contents are never read). Unavailable producers keep `unknown`; doctor now shows whether the Codex lane is credentialed before a delegation.
+
 ## [0.12.0] - 2026-07-15
 
 ### Added
@@ -151,7 +157,8 @@ Initial public release.
 - Native OpenCode assets under `.opencode/` and `opencode.json`, so the same lanes and skill work outside Claude Code.
 - SVG banner and shields badges for the README.
 
-[Unreleased]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Pythoughts-labs/claude-architect/compare/v0.10.0...v0.11.0
