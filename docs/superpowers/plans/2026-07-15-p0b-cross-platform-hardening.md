@@ -174,7 +174,7 @@ git commit -m "feat(platform): bind crash-recovery kills to a process start toke
   - `resolveExecutable` order per C4/B1: (1) `PATHEXT` search preferring `.exe` then `.com` (`kind:"native"`); (2) npm JS entry point next to a found `.cmd` shim (`<dir>/node_modules/<name>/...` via the shim's target or `<dir>/<name>` package `bin`) invoked as `kind:"node-entrypoint"` with `command: <node.exe>`, `prefixArgs: [entry]`; (3) trusted fully-resolved `.cmd`/`.bat` as `kind:"cmd-wrapper"`, `command: process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe"`, `prefixArgs: ["/d","/s","/c", resolvedCmdPath]` — user args go in `args`, never concatenated into a command string.
   - `windows-env.ts`: `normalizeWindowsEnv(env: Record<string,string|undefined>): Record<string,string>` — case-insensitive dedup; for each collision keep the LAST canonical-cased winner with canonical names `Path`, `SystemRoot`, `ComSpec`, `TEMP`, `TMP`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA` (others keep first-seen casing); exactly one `Path` key in the output.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```ts
 // tests/runtime/windows-resolve.test.ts
@@ -226,9 +226,9 @@ describe("windows executable resolution (fs-faked, runs on all OSes)", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — `npx vitest run tests/runtime/windows-resolve.test.ts` → FAIL: module not found.
+- [x] **Step 2: Run to verify failure** — `npx vitest run tests/runtime/windows-resolve.test.ts` → FAIL: module not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/platform/windows-env.ts`:
 
@@ -249,9 +249,9 @@ export function normalizeWindowsEnv(env: Record<string, string | undefined>): Re
 
 `src/platform/windows-platform-services.ts` — export a pure, dependency-injected `resolveWindowsExecutable(request, deps)` implementing the three-tier order (explicitPath handled first exactly like POSIX: must exist, `kind:"native"`), plus the `WindowsPlatformServices` class whose `resolveExecutable` wires real deps (`process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD"` split/uppercased, real `fs`, `process.execPath` for node). npm-entry detection: when the winner is a `.cmd`/`.bat`, probe `path.join(dir, "node_modules", request.name)` package.json `bin` for a JS entry; if readable, return node-entrypoint; else return cmd-wrapper. Set `resolvedFrom` provenance strings (`pathext:<path>`, `npm-entry:<entry>`, `cmd-wrapper:<path>`). Leave the other `PlatformServices` methods as `throw new RuntimeError("implemented in Task 3/4")` stubs for now — the class is not selected until Task 5.
 
-- [ ] **Step 4: Run** — `npx vitest run tests/runtime/windows-resolve.test.ts` → PASS; `npm run typecheck`.
+- [x] **Step 4: Run** — `npx vitest run tests/runtime/windows-resolve.test.ts` → PASS; `npm run typecheck`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/platform/windows-platform-services.ts src/platform/windows-env.ts tests/runtime/windows-resolve.test.ts
