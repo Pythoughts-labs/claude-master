@@ -25863,6 +25863,40 @@ async function handleIntegrateCandidate(runId, expectedArtifactHash, deps = {}) 
 }
 
 // src/mcp/server.ts
+var errorOutputFields = {
+  ok: external_exports.literal(false).optional(),
+  error: external_exports.string().optional(),
+  diagnostic: external_exports.string().optional()
+};
+var delegateOutput = external_exports.object({
+  ok: external_exports.boolean(),
+  result: external_exports.record(external_exports.string(), external_exports.unknown()).optional(),
+  validationErrors: external_exports.array(external_exports.object({ path: external_exports.string(), message: external_exports.string() })).optional(),
+  diagnostic: external_exports.string().optional(),
+  error: external_exports.string().optional()
+});
+var reviewOutput = external_exports.object({
+  patch: external_exports.string().optional(),
+  changedPaths: external_exports.array(external_exports.object({
+    path: external_exports.string(),
+    changeType: external_exports.enum(["added", "modified", "deleted"]),
+    mode: external_exports.string(),
+    contentHash: external_exports.string().nullable()
+  })).optional(),
+  evidence: external_exports.record(external_exports.string(), external_exports.unknown()).optional(),
+  executedVerification: external_exports.array(external_exports.record(external_exports.string(), external_exports.unknown())).optional(),
+  ...errorOutputFields
+});
+var decisionOutput = external_exports.object({
+  recorded: external_exports.literal(true).optional(),
+  ...errorOutputFields
+});
+var integrationOutput = external_exports.object({
+  integration: external_exports.enum(["applied", "conflicted", "aborted"]).optional(),
+  detail: external_exports.string().optional(),
+  ...errorOutputFields
+});
+var doctorOutput = external_exports.object({ issues: external_exports.array(external_exports.string()) });
 function toolOutput(value) {
   const structuredContent = value;
   return {
@@ -25886,7 +25920,8 @@ async function start(dependencies = {}) {
         checkoutPath: external_exports.string(),
         spec: external_exports.unknown(),
         protocolVersion: external_exports.string().optional()
-      }
+      },
+      outputSchema: delegateOutput
     },
     async ({ checkoutPath, spec, protocolVersion }) => toolOutput(await handleDelegate(
       checkoutPath,
@@ -25902,7 +25937,8 @@ async function start(dependencies = {}) {
     {
       title: "Review a verified candidate",
       description: "Regenerate and return the exact candidate patch and verification evidence.",
-      inputSchema: { runId: external_exports.string() }
+      inputSchema: { runId: external_exports.string() },
+      outputSchema: reviewOutput
     },
     async ({ runId }) => toolOutput(await handleReviewCandidate(runId, dependencies))
   );
@@ -25914,7 +25950,8 @@ async function start(dependencies = {}) {
       inputSchema: {
         runId: external_exports.string(),
         decision: external_exports.enum(["accepted", "rejected", "revision-requested"])
-      }
+      },
+      outputSchema: decisionOutput
     },
     async ({ runId, decision }) => toolOutput(await handleDecideCandidate(
       runId,
@@ -25930,7 +25967,8 @@ async function start(dependencies = {}) {
       inputSchema: {
         runId: external_exports.string(),
         expectedArtifactHash: external_exports.string()
-      }
+      },
+      outputSchema: integrationOutput
     },
     async ({ runId, expectedArtifactHash }) => toolOutput(await handleIntegrateCandidate(
       runId,
@@ -25943,7 +25981,8 @@ async function start(dependencies = {}) {
     {
       title: "Diagnose the Claude Architect runtime",
       description: "Report runtime, Git, and Producer availability diagnostics.",
-      inputSchema: {}
+      inputSchema: {},
+      outputSchema: doctorOutput
     },
     async () => toolOutput({ issues: ["doctor-not-implemented"] })
   );

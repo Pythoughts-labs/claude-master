@@ -103,7 +103,8 @@ describe("MCP server handshake", () => {
         params: {},
       })}\n`);
       const listed = await request(2, "tools/list", {});
-      const names = (listed.tools as Array<{ name: string }>).map(tool => tool.name).sort();
+      const tools = listed.tools as Array<{ name: string; outputSchema?: Record<string, unknown> }>;
+      const names = tools.map(tool => tool.name).sort();
       const called = await request(3, "tools/call", {
         name: "delegate",
         arguments: {
@@ -120,6 +121,7 @@ describe("MCP server handshake", () => {
         "integrateCandidate",
         "reviewCandidate",
       ]);
+      expect(tools.every(tool => tool.outputSchema !== undefined)).toBe(true);
       expect(called.structuredContent).toMatchObject({ ok: false });
       expect(called.content).toEqual([{
         type: "text",

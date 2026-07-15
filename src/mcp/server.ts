@@ -10,6 +10,41 @@ import {
   type ToolDependencies,
 } from "./tools.js";
 
+const errorOutputFields = {
+  ok: z.literal(false).optional(),
+  error: z.string().optional(),
+  diagnostic: z.string().optional(),
+};
+const delegateOutput = z.object({
+  ok: z.boolean(),
+  result: z.record(z.string(), z.unknown()).optional(),
+  validationErrors: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
+  diagnostic: z.string().optional(),
+  error: z.string().optional(),
+});
+const reviewOutput = z.object({
+  patch: z.string().optional(),
+  changedPaths: z.array(z.object({
+    path: z.string(),
+    changeType: z.enum(["added", "modified", "deleted"]),
+    mode: z.string(),
+    contentHash: z.string().nullable(),
+  })).optional(),
+  evidence: z.record(z.string(), z.unknown()).optional(),
+  executedVerification: z.array(z.record(z.string(), z.unknown())).optional(),
+  ...errorOutputFields,
+});
+const decisionOutput = z.object({
+  recorded: z.literal(true).optional(),
+  ...errorOutputFields,
+});
+const integrationOutput = z.object({
+  integration: z.enum(["applied", "conflicted", "aborted"]).optional(),
+  detail: z.string().optional(),
+  ...errorOutputFields,
+});
+const doctorOutput = z.object({ issues: z.array(z.string()) });
+
 function toolOutput(value: object) {
   const structuredContent = value as Record<string, unknown>;
   return {
@@ -36,6 +71,7 @@ export async function start(dependencies: ToolDependencies = {}): Promise<void> 
         spec: z.unknown(),
         protocolVersion: z.string().optional(),
       },
+      outputSchema: delegateOutput,
     },
     async ({ checkoutPath, spec, protocolVersion }) => toolOutput(await handleDelegate(
       checkoutPath,
@@ -52,6 +88,7 @@ export async function start(dependencies: ToolDependencies = {}): Promise<void> 
       title: "Review a verified candidate",
       description: "Regenerate and return the exact candidate patch and verification evidence.",
       inputSchema: { runId: z.string() },
+      outputSchema: reviewOutput,
     },
     async ({ runId }) => toolOutput(await handleReviewCandidate(runId, dependencies)),
   );
@@ -64,6 +101,7 @@ export async function start(dependencies: ToolDependencies = {}): Promise<void> 
         runId: z.string(),
         decision: z.enum(["accepted", "rejected", "revision-requested"]),
       },
+      outputSchema: decisionOutput,
     },
     async ({ runId, decision }) => toolOutput(await handleDecideCandidate(
       runId,
@@ -80,6 +118,7 @@ export async function start(dependencies: ToolDependencies = {}): Promise<void> 
         runId: z.string(),
         expectedArtifactHash: z.string(),
       },
+      outputSchema: integrationOutput,
     },
     async ({ runId, expectedArtifactHash }) => toolOutput(await handleIntegrateCandidate(
       runId,
@@ -93,6 +132,7 @@ export async function start(dependencies: ToolDependencies = {}): Promise<void> 
       title: "Diagnose the Claude Architect runtime",
       description: "Report runtime, Git, and Producer availability diagnostics.",
       inputSchema: {},
+      outputSchema: doctorOutput,
     },
     async () => toolOutput({ issues: ["doctor-not-implemented"] }),
   );
