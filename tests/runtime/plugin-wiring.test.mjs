@@ -72,6 +72,11 @@ describe("P0-A plugin wiring", () => {
     assert.equal(plugin.version, "0.8.0");
     assert.equal(marketplace.plugins[0].version, "0.8.0");
     assert.match(readme, /badge\/version-0\.8\.0-/u);
+    assert.doesNotMatch(
+      readme,
+      /`\/delegate`/u,
+      "README must use the fully qualified public command",
+    );
     assert.match(changelog, /^## \[0\.8\.0\] - 2026-07-14$/mu);
     assert.match(readme, /macOS arm64[^\n]*Certified P0-A/iu);
     assert.match(readme, /Linux[^\n]*Pending P0-B/iu);
