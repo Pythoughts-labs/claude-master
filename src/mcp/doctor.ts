@@ -61,7 +61,6 @@ export async function doctor(deps: DoctorDependencies = {}): Promise<DoctorResul
   }
   const node = { version: nodeVersion, ok: supportedNodeVersion && initialNodeAvailable };
   if (!supportedNodeVersion) issues.push("unsupported-node-version");
-  if (ps.os === "win32") issues.push("unsupported-platform");
   if (!env.CLAUDE_PLUGIN_DATA) issues.push("missing-claude-plugin-data");
   if (env.CLAUDE_ARCHITECT_DELEGATED !== undefined) {
     issues.push("nested-delegation-marker-present");

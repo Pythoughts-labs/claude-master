@@ -1,3 +1,5 @@
+import path from "node:path";
+import { normalizeWindowsEnv } from "../platform/windows-env.js";
 import { registerSecretValue } from "./redaction.js";
 import type { SecretRegistration } from "./redaction.js";
 import { RuntimeError } from "../util/errors.js";
@@ -37,6 +39,17 @@ const POSIX_ESSENTIAL_ENV = [
   "XDG_DATA_HOME",
   "XDG_STATE_HOME",
   "XDG_RUNTIME_DIR",
+] as const;
+
+const WIN32_ESSENTIAL_ENV = [
+  "SystemRoot",
+  "ComSpec",
+  "TEMP",
+  "TMP",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "Path",
 ] as const;
 
 const SENSITIVE_ENV_NAME =
@@ -143,22 +156,43 @@ export function buildEnvironment(
   const hostSecretRegistration = registerSensitiveValues(process.env, false);
 
   try {
-    const platformNames = args.os === "win32" ? [] : POSIX_ESSENTIAL_ENV;
+    const platformEnvironment = args.os === "win32"
+      ? normalizeWindowsEnv(process.env)
+      : process.env;
+    const platformNames = args.os === "win32" ? WIN32_ESSENTIAL_ENV : POSIX_ESSENTIAL_ENV;
     for (const name of platformNames) {
       if (args.tempHome !== undefined && name.startsWith("XDG_")) continue;
-      const value = process.env[name];
+      const value = platformEnvironment[name];
       if (value !== undefined) {
         setEnvironmentValue(env, provenance, name, value, "platform");
       }
     }
 
     if (args.tempHome !== undefined) {
-      setEnvironmentValue(env, provenance, "HOME", args.tempHome, "platform");
+      if (args.os === "win32") {
+        setEnvironmentValue(env, provenance, "USERPROFILE", args.tempHome, "platform");
+        setEnvironmentValue(
+          env,
+          provenance,
+          "APPDATA",
+          path.win32.join(args.tempHome, "AppData", "Roaming"),
+          "platform",
+        );
+        setEnvironmentValue(
+          env,
+          provenance,
+          "LOCALAPPDATA",
+          path.win32.join(args.tempHome, "AppData", "Local"),
+          "platform",
+        );
+      } else {
+        setEnvironmentValue(env, provenance, "HOME", args.tempHome, "platform");
+      }
     }
 
     for (const name of args.adapterAllowlist) {
       validateEnvironmentName(name);
-      if (args.tempHome !== undefined && name.startsWith("XDG_")) continue;
+      if (args.os !== "win32" && args.tempHome !== undefined && name.startsWith("XDG_")) continue;
       if (!Object.prototype.hasOwnProperty.call(process.env, name)) continue;
       const value = process.env[name];
       if (value !== undefined) {
@@ -168,7 +202,7 @@ export function buildEnvironment(
 
     for (const [name, value] of Object.entries(args.adapterValues ?? {})) {
       validateEnvironmentName(name);
-      if (args.tempHome !== undefined && name.startsWith("XDG_")) continue;
+      if (args.os !== "win32" && args.tempHome !== undefined && name.startsWith("XDG_")) continue;
       if (Object.prototype.hasOwnProperty.call(env, name)) continue;
       setEnvironmentValue(env, provenance, name, value, "adapter");
     }

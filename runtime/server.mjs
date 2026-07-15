@@ -3226,8 +3226,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path9) {
-      let input = path9;
+    function removeDotSegments(path11) {
+      let input = path11;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3479,8 +3479,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path9, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path9 && path9 !== "/" ? path9 : void 0;
+        const [path11, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path11 && path11 !== "/" ? path11 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6873,12 +6873,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs2, exportName) {
+    function addFormats(ajv, list, fs3, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs2[f]);
+        ajv.addFormat(f, fs3[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -8191,8 +8191,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path9, errorMaps, issueData } = params;
-  const fullPath = [...path9, ...issueData.path || []];
+  const { data, path: path11, errorMaps, issueData } = params;
+  const fullPath = [...path11, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -8308,11 +8308,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path9, key) {
+  constructor(parent, value, path11, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path9;
+    this._path = path11;
     this._key = key;
   }
   get path() {
@@ -11950,10 +11950,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path9) {
-  if (!path9)
+function getElementAtPath(obj, path11) {
+  if (!path11)
     return obj;
-  return path9.reduce((acc, key) => acc?.[key], obj);
+  return path11.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12273,11 +12273,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path9, issues) {
+function prefixIssues(path11, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path9);
+    iss.path.unshift(path11);
     return iss;
   });
 }
@@ -22016,6 +22016,31 @@ function errorCode(error2) {
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+async function acquireWxFileLock(key, timeoutMessage) {
+  const lockDirectory = path.join(resolveStateDir(), "locks");
+  const lockPath = path.join(lockDirectory, `${key}.lock`);
+  await fs.mkdir(lockDirectory, { recursive: true });
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  for (; ; ) {
+    try {
+      const handle = await fs.open(lockPath, "wx");
+      try {
+        await handle.writeFile(String(nodeProcess2.pid));
+      } finally {
+        await handle.close();
+      }
+      return { key, release: async () => {
+        await fs.rm(lockPath, { force: true });
+      } };
+    } catch (error2) {
+      if (errorCode(error2) !== "EEXIST") throw error2;
+      if (Date.now() >= deadline) {
+        throw new RuntimeError(timeoutMessage ?? `lock is held: ${key}`, { key });
+      }
+      await delay(LOCK_RETRY_MS);
+    }
+  }
+}
 async function gitCommonDir(cwd) {
   return new Promise((resolve, reject) => {
     execFile("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd }, (error2, stdout) => {
@@ -22146,27 +22171,7 @@ var PosixPlatformServices = class {
   async acquireCheckoutLock(checkout) {
     const { canonical, gitCommonDir: commonDir } = await this.canonicalizePath(checkout);
     const key = createHash("sha256").update(commonDir ?? canonical).digest("hex");
-    const lockDirectory = path.join(resolveStateDir(), "locks");
-    const lockPath = path.join(lockDirectory, `${key}.lock`);
-    await fs.mkdir(lockDirectory, { recursive: true });
-    const deadline = Date.now() + LOCK_TIMEOUT_MS;
-    for (; ; ) {
-      try {
-        const handle = await fs.open(lockPath, "wx");
-        try {
-          await handle.writeFile(String(nodeProcess2.pid));
-        } finally {
-          await handle.close();
-        }
-        return { key, release: async () => {
-          await fs.rm(lockPath, { force: true });
-        } };
-      } catch (error2) {
-        if (errorCode(error2) !== "EEXIST") throw error2;
-        if (Date.now() >= deadline) throw new RuntimeError(`checkout is locked: ${checkout}`, { key });
-        await delay(LOCK_RETRY_MS);
-      }
-    }
+    return acquireWxFileLock(key, `checkout is locked: ${checkout}`);
   }
   async createSecureTempDirectory() {
     return fs.mkdtemp(path.join(tmpdir2(), "claude-architect-"));
@@ -22183,6 +22188,282 @@ var PosixPlatformServices = class {
   }
 };
 
+// src/platform/windows-platform-services.ts
+import { execFile as execFile2, spawn as spawn2 } from "node:child_process";
+import { createHash as createHash2 } from "node:crypto";
+import { promises as fs2 } from "node:fs";
+import { tmpdir as tmpdir3 } from "node:os";
+import path2 from "node:path";
+import nodeProcess3 from "node:process";
+import { fileURLToPath } from "node:url";
+
+// src/platform/windows-env.ts
+var CANONICAL = new Map(["Path", "SystemRoot", "ComSpec", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA"].map((name) => [name.toLowerCase(), name]));
+function normalizeWindowsEnv(env) {
+  const byLower = /* @__PURE__ */ new Map();
+  for (const [name, value] of Object.entries(env)) {
+    if (value === void 0) continue;
+    const lower = name.toLowerCase();
+    byLower.set(lower, { name: CANONICAL.get(lower) ?? byLower.get(lower)?.name ?? name, value });
+  }
+  return Object.fromEntries([...byLower.values()].map((e) => [e.name, e.value]));
+}
+
+// src/platform/windows-platform-services.ts
+var childHandles = /* @__PURE__ */ new WeakMap();
+function resolveJobKillHelper(pluginRoot, arch) {
+  const helperPath = path2.join(pluginRoot, "native", "bin", `win32-job-kill-${arch}.exe`);
+  return {
+    path: helperPath,
+    async checkAvailable() {
+      try {
+        await fs2.access(helperPath);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+async function findPluginRoot() {
+  let directory = path2.dirname(fileURLToPath(import.meta.url));
+  for (; ; ) {
+    try {
+      await fs2.access(path2.join(directory, "package.json"));
+      return directory;
+    } catch {
+    }
+    const parent = path2.dirname(directory);
+    if (parent === directory) throw new RuntimeError("unable to locate plugin root");
+    directory = parent;
+  }
+}
+async function packageBinEntries(request, directory, fileSystem) {
+  const packageDirectory = path2.win32.join(directory, "node_modules", request.name);
+  const packagePath = path2.win32.join(packageDirectory, "package.json");
+  if (!await fileSystem.isFile(packagePath.toLowerCase())) return [];
+  try {
+    const parsed = JSON.parse(await fileSystem.readFile(packagePath));
+    if (typeof parsed !== "object" || parsed === null || !("bin" in parsed)) return [];
+    const bin = parsed.bin;
+    if (typeof bin === "string") {
+      return [path2.win32.relative(directory, path2.win32.join(packageDirectory, bin))];
+    }
+    if (typeof bin !== "object" || bin === null) return [];
+    const namedBin = bin[request.name];
+    if (typeof namedBin === "string") {
+      return [path2.win32.relative(directory, path2.win32.join(packageDirectory, namedBin))];
+    }
+  } catch {
+    return [];
+  }
+  return [];
+}
+async function resolveWindowsExecutable(request, deps) {
+  if (request.explicitPath !== void 0) {
+    if (!await deps.fs.isFile(request.explicitPath.toLowerCase())) {
+      throw new RuntimeError("executable was not found", { path: request.explicitPath });
+    }
+    return {
+      kind: "native",
+      command: request.explicitPath,
+      prefixArgs: [],
+      resolvedFrom: `explicit:${request.explicitPath}`
+    };
+  }
+  for (const directory of deps.pathEntries) {
+    for (const extension of deps.pathext) {
+      const candidate = path2.win32.join(directory, `${request.name}${extension.toLowerCase()}`);
+      if (!await deps.fs.isFile(candidate.toLowerCase())) continue;
+      const normalizedExtension = extension.toLowerCase();
+      if (normalizedExtension === ".exe" || normalizedExtension === ".com") {
+        return {
+          kind: "native",
+          command: candidate,
+          prefixArgs: [],
+          resolvedFrom: `pathext:${candidate}`
+        };
+      }
+      if (normalizedExtension === ".cmd" || normalizedExtension === ".bat") {
+        const entries = deps.npmEntryProbe ?? await packageBinEntries(request, directory, deps.fs);
+        for (const entry of entries) {
+          const absoluteEntry = path2.win32.join(directory, entry);
+          if (await deps.fs.isFile(absoluteEntry.toLowerCase())) {
+            return {
+              kind: "node-entrypoint",
+              command: deps.nodeExe,
+              prefixArgs: [absoluteEntry],
+              resolvedFrom: `npm-entry:${absoluteEntry}`
+            };
+          }
+        }
+        return {
+          kind: "cmd-wrapper",
+          command: deps.comSpec ?? "C:\\Windows\\System32\\cmd.exe",
+          prefixArgs: ["/d", "/s", "/c", candidate],
+          resolvedFrom: `cmd-wrapper:${candidate}`
+        };
+      }
+    }
+  }
+  throw new RuntimeError("executable was not found", { name: request.name });
+}
+async function gitCommonDir2(cwd) {
+  return new Promise((resolve, reject) => {
+    execFile2("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd }, (error2, stdout) => {
+      if (error2) reject(error2);
+      else resolve(stdout.trim());
+    });
+  });
+}
+var WindowsPlatformServices = class {
+  constructor(pluginRoot, arch = nodeProcess3.arch) {
+    this.pluginRoot = pluginRoot;
+    this.arch = arch;
+  }
+  os = "win32";
+  async jobKillHelper() {
+    return resolveJobKillHelper(this.pluginRoot ?? await findPluginRoot(), this.arch);
+  }
+  async runJobKillHelper(pid) {
+    const helper = await this.jobKillHelper();
+    await new Promise((resolve, reject) => {
+      execFile2(helper.path, [String(pid)], { windowsHide: true, shell: false }, (error2) => {
+        if (error2 === null || error2.code === 2) resolve();
+        else reject(new RuntimeError("windows process-tree termination failed", {
+          path: helper.path,
+          pid,
+          cause: error2
+        }));
+      });
+    });
+  }
+  async resolveExecutable(request) {
+    const pathext = (nodeProcess3.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean).map((extension) => extension.toUpperCase());
+    const pathEntries = (request.searchPath ?? nodeProcess3.env.Path ?? nodeProcess3.env.PATH ?? "").split(";").filter(Boolean);
+    const realFs = {
+      async isFile(candidate) {
+        try {
+          return (await fs2.stat(candidate)).isFile();
+        } catch {
+          return false;
+        }
+      },
+      async readFile(candidate) {
+        return fs2.readFile(candidate, "utf8");
+      }
+    };
+    const commonDeps = { pathEntries, pathext, fs: realFs, nodeExe: nodeProcess3.execPath };
+    return nodeProcess3.env.ComSpec === void 0 ? resolveWindowsExecutable(request, commonDeps) : resolveWindowsExecutable(request, { ...commonDeps, comSpec: nodeProcess3.env.ComSpec });
+  }
+  async spawnSupervised(req) {
+    const helper = await this.jobKillHelper();
+    if (!await helper.checkAvailable()) {
+      throw new RuntimeError("windows process-tree helper missing", { path: helper.path });
+    }
+    const child = spawn2(req.executable.command, [...req.executable.prefixArgs, ...req.args], {
+      cwd: req.cwd,
+      env: normalizeWindowsEnv(req.env),
+      detached: false,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const outBuf = new BoundedBuffer(req.maxOutputBytes), errBuf = new BoundedBuffer(req.maxOutputBytes);
+    child.stdout.on("data", (c) => outBuf.push(c));
+    child.stderr.on("data", (c) => errBuf.push(c));
+    if (req.stdin != null) {
+      child.stdin?.on("error", () => {
+      });
+      child.stdin?.write(req.stdin);
+      child.stdin?.end();
+    }
+    let settled = false;
+    const done = new Promise((resolve) => {
+      const finish = (e) => {
+        if (!settled) {
+          settled = true;
+          resolve(e);
+        }
+      };
+      child.on("error", (err) => finish({
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        cancelled: false,
+        stdout: outBuf.toString(),
+        stderr: errBuf.toString(),
+        truncated: { stdout: outBuf.truncated, stderr: errBuf.truncated },
+        spawnError: err
+      }));
+      child.on("close", (code, signal) => finish({
+        exitCode: code,
+        signal,
+        timedOut: false,
+        cancelled: false,
+        stdout: outBuf.toString(),
+        stderr: errBuf.toString(),
+        truncated: { stdout: outBuf.truncated, stderr: errBuf.truncated }
+      }));
+    });
+    const proc = { pid: child.pid ?? -1, done, stdout: child.stdout, stderr: child.stderr };
+    childHandles.set(proc, child);
+    return proc;
+  }
+  async requestCooperativeCancellation(proc) {
+    const child = childHandles.get(proc);
+    if (child === void 0) return;
+    try {
+      child.kill("SIGTERM");
+    } catch {
+    }
+  }
+  async terminateProcessTree(proc) {
+    await this.runJobKillHelper(proc.pid);
+  }
+  async getProcessStartToken(pid) {
+    if (!Number.isSafeInteger(pid) || pid <= 1) return null;
+    return new Promise((resolve) => {
+      try {
+        execFile2(
+          "powershell.exe",
+          ["-NoProfile", "-Command", `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`],
+          (error2, stdout) => {
+            const token = stdout.trim();
+            resolve(error2 || token.length === 0 ? null : `win32:${token}`);
+          }
+        );
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+  async terminateProcessTreeByPid(pid, expectedToken) {
+    if (typeof expectedToken === "string") {
+      const liveToken = await this.getProcessStartToken(pid);
+      if (liveToken !== expectedToken) return;
+    }
+    await this.runJobKillHelper(pid);
+  }
+  async acquireCheckoutLock(checkout) {
+    const { canonical, gitCommonDir: commonDir } = await this.canonicalizePath(checkout);
+    const key = createHash2("sha256").update(commonDir ?? canonical).digest("hex");
+    return acquireWxFileLock(key, `checkout is locked: ${checkout}`);
+  }
+  async createSecureTempDirectory() {
+    return fs2.mkdtemp(path2.join(tmpdir3(), "claude-architect-"));
+  }
+  async canonicalizePath(input) {
+    const canonical = await fs2.realpath(input);
+    let commonDir = null;
+    try {
+      commonDir = await fs2.realpath(await gitCommonDir2(canonical));
+    } catch {
+      commonDir = null;
+    }
+    return { input, canonical, gitCommonDir: commonDir };
+  }
+};
+
 // src/platform/select-platform.ts
 var UnsupportedPlatformError = class extends RuntimeError {
   code = "unsupported-platform";
@@ -22191,40 +22472,9 @@ var UnsupportedPlatformError = class extends RuntimeError {
     this.name = "UnsupportedPlatformError";
   }
 };
-var DiagnosticsOnlyPlatformServices = class {
-  os = "win32";
-  diagnostics = new PosixPlatformServices();
-  resolveExecutable(request) {
-    return this.diagnostics.resolveExecutable(request);
-  }
-  canonicalizePath(input) {
-    return this.diagnostics.canonicalizePath(input);
-  }
-  async spawnSupervised(_request) {
-    throw new UnsupportedPlatformError();
-  }
-  async requestCooperativeCancellation(_process) {
-    throw new UnsupportedPlatformError();
-  }
-  async terminateProcessTree(_process) {
-    throw new UnsupportedPlatformError();
-  }
-  async getProcessStartToken(_pid) {
-    throw new UnsupportedPlatformError();
-  }
-  async terminateProcessTreeByPid(_pid, _expectedToken) {
-    throw new UnsupportedPlatformError();
-  }
-  async acquireCheckoutLock(_checkout) {
-    throw new UnsupportedPlatformError();
-  }
-  async createSecureTempDirectory() {
-    throw new UnsupportedPlatformError();
-  }
-};
 var services;
 function getPlatformServices() {
-  if (!services) services = process.platform === "win32" ? new DiagnosticsOnlyPlatformServices() : new PosixPlatformServices();
+  if (!services) services = process.platform === "win32" ? new WindowsPlatformServices() : new PosixPlatformServices();
   return services;
 }
 
@@ -22746,7 +22996,6 @@ async function doctor(deps = {}) {
   }
   const node = { version: nodeVersion, ok: supportedNodeVersion && initialNodeAvailable };
   if (!supportedNodeVersion) issues.push("unsupported-node-version");
-  if (ps.os === "win32") issues.push("unsupported-platform");
   if (!env.CLAUDE_PLUGIN_DATA) issues.push("missing-claude-plugin-data");
   if (env.CLAUDE_ARCHITECT_DELEGATED !== void 0) {
     issues.push("nested-delegation-marker-present");
@@ -22877,11 +23126,11 @@ function gitChangedFiles(checkoutPath, deps = {}) {
 }
 
 // src/mcp/tools.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 
 // src/git/repo-preconditions.ts
 import { access, lstat, opendir, realpath } from "node:fs/promises";
-import path2 from "node:path";
+import path3 from "node:path";
 var IN_PROGRESS_PATHS = [
   "MERGE_HEAD",
   "rebase-merge",
@@ -22945,7 +23194,7 @@ async function findNestedRepositories(repositoryRoot, registeredSubmodules, writ
     const directory = pendingDirectories.pop();
     if (directory.relativePath !== "") {
       try {
-        await lstat(path2.join(directory.path, ".git"));
+        await lstat(path3.join(directory.path, ".git"));
         nested.push(directory.relativePath);
         continue;
       } catch (error2) {
@@ -22960,8 +23209,8 @@ async function findNestedRepositories(repositoryRoot, registeredSubmodules, writ
         throw new Error("nested repository scan entry budget exceeded");
       }
       if (entry.name === ".git") continue;
-      const child = path2.join(directory.path, entry.name);
-      const relativeChild = path2.relative(repositoryRoot, child).split(path2.sep).join("/");
+      const child = path3.join(directory.path, entry.name);
+      const relativeChild = path3.relative(repositoryRoot, child).split(path3.sep).join("/");
       if (registeredSubmodules.has(relativeChild)) continue;
       if (!writeAllowlist.some((pattern) => patternOverlapsRepository(pattern, relativeChild))) continue;
       if (entry.isSymbolicLink()) {
@@ -22989,7 +23238,7 @@ async function checkPreconditions(repoRoot, options = {}) {
   if (!succeeded(gitDirectoryResult)) return { ok: false, reason: "git-command-failed" };
   const gitDirectory = gitDirectoryResult.stdout.trim();
   try {
-    if ((await Promise.all(IN_PROGRESS_PATHS.map((relative) => exists(path2.join(gitDirectory, relative))))).some(Boolean)) {
+    if ((await Promise.all(IN_PROGRESS_PATHS.map((relative) => exists(path3.join(gitDirectory, relative))))).some(Boolean)) {
       return { ok: false, reason: "in-progress-operation" };
     }
   } catch {
@@ -23037,12 +23286,12 @@ async function checkPreconditions(repoRoot, options = {}) {
     "--git-common-dir"
   ]);
   if (!succeeded(commonDirectoryResult)) return { ok: false, reason: "git-command-failed" };
-  const gitCommonDir2 = await realpath(commonDirectoryResult.stdout.trim());
-  return { ok: true, baseCommitOid, gitCommonDir: gitCommonDir2 };
+  const gitCommonDir3 = await realpath(commonDirectoryResult.stdout.trim());
+  return { ok: true, baseCommitOid, gitCommonDir: gitCommonDir3 };
 }
 
 // src/verify/structural-verifier.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 var MAX_DIAGNOSTIC_LENGTH2 = 2e3;
 function gitFailure(action, result) {
   const diagnostic = redact(result.stderr || result.stdout).trim().slice(0, MAX_DIAGNOSTIC_LENGTH2);
@@ -23159,9 +23408,9 @@ async function recomputeManifest(args) {
   const rawDiff = parseRawDiff(rawOutput);
   const rawByPath = new Map(rawDiff.map((entry) => [entry.path, entry]));
   const treeByPath = parseTree(treeOutput);
-  const changedPaths = sortChangedPaths(parseNameStatus(nameStatusOutput).map(({ path: path9, status }) => {
-    const rawEntry = rawByPath.get(path9);
-    const treeEntry = treeByPath.get(path9);
+  const changedPaths = sortChangedPaths(parseNameStatus(nameStatusOutput).map(({ path: path11, status }) => {
+    const rawEntry = rawByPath.get(path11);
+    const treeEntry = treeByPath.get(path11);
     if (treeEntry === void 0 && status !== "D") {
       throw new RuntimeError("candidate tree is missing a changed path");
     }
@@ -23169,7 +23418,7 @@ async function recomputeManifest(args) {
       throw new RuntimeError("git diff-tree outputs disagree");
     }
     return {
-      path: path9,
+      path: path11,
       changeType: changeType(status),
       mode: treeEntry?.mode ?? rawEntry.oldMode,
       contentHash: treeEntry?.oid ?? null
@@ -23177,7 +23426,7 @@ async function recomputeManifest(args) {
   }));
   return {
     changedPaths,
-    manifestHash: createHash2("sha256").update(JSON.stringify(changedPaths)).digest("hex"),
+    manifestHash: createHash3("sha256").update(JSON.stringify(changedPaths)).digest("hex"),
     rawDiff
   };
 }
@@ -23780,7 +24029,7 @@ function validateSpec(input) {
 }
 
 // src/runtime/artifact-store.ts
-import { createHash as createHash4, randomUUID } from "node:crypto";
+import { createHash as createHash5, randomUUID } from "node:crypto";
 import { constants as constants2 } from "node:fs";
 import {
   link,
@@ -23793,15 +24042,15 @@ import {
   rename,
   rm
 } from "node:fs/promises";
-import path3 from "node:path";
+import path4 from "node:path";
 
 // src/runtime/run-manifest.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 function sha256(value) {
-  return createHash3("sha256").update(value).digest("hex");
+  return createHash4("sha256").update(value).digest("hex");
 }
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -23972,8 +24221,8 @@ function compareEntries(left, right) {
   return left.runId < right.runId ? -1 : left.runId > right.runId ? 1 : 0;
 }
 function isWithin(root, candidate) {
-  const relative = path3.relative(root, candidate);
-  return relative === "" || !path3.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path3.sep}`);
+  const relative = path4.relative(root, candidate);
+  return relative === "" || !path4.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path4.sep}`);
 }
 async function ensurePlainDirectory(directory) {
   let created = false;
@@ -23987,7 +24236,7 @@ async function ensurePlainDirectory(directory) {
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new RuntimeError(`archive directory must not be a symbolic link: ${redact(directory)}`);
   }
-  if (created) await syncDirectory(path3.dirname(directory));
+  if (created) await syncDirectory(path4.dirname(directory));
   return { dev: metadata.dev, ino: metadata.ino };
 }
 async function ensurePlainDirectoryTree(directory) {
@@ -23995,7 +24244,7 @@ async function ensurePlainDirectoryTree(directory) {
     return await ensurePlainDirectory(directory);
   } catch (error2) {
     if (!isMissing(error2)) throw error2;
-    const parent = path3.dirname(directory);
+    const parent = path4.dirname(directory);
     if (parent === directory) throw error2;
     await ensurePlainDirectoryTree(parent);
     return ensurePlainDirectory(directory);
@@ -24023,7 +24272,7 @@ async function readRegularFile(filename, parentIdentity) {
   const handle = await open2(filename, constants2.O_RDONLY | NO_FOLLOW);
   try {
     if (parentIdentity !== void 0) {
-      await assertDirectoryIdentity(path3.dirname(filename), parentIdentity);
+      await assertDirectoryIdentity(path4.dirname(filename), parentIdentity);
     }
     const metadata = await handle.stat();
     if (!metadata.isFile()) {
@@ -24050,7 +24299,7 @@ async function readRegularFile(filename, parentIdentity) {
       throw new RuntimeError(`archive entry changed while being read: ${redact(filename)}`);
     }
     if (parentIdentity !== void 0) {
-      await assertDirectoryIdentity(path3.dirname(filename), parentIdentity);
+      await assertDirectoryIdentity(path4.dirname(filename), parentIdentity);
     }
     return contents.subarray(0, offset).toString("utf8");
   } finally {
@@ -24078,7 +24327,7 @@ async function directoryBytes(directory, expectedIdentity) {
     await assertDirectoryIdentity(directory, identity);
     for await (const entry of entries) {
       await assertDirectoryIdentity(directory, identity);
-      const entryPath = path3.join(directory, entry.name);
+      const entryPath = path4.join(directory, entry.name);
       try {
         const entryMetadata = await lstat2(entryPath);
         if (entryMetadata.isSymbolicLink()) {
@@ -24163,7 +24412,7 @@ function preserveNullableIdentity2(value, label) {
 function preserveCandidatePath(value) {
   const candidatePath = preserveIdentity2(value, "candidate path");
   const segments = candidatePath.split("/");
-  if (candidatePath === "" || candidatePath.includes("\\") || candidatePath.includes("\0") || path3.posix.isAbsolute(candidatePath) || path3.win32.isAbsolute(candidatePath) || /^[A-Za-z]:/.test(candidatePath) || segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+  if (candidatePath === "" || candidatePath.includes("\\") || candidatePath.includes("\0") || path4.posix.isAbsolute(candidatePath) || path4.win32.isAbsolute(candidatePath) || /^[A-Za-z]:/.test(candidatePath) || segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
     throw new RuntimeError("candidate path must be a normalized relative Git path");
   }
   return candidatePath;
@@ -24208,7 +24457,7 @@ function sanitizeCandidate(candidate) {
     mode: preserveIdentity2(change.mode, "candidate mode"),
     contentHash: preserveNullableIdentity2(change.contentHash, "candidate content hash")
   }));
-  const expectedManifestHash = createHash4("sha256").update(JSON.stringify(changedPaths)).digest("hex");
+  const expectedManifestHash = createHash5("sha256").update(JSON.stringify(changedPaths)).digest("hex");
   if (candidate.manifestHash !== expectedManifestHash) {
     throw new RuntimeError("candidate manifest hash does not match changed paths");
   }
@@ -24263,11 +24512,11 @@ var ArtifactStore = class {
   constructor(runId) {
     validateComponent(runId, "run id");
     this.runId = runId;
-    this.runsRoot = path3.join(resolveStateDir(), "runs");
-    this.runDirectory = path3.join(this.runsRoot, runId);
+    this.runsRoot = path4.join(resolveStateDir(), "runs");
+    this.runDirectory = path4.join(this.runsRoot, runId);
   }
   async ensureRunsRoot() {
-    await ensurePlainDirectoryTree(path3.dirname(this.runsRoot));
+    await ensurePlainDirectoryTree(path4.dirname(this.runsRoot));
     await ensurePlainDirectory(this.runsRoot);
     return realpath2(this.runsRoot);
   }
@@ -24293,19 +24542,19 @@ var ArtifactStore = class {
     return canonicalRunDirectory;
   }
   async ensureArchiveDirectory(relativePath) {
-    if (path3.isAbsolute(relativePath)) throw new RuntimeError("archive path must be relative");
-    const normalized = path3.normalize(relativePath);
-    if (normalized === ".." || normalized.startsWith(`..${path3.sep}`)) {
+    if (path4.isAbsolute(relativePath)) throw new RuntimeError("archive path must be relative");
+    const normalized = path4.normalize(relativePath);
+    if (normalized === ".." || normalized.startsWith(`..${path4.sep}`)) {
       throw new RuntimeError("archive path escapes run directory");
     }
     const canonicalRunDirectory = await this.ensureRunDirectory(true);
     if (canonicalRunDirectory === null) throw new RuntimeError("failed to create archive directory");
-    const relativeDirectory = path3.dirname(normalized);
+    const relativeDirectory = path4.dirname(normalized);
     if (relativeDirectory === ".") return canonicalRunDirectory;
     let current = canonicalRunDirectory;
-    for (const component of relativeDirectory.split(path3.sep)) {
+    for (const component of relativeDirectory.split(path4.sep)) {
       validateComponent(component, "log name");
-      current = path3.join(current, component);
+      current = path4.join(current, component);
       await ensurePlainDirectory(current);
       const canonicalCurrent = await realpath2(current);
       if (!isWithin(canonicalRunDirectory, canonicalCurrent)) {
@@ -24318,8 +24567,8 @@ var ArtifactStore = class {
   async writeArchiveFile(relativePath, text) {
     const directory = await this.ensureArchiveDirectory(relativePath);
     const directoryIdentity = await ensurePlainDirectory(directory);
-    const destination = path3.join(directory, path3.basename(relativePath));
-    const temporaryPath = path3.join(directory, `.${path3.basename(destination)}.${randomUUID()}.tmp`);
+    const destination = path4.join(directory, path4.basename(relativePath));
+    const temporaryPath = path4.join(directory, `.${path4.basename(destination)}.${randomUUID()}.tmp`);
     let handle;
     let temporaryCreated = false;
     try {
@@ -24363,14 +24612,14 @@ var ArtifactStore = class {
     await this.writeArchiveFile(relativePath, serialized);
   }
   async replaceJson(relativePath, value) {
-    if (path3.isAbsolute(relativePath) || path3.dirname(relativePath) !== "." || path3.basename(relativePath) !== relativePath || !isSafeComponent(relativePath)) {
+    if (path4.isAbsolute(relativePath) || path4.dirname(relativePath) !== "." || path4.basename(relativePath) !== relativePath || !isSafeComponent(relativePath)) {
       throw new RuntimeError("replacement archive path must be a safe relative leaf");
     }
     const directory = await this.ensureRunDirectory(false);
     if (directory === null) throw new RuntimeError("run archive does not exist");
     const directoryIdentity = await ensurePlainDirectory(directory);
-    const destination = path3.join(directory, relativePath);
-    const temporaryPath = path3.join(directory, `.${relativePath}.${randomUUID()}.tmp`);
+    const destination = path4.join(directory, relativePath);
+    const temporaryPath = path4.join(directory, `.${relativePath}.${randomUUID()}.tmp`);
     const serialized = `${serializeJson(value, 2)}
 `;
     let handle;
@@ -24399,7 +24648,7 @@ var ArtifactStore = class {
   }
   async writeLog(name, text) {
     validateComponent(name, "log name");
-    const ref = path3.posix.join("logs", `${name}.log`);
+    const ref = path4.posix.join("logs", `${name}.log`);
     await this.writeArchiveFile(ref, redact(text));
     return ref;
   }
@@ -24419,13 +24668,13 @@ var ArtifactStore = class {
   }
   async readResult(runId) {
     validateComponent(runId, "run id");
-    const runDirectory = path3.join(this.runsRoot, runId);
+    const runDirectory = path4.join(this.runsRoot, runId);
     const validated = await this.ensureExistingRunDirectory(runDirectory);
     if (validated === null) return null;
     try {
       return verifyAttemptResult(
         JSON.parse(await readRegularFile(
-          path3.join(validated.path, "result.json"),
+          path4.join(validated.path, "result.json"),
           validated.identity
         )),
         runId
@@ -24456,13 +24705,13 @@ var ArtifactStore = class {
   }
   async readManifest(runId) {
     validateComponent(runId, "run id");
-    const runDirectory = path3.join(this.runsRoot, runId);
+    const runDirectory = path4.join(this.runsRoot, runId);
     const validated = await this.ensureExistingRunDirectory(runDirectory);
     if (validated === null) return null;
     try {
       return verifyRunManifest(
         JSON.parse(await readRegularFile(
-          path3.join(validated.path, "manifest.json"),
+          path4.join(validated.path, "manifest.json"),
           validated.identity
         )),
         runId
@@ -24480,12 +24729,12 @@ var ArtifactStore = class {
   }
   async readDecision(runId) {
     validateComponent(runId, "run id");
-    const runDirectory = path3.join(this.runsRoot, runId);
+    const runDirectory = path4.join(this.runsRoot, runId);
     const validated = await this.ensureExistingRunDirectory(runDirectory);
     if (validated === null) return null;
     try {
       const value = JSON.parse(await readRegularFile(
-        path3.join(validated.path, "decision.json"),
+        path4.join(validated.path, "decision.json"),
         validated.identity
       ));
       if (!["accepted", "rejected", "revision-requested"].includes(value.decision) || typeof value.recordedAt !== "string" || !Number.isFinite(Date.parse(value.recordedAt))) {
@@ -24504,7 +24753,7 @@ var ArtifactStore = class {
   }
   async entries() {
     const entries = await Promise.all((await this.list()).map(async (runId) => {
-      const directory = path3.join(this.runsRoot, runId);
+      const directory = path4.join(this.runsRoot, runId);
       try {
         const metadata = await lstat2(directory);
         if (metadata.isSymbolicLink() || !metadata.isDirectory()) return null;
@@ -24666,7 +24915,7 @@ var ArtifactStore = class {
     await enqueueCleanupJournalWrite(async () => {
       await this.ensureRunsRoot();
       const runsRootIdentity = await ensurePlainDirectory(this.runsRoot);
-      const filename = path3.join(this.runsRoot, CLEANUP_JOURNAL);
+      const filename = path4.join(this.runsRoot, CLEANUP_JOURNAL);
       const handle = await open2(
         filename,
         constants2.O_WRONLY | constants2.O_CREAT | constants2.O_APPEND | NO_FOLLOW,
@@ -24701,7 +24950,7 @@ var ArtifactStore = class {
       if (attempted.has(entry.runId)) return;
       attempted.add(entry.runId);
       const quarantineName = `.prune-${entry.runId}-${randomUUID()}`;
-      const quarantinePath = path3.join(this.runsRoot, quarantineName);
+      const quarantinePath = path4.join(this.runsRoot, quarantineName);
       let prepared = null;
       let transaction = null;
       let runsRootIdentity = null;
@@ -24830,13 +25079,13 @@ import {
   rename as rename2,
   rm as rm3
 } from "node:fs/promises";
-import path6 from "node:path";
+import path8 from "node:path";
 
 // src/git/candidate-tree.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { lstat as lstat3, mkdtemp, rm as rm2 } from "node:fs/promises";
-import { tmpdir as tmpdir3 } from "node:os";
-import path4 from "node:path";
+import { tmpdir as tmpdir4 } from "node:os";
+import path5 from "node:path";
 var MAX_DIAGNOSTIC_LENGTH3 = 2e3;
 var BINARY_PATCH_PAYLOAD_MARKER = "[[BINARY_PATCH_PAYLOAD_OMITTED]]";
 function gitFailure2(action, result) {
@@ -24923,7 +25172,7 @@ function isAllowed2(pathname, writeAllowlist, forbiddenScope) {
 async function advisoryLstatScan(worktreePath, changedPaths) {
   const symlinkResults = await Promise.all(changedPaths.map(async (changedPath) => {
     try {
-      return (await lstat3(path4.resolve(worktreePath, changedPath))).isSymbolicLink();
+      return (await lstat3(path5.resolve(worktreePath, changedPath))).isSymbolicLink();
     } catch (error2) {
       if (error2.code === "ENOENT") return false;
       throw error2;
@@ -24998,8 +25247,8 @@ async function freezeCandidate(args) {
   if (await advisoryLstatScan(args.worktreePath, inventory.changedPaths)) {
     return { ok: false, reason: "modified-symlink" };
   }
-  const indexDirectory = await mkdtemp(path4.join(tmpdir3(), "claude-architect-index-"));
-  const indexFile = path4.join(indexDirectory, "index");
+  const indexDirectory = await mkdtemp(path5.join(tmpdir4(), "claude-architect-index-"));
+  const indexFile = path5.join(indexDirectory, "index");
   try {
     await checkedGit2(args.worktreePath, ["read-tree", args.baseCommitOid], indexFile);
     if (inventory.changedPaths.length > 0) {
@@ -25056,7 +25305,7 @@ async function freezeCandidate(args) {
         contentHash: treeEntry?.oid ?? null
       };
     }));
-    const manifestHash = createHash5("sha256").update(JSON.stringify(changedPaths)).digest("hex");
+    const manifestHash = createHash6("sha256").update(JSON.stringify(changedPaths)).digest("hex");
     const patch = sanitizeReviewPatch(await checkedGit2(args.repoRoot, [
       "diff",
       "--no-ext-diff",
@@ -25098,7 +25347,7 @@ async function freezeCandidate(args) {
 
 // src/git/worktree-manager.ts
 import { mkdir as mkdir2 } from "node:fs/promises";
-import path5 from "node:path";
+import path6 from "node:path";
 var MAX_DIAGNOSTIC_LENGTH4 = 2e3;
 function failure(action, result) {
   const diagnostic = (result.stderr || result.stdout).trim().slice(0, MAX_DIAGNOSTIC_LENGTH4);
@@ -25111,9 +25360,9 @@ var WorktreeManager = class {
     this.platformServices = platformServices;
   }
   managedWorktreePath() {
-    const worktreesRoot = path5.resolve(resolveStateDir(), "worktrees");
-    const worktreePath = path5.resolve(worktreesRoot, this.runId);
-    if (worktreePath === worktreesRoot || !worktreePath.startsWith(`${worktreesRoot}${path5.sep}`)) {
+    const worktreesRoot = path6.resolve(resolveStateDir(), "worktrees");
+    const worktreePath = path6.resolve(worktreesRoot, this.runId);
+    if (worktreePath === worktreesRoot || !worktreePath.startsWith(`${worktreesRoot}${path6.sep}`)) {
       throw new RuntimeError("invalid worktree run id");
     }
     return { worktreesRoot, worktreePath };
@@ -25175,6 +25424,7 @@ function route(preferences, reports) {
 }
 
 // src/runtime/environment-policy.ts
+import path7 from "node:path";
 var POSIX_ESSENTIAL_ENV = [
   "HOME",
   "PATH",
@@ -25186,6 +25436,16 @@ var POSIX_ESSENTIAL_ENV = [
   "XDG_DATA_HOME",
   "XDG_STATE_HOME",
   "XDG_RUNTIME_DIR"
+];
+var WIN32_ESSENTIAL_ENV = [
+  "SystemRoot",
+  "ComSpec",
+  "TEMP",
+  "TMP",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "Path"
 ];
 var SENSITIVE_ENV_NAME = /^(?:[A-Za-z][A-Za-z0-9]*_)*(?:TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL)(?:_[A-Za-z0-9]+)*$/i;
 var COMMON_SENSITIVE_ENV_NAMES = /* @__PURE__ */ new Set([
@@ -25262,20 +25522,39 @@ function buildEnvironment(args) {
   const provenance = /* @__PURE__ */ new Map();
   const hostSecretRegistration = registerSensitiveValues(process.env, false);
   try {
-    const platformNames = args.os === "win32" ? [] : POSIX_ESSENTIAL_ENV;
+    const platformEnvironment = args.os === "win32" ? normalizeWindowsEnv(process.env) : process.env;
+    const platformNames = args.os === "win32" ? WIN32_ESSENTIAL_ENV : POSIX_ESSENTIAL_ENV;
     for (const name of platformNames) {
       if (args.tempHome !== void 0 && name.startsWith("XDG_")) continue;
-      const value = process.env[name];
+      const value = platformEnvironment[name];
       if (value !== void 0) {
         setEnvironmentValue(env, provenance, name, value, "platform");
       }
     }
     if (args.tempHome !== void 0) {
-      setEnvironmentValue(env, provenance, "HOME", args.tempHome, "platform");
+      if (args.os === "win32") {
+        setEnvironmentValue(env, provenance, "USERPROFILE", args.tempHome, "platform");
+        setEnvironmentValue(
+          env,
+          provenance,
+          "APPDATA",
+          path7.win32.join(args.tempHome, "AppData", "Roaming"),
+          "platform"
+        );
+        setEnvironmentValue(
+          env,
+          provenance,
+          "LOCALAPPDATA",
+          path7.win32.join(args.tempHome, "AppData", "Local"),
+          "platform"
+        );
+      } else {
+        setEnvironmentValue(env, provenance, "HOME", args.tempHome, "platform");
+      }
     }
     for (const name of args.adapterAllowlist) {
       validateEnvironmentName(name);
-      if (args.tempHome !== void 0 && name.startsWith("XDG_")) continue;
+      if (args.os !== "win32" && args.tempHome !== void 0 && name.startsWith("XDG_")) continue;
       if (!Object.prototype.hasOwnProperty.call(process.env, name)) continue;
       const value = process.env[name];
       if (value !== void 0) {
@@ -25284,7 +25563,7 @@ function buildEnvironment(args) {
     }
     for (const [name, value] of Object.entries(args.adapterValues ?? {})) {
       validateEnvironmentName(name);
-      if (args.tempHome !== void 0 && name.startsWith("XDG_")) continue;
+      if (args.os !== "win32" && args.tempHome !== void 0 && name.startsWith("XDG_")) continue;
       if (Object.prototype.hasOwnProperty.call(env, name)) continue;
       setEnvironmentValue(env, provenance, name, value, "adapter");
     }
@@ -25404,7 +25683,7 @@ async function syncDirectory2(directory) {
 }
 async function writeRunStart(target, record2, create) {
   await assertDirectoryIdentity2(target);
-  const destination = path6.join(target.canonicalDirectory, "run-start.json");
+  const destination = path8.join(target.canonicalDirectory, "run-start.json");
   const serialized = `${JSON.stringify(record2, null, 2)}
 `;
   if (create) {
@@ -25423,7 +25702,7 @@ async function writeRunStart(target, record2, create) {
     await assertDirectoryIdentity2(target);
     return;
   }
-  const temporaryPath = path6.join(
+  const temporaryPath = path8.join(
     target.canonicalDirectory,
     `.run-start.${randomUUID2()}.tmp`
   );
@@ -25814,7 +26093,7 @@ async function runAttempt(checkoutPath, spec, deps) {
 // src/verify/project-verifier.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { realpath as realpath4 } from "node:fs/promises";
-import path7 from "node:path";
+import path9 from "node:path";
 var MAX_COMMAND_OUTPUT_BYTES = 1e6;
 var MAX_DIAGNOSTIC_LENGTH5 = 2e3;
 var POSIX_ESSENTIAL_ENV2 = [
@@ -25861,12 +26140,12 @@ function commandEnvironment(command, os) {
   return environment;
 }
 function isWithin2(root, candidate) {
-  const relative = path7.relative(root, candidate);
-  return relative === "" || !path7.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path7.sep}`);
+  const relative = path9.relative(root, candidate);
+  return relative === "" || !path9.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path9.sep}`);
 }
 async function resolveCommandCwd(worktreePath, commandCwd) {
-  if (path7.isAbsolute(commandCwd)) return null;
-  const lexical = path7.resolve(worktreePath, commandCwd);
+  if (path9.isAbsolute(commandCwd)) return null;
+  const lexical = path9.resolve(worktreePath, commandCwd);
   if (!isWithin2(worktreePath, lexical)) return null;
   try {
     const [canonicalRoot, canonicalCwd] = await Promise.all([
@@ -25916,7 +26195,7 @@ async function executeCommand(args) {
     const environment = commandEnvironment(command, ps.os);
     executable = await ps.resolveExecutable({
       name: command.executable,
-      ...path7.isAbsolute(command.executable) ? { explicitPath: command.executable } : {},
+      ...path9.isAbsolute(command.executable) ? { explicitPath: command.executable } : {},
       searchPath: environment.PATH ?? ""
     });
     exit = await supervise(ps, {
@@ -26269,7 +26548,7 @@ async function loadArchivedRun(runId, deps) {
   if (result.runId !== runId || manifest.runId !== runId) {
     throw runtimeError("archived run identity does not match", "archive-inconsistent");
   }
-  if (result.candidate !== null && (manifest.baseCommitOid !== result.candidate.baseCommitOid || manifest.candidateManifestHash !== result.candidate.manifestHash || result.candidate.manifestHash !== createHash6("sha256").update(JSON.stringify(result.candidate.changedPaths)).digest("hex"))) {
+  if (result.candidate !== null && (manifest.baseCommitOid !== result.candidate.baseCommitOid || manifest.candidateManifestHash !== result.candidate.manifestHash || result.candidate.manifestHash !== createHash7("sha256").update(JSON.stringify(result.candidate.changedPaths)).digest("hex"))) {
     throw runtimeError("archived candidate does not match its run manifest", "archive-inconsistent");
   }
   const canonical = await services2(deps).canonicalizePath(manifest.repoRoot);
@@ -26454,7 +26733,7 @@ async function handleIntegrateCandidate(runId, expectedArtifactHash, deps = {}) 
 }
 
 // src/runtime/recovery-manager.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import { constants as constants4 } from "node:fs";
 import {
   lstat as lstat5,
@@ -26463,8 +26742,8 @@ import {
   realpath as realpath5,
   rm as rm4
 } from "node:fs/promises";
-import path8 from "node:path";
-import nodeProcess3 from "node:process";
+import path10 from "node:path";
+import nodeProcess4 from "node:process";
 var NO_FOLLOW3 = constants4.O_NOFOLLOW ?? 0;
 var MAX_STATE_FILE_BYTES = 8e6;
 var SAFE_RUN_ID = /^[a-z0-9][a-z0-9._-]*$/;
@@ -26490,9 +26769,9 @@ function validateRunId(runId) {
   }
 }
 async function stateRoot() {
-  const configured = nodeProcess3.env.CLAUDE_PLUGIN_DATA ?? (nodeProcess3.env.NODE_ENV === "test" ? nodeProcess3.env.CLAUDE_ARCHITECT_STATE_DIR : void 0);
+  const configured = nodeProcess4.env.CLAUDE_PLUGIN_DATA ?? (nodeProcess4.env.NODE_ENV === "test" ? nodeProcess4.env.CLAUDE_ARCHITECT_STATE_DIR : void 0);
   if (configured === void 0) return null;
-  const root = path8.resolve(resolveStateDir());
+  const root = path10.resolve(resolveStateDir());
   try {
     const metadata = await lstat5(root);
     if (!isPlainDirectory(metadata)) {
@@ -26574,10 +26853,10 @@ function parseRunStart(text, expectedRunId) {
   }
   const record2 = value;
   validateRunId(record2.runId);
-  if (record2.runId !== expectedRunId || typeof record2.lockKey !== "string" || !/^[0-9a-f]{64}$/.test(record2.lockKey) || typeof record2.canonicalCommonDir !== "string" || !path8.isAbsolute(record2.canonicalCommonDir) || record2.pid !== null && (record2.pid === void 0 || !Number.isSafeInteger(record2.pid) || record2.pid <= 1) || record2.processToken !== void 0 && record2.processToken !== null && typeof record2.processToken !== "string" || typeof record2.startedAt !== "string" || !Number.isFinite(Date.parse(record2.startedAt))) {
+  if (record2.runId !== expectedRunId || typeof record2.lockKey !== "string" || !/^[0-9a-f]{64}$/.test(record2.lockKey) || typeof record2.canonicalCommonDir !== "string" || !path10.isAbsolute(record2.canonicalCommonDir) || record2.pid !== null && (record2.pid === void 0 || !Number.isSafeInteger(record2.pid) || record2.pid <= 1) || record2.processToken !== void 0 && record2.processToken !== null && typeof record2.processToken !== "string" || typeof record2.startedAt !== "string" || !Number.isFinite(Date.parse(record2.startedAt))) {
     throw new RuntimeError("run-start recovery record is malformed");
   }
-  const expectedLockKey = createHash7("sha256").update(record2.canonicalCommonDir).digest("hex");
+  const expectedLockKey = createHash8("sha256").update(record2.canonicalCommonDir).digest("hex");
   if (record2.lockKey !== expectedLockKey) {
     throw new RuntimeError("run-start lock key does not match its canonical common directory");
   }
@@ -26614,7 +26893,7 @@ async function validateGitCommonDir(commonDir) {
   return canonical;
 }
 async function validateRepositoryRoot(repoRoot) {
-  if (!path8.isAbsolute(repoRoot)) {
+  if (!path10.isAbsolute(repoRoot)) {
     throw new RuntimeError("cleanup journal repository root is not absolute");
   }
   const canonical = await realpath5(repoRoot);
@@ -26697,7 +26976,7 @@ function cleanupOutcome(record2) {
 async function appendCleanupRecord(runsRoot, record2) {
   const identity = await plainDirectoryIdentity(runsRoot);
   if (identity === null) throw new RuntimeError("cleanup journal root disappeared");
-  const filename = path8.join(runsRoot, "cleanup.ndjson");
+  const filename = path10.join(runsRoot, "cleanup.ndjson");
   const handle = await open4(
     filename,
     constants4.O_WRONLY | constants4.O_CREAT | constants4.O_APPEND | NO_FOLLOW3,
@@ -26773,7 +27052,7 @@ async function commitCleanupRefs(record2) {
   await deleteExactRef(repoRoot, record2.backupRef, backupOid);
 }
 async function replayInterruptedPrunes(runsRoot) {
-  const text = await readCleanupJournal(path8.join(runsRoot, "cleanup.ndjson"));
+  const text = await readCleanupJournal(path10.join(runsRoot, "cleanup.ndjson"));
   if (text === null || text.trim() === "") return;
   const pending = /* @__PURE__ */ new Map();
   for (const line of text.trimEnd().split("\n")) {
@@ -26783,8 +27062,8 @@ async function replayInterruptedPrunes(runsRoot) {
     else pending.delete(record2.runId);
   }
   for (const record2 of [...pending.values()].sort((left, right) => left.runId.localeCompare(right.runId))) {
-    const runDirectory = path8.join(runsRoot, record2.runId);
-    const quarantinePath = path8.join(runsRoot, record2.quarantineName);
+    const runDirectory = path10.join(runsRoot, record2.runId);
+    const quarantinePath = path10.join(runsRoot, record2.quarantineName);
     const runIdentity = await plainDirectoryIdentity(runDirectory);
     const quarantineIdentity = await plainDirectoryIdentity(quarantinePath);
     if (runIdentity !== null && quarantineIdentity !== null) {
@@ -26816,7 +27095,7 @@ async function recoverRun(record2, root, ps) {
     "recovery",
     "startup recovery reclaimed unfinished run\n"
   );
-  const worktreePath = path8.join(root, "worktrees", record2.runId);
+  const worktreePath = path10.join(root, "worktrees", record2.runId);
   const worktreeIdentity = await plainDirectoryIdentity(worktreePath);
   if (worktreeIdentity !== null) {
     await new WorktreeManager(commonDir, record2.runId, ps).remove(worktreePath);
@@ -26848,7 +27127,7 @@ async function recoverRun(record2, root, ps) {
 function defaultIsProcessAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 1) return false;
   try {
-    nodeProcess3.kill(pid, 0);
+    nodeProcess4.kill(pid, 0);
     return true;
   } catch (error2) {
     if (errorCode3(error2) === "EPERM") return true;
@@ -26869,7 +27148,7 @@ async function reclaimLocks(locksRoot, isProcessAlive) {
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     const match = LOCK_NAME.exec(entry.name);
     if (match === null) continue;
-    const lockPath = path8.join(locksRoot, entry.name);
+    const lockPath = path10.join(locksRoot, entry.name);
     if (!entry.isFile() || entry.isSymbolicLink()) {
       throw new RuntimeError("checkout lock must be a regular file during recovery");
     }
@@ -26887,7 +27166,7 @@ async function reclaimLocks(locksRoot, isProcessAlive) {
   }
 }
 async function lockIsOwnedByLiveProcess(locksRoot, lockKey, isProcessAlive) {
-  const contents = await readBoundedRegularFile(path8.join(locksRoot, `${lockKey}.lock`));
+  const contents = await readBoundedRegularFile(path10.join(locksRoot, `${lockKey}.lock`));
   if (contents === null) return false;
   const ownerPid = Number(contents.trim());
   return Number.isSafeInteger(ownerPid) && ownerPid > 1 && isProcessAlive(ownerPid);
@@ -26895,19 +27174,19 @@ async function lockIsOwnedByLiveProcess(locksRoot, lockKey, isProcessAlive) {
 async function recoverStaleRuns(dependencies = {}) {
   const root = await stateRoot();
   if (root === null) return { recovered: [] };
-  const runsRoot = path8.join(root, "runs");
+  const runsRoot = path10.join(root, "runs");
   const runsIdentity = await plainDirectoryIdentity(runsRoot);
   if (runsIdentity !== null) await replayInterruptedPrunes(runsRoot);
   const ps = dependencies.platformServices ?? getPlatformServices();
   const isProcessAlive = dependencies.isProcessAlive ?? defaultIsProcessAlive;
-  const locksRoot = path8.join(root, "locks");
+  const locksRoot = path10.join(root, "locks");
   const stale = [];
   if (runsIdentity !== null) {
     const runEntries = await readdir2(runsRoot, { withFileTypes: true });
     for (const entry of runEntries.sort((left, right) => left.name.localeCompare(right.name))) {
       if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
-      const runDirectory = path8.join(runsRoot, entry.name);
-      const runStartText = await readBoundedRegularFile(path8.join(runDirectory, "run-start.json"));
+      const runDirectory = path10.join(runsRoot, entry.name);
+      const runStartText = await readBoundedRegularFile(path10.join(runDirectory, "run-start.json"));
       if (runStartText === null) continue;
       const record2 = parseRunStart(runStartText, entry.name);
       const result = await new ArtifactStore(entry.name).readResult(entry.name);

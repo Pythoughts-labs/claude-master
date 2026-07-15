@@ -76,7 +76,7 @@ describe("doctor", () => {
     });
   });
 
-  it("always responds with unsupported-host and environment diagnostics", async () => {
+  it("reports environment diagnostics on Windows without rejecting the platform", async () => {
     const result = await doctor({
       ps: platform("win32"),
       env: { CLAUDE_ARCHITECT_DELEGATED: "1" },
@@ -92,8 +92,8 @@ describe("doctor", () => {
     expect(result.node).toEqual({ version: "22.17.0", ok: true });
     expect(result.git).toEqual({ version: null, ok: false });
     expect(result.producers).toEqual([codexReport("win32")]);
+    expect(result.issues).not.toContain("unsupported-platform");
     expect(result.issues).toEqual(expect.arrayContaining([
-      "unsupported-platform",
       "missing-claude-plugin-data",
       "nested-delegation-marker-present",
       "git-unavailable",

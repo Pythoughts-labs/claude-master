@@ -1,3 +1,4 @@
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildEnvironment,
@@ -104,6 +105,36 @@ describe("buildEnvironment", () => {
     expect(result.env.XDG_CACHE_HOME).toBeUndefined();
     expect(result.env.XDG_DATA_HOME).toBeUndefined();
     expect(result.env.XDG_STATE_HOME).toBeUndefined();
+  });
+
+  it("normalizes Windows platform environment names", () => {
+    process.env.PATH = "uppercase-path";
+    process.env.Path = "canonical-path";
+
+    const result = buildEnvironment({
+      os: "win32",
+      adapterAllowlist: [],
+    });
+
+    expect(result.env.Path).toBe("canonical-path");
+    expect(result.env.PATH).toBeUndefined();
+    expect(Object.keys(result.env).filter(name => name.toLowerCase() === "path")).toEqual(["Path"]);
+    expect(result.provenance).toContainEqual({ name: "Path", source: "platform" });
+  });
+
+  it("applies Windows temporary home paths and the delegation marker", () => {
+    const tempHome = "C:\\temporary\\home";
+
+    const result = buildEnvironment({
+      os: "win32",
+      adapterAllowlist: [],
+      tempHome,
+    });
+
+    expect(result.env.USERPROFILE).toBe(tempHome);
+    expect(result.env.APPDATA).toBe(path.win32.join(tempHome, "AppData", "Roaming"));
+    expect(result.env.LOCALAPPDATA).toBe(path.win32.join(tempHome, "AppData", "Local"));
+    expect(result.env.CLAUDE_ARCHITECT_DELEGATED).toBe("1");
   });
 
   it.each([
