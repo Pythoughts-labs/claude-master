@@ -198,6 +198,22 @@ describe("ArtifactStore", () => {
     registration.dispose();
   });
 
+  it("does not persist a registered secret created by pattern redaction", async () => {
+    const secret = "prefix [x] suffix";
+    const registration = registerSecretValue(secret);
+    const store = new ArtifactStore("run-cascading-secret-log");
+
+    const ref = await store.writeLog(
+      "producer",
+      "prefix sk-ABCDEF0123456789 suffix",
+    );
+
+    const stored = await readFile(join(store.runDirectory, ref), "utf8");
+    expect(stored).toBe("[x]");
+    expect(stored).not.toContain(secret);
+    registration.dispose();
+  });
+
   it("redacts registered secrets used as JSON property names", async () => {
     const secret = "enterprise-secret-key";
     const registration = registerSecretValue(secret);

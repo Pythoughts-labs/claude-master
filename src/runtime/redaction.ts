@@ -80,7 +80,12 @@ function redactUnmarked(text: string): string {
 }
 
 export function redact(text: string): string {
-  return redactUnmarked(text);
+  let current = text;
+  while (true) {
+    const next = redactUnmarked(current);
+    if (next === current) return next;
+    current = next;
+  }
 }
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);

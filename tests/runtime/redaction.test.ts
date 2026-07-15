@@ -74,6 +74,17 @@ describe("redact", () => {
     registration.dispose();
   });
 
+  it("reaches a fixed point when pattern redaction creates a registered secret", () => {
+    clearRegisteredSecrets();
+    const registration = registerSecretValue("prefix [x] suffix");
+
+    const output = redact("prefix sk-ABCDEF0123456789 suffix");
+
+    expect(output).toBe("[x]");
+    expect(redact(output)).toBe(output);
+    registration.dispose();
+  });
+
   it("redacts string leaves in nested records without changing other values", () => {
     const input = {
       attempt: 2,
