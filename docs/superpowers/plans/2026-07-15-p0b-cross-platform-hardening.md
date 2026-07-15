@@ -435,15 +435,15 @@ export const SANDBOX_BACKENDS: SandboxBackend[] = [{
 }];
 ```
 
-- [ ] **Step 1: Write failing tests** — `selectSandboxBackend` returns the darwin/arm64 certified entry; returns `{backend:null, reason:"no-write-confinement-backend"}` for linux while unsupported; AttemptRuntime test (extend existing fake-producer harness in `tests/runtime/attempt-runtime.test.ts`): a fake report with `writeConfinementBackend: null` on the edit lane fails closed with the existing `unavailable`/`no-eligible-producer` classification and never spawns; a report naming an unknown backend id also fails closed.
+- [x] **Step 1: Write failing tests** — `selectSandboxBackend` returns the darwin/arm64 certified entry; returns `{backend:null, reason:"no-write-confinement-backend"}` for linux while unsupported; AttemptRuntime test (extend existing fake-producer harness in `tests/runtime/attempt-runtime.test.ts`): a fake report with `writeConfinementBackend: null` on the edit lane fails closed with the existing `unavailable`/`no-eligible-producer` classification and never spawns; a report naming an unknown backend id also fails closed.
 
-- [ ] **Step 2: Run to verify failure.**
+- [x] **Step 2: Run to verify failure.**
 
-- [ ] **Step 3: Implement** — `backends.ts` as above; `codex-adapter.ts` replaces its inline `certified = darwin && arm64 && native` check with a registry lookup so certification lives in ONE place; `attempt-runtime.ts` validates the selected report's `writeConfinementBackend` against the registry right before environment build and maps a mismatch to the run's `unavailable` classification with reason `"unrecognized-write-confinement-backend"`.
+- [x] **Step 3: Implement** — `backends.ts` as above; `codex-adapter.ts` replaces its inline `certified = darwin && arm64 && native` check with a registry lookup so certification lives in ONE place; `attempt-runtime.ts` validates the selected report's `writeConfinementBackend` against the registry right before environment build and maps a mismatch to the run's `unavailable` classification with reason `"unrecognized-write-confinement-backend"`.
 
-- [ ] **Step 4: Run** — focused + full suite + typecheck + build → green.
+- [x] **Step 4: Run** — focused + full suite + typecheck + build → green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — landed as `083cd8f`
 
 ```bash
 git add src/platform/sandbox/ src/producers/codex-adapter.ts src/runtime/attempt-runtime.ts tests/runtime/ runtime/server.mjs
