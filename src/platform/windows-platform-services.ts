@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import nodeProcess from "node:process";
+import { fileURLToPath } from "node:url";
 import { BoundedBuffer } from "../util/bounded-buffer.js";
 import { RuntimeError } from "../util/errors.js";
 import type {
@@ -25,6 +26,33 @@ interface WindowsExecutableDependencies {
   nodeExe: string;
   comSpec?: string;
   npmEntryProbe?: string[];
+}
+
+export interface JobKillHelper {
+  path: string;
+  checkAvailable(): Promise<boolean>;
+}
+
+export function resolveJobKillHelper(pluginRoot: string, arch: string): JobKillHelper {
+  const helperPath = path.join(pluginRoot, "native", "bin", `win32-job-kill-${arch}.exe`);
+  return {
+    path: helperPath,
+    async checkAvailable(): Promise<boolean> {
+      try { await fs.access(helperPath); return true; }
+      catch { return false; }
+    },
+  };
+}
+
+async function findPluginRoot(): Promise<string> {
+  let directory = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    try { await fs.access(path.join(directory, "package.json")); return directory; }
+    catch { /* continue walking */ }
+    const parent = path.dirname(directory);
+    if (parent === directory) throw new RuntimeError("unable to locate plugin root");
+    directory = parent;
+  }
 }
 
 async function packageBinEntries(
@@ -105,10 +133,6 @@ export async function resolveWindowsExecutable(
   throw new RuntimeError("executable was not found", { name: request.name });
 }
 
-function notImplemented(): never {
-  throw new RuntimeError("not implemented until P0-B Task 3/4");
-}
-
 async function gitCommonDir(cwd: string): Promise<string> {
   // Intentional bootstrap exception until Task 8 provides the shared argv-based Git helper.
   return new Promise((resolve, reject) => {
@@ -131,6 +155,27 @@ export function canonicalizeForScope(candidate: string, root: string): boolean {
 export class WindowsPlatformServices implements PlatformServices {
   readonly os = "win32";
 
+  constructor(
+    private readonly pluginRoot?: string,
+    private readonly arch = nodeProcess.arch,
+  ) {}
+
+  private async jobKillHelper(): Promise<JobKillHelper> {
+    return resolveJobKillHelper(this.pluginRoot ?? await findPluginRoot(), this.arch);
+  }
+
+  private async runJobKillHelper(pid: number): Promise<void> {
+    const helper = await this.jobKillHelper();
+    await new Promise<void>((resolve, reject) => {
+      execFile(helper.path, [String(pid)], { windowsHide: true, shell: false }, error => {
+        if (error === null || error.code === 2) resolve();
+        else reject(new RuntimeError("windows process-tree termination failed", {
+          path: helper.path, pid, cause: error,
+        }));
+      });
+    });
+  }
+
   async resolveExecutable(request: ExecutableRequest): Promise<ResolvedExecutable> {
     const pathext = (nodeProcess.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
       .split(";").filter(Boolean).map(extension => extension.toUpperCase());
@@ -150,6 +195,10 @@ export class WindowsPlatformServices implements PlatformServices {
   }
 
   async spawnSupervised(req: SpawnRequest): Promise<SupervisedProcess> {
+    const helper = await this.jobKillHelper();
+    if (!await helper.checkAvailable()) {
+      throw new RuntimeError("windows process-tree helper missing", { path: helper.path });
+    }
     const child = spawn(req.executable.command, [...req.executable.prefixArgs, ...req.args], {
       cwd: req.cwd, env: normalizeWindowsEnv(req.env), detached: false, windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -185,7 +234,9 @@ export class WindowsPlatformServices implements PlatformServices {
     try { child.kill("SIGTERM"); }
     catch { /* process already exited */ }
   }
-  async terminateProcessTree(_process: SupervisedProcess): Promise<void> { return notImplemented(); }
+  async terminateProcessTree(proc: SupervisedProcess): Promise<void> {
+    await this.runJobKillHelper(proc.pid);
+  }
   async getProcessStartToken(pid: number): Promise<string | null> {
     if (!Number.isSafeInteger(pid) || pid <= 1) return null;
     return new Promise(resolve => {
@@ -203,8 +254,12 @@ export class WindowsPlatformServices implements PlatformServices {
       }
     });
   }
-  async terminateProcessTreeByPid(_pid: number, _expectedToken?: string | null): Promise<void> {
-    return notImplemented();
+  async terminateProcessTreeByPid(pid: number, expectedToken?: string | null): Promise<void> {
+    if (typeof expectedToken === "string") {
+      const liveToken = await this.getProcessStartToken(pid);
+      if (liveToken !== expectedToken) return;
+    }
+    await this.runJobKillHelper(pid);
   }
   async acquireCheckoutLock(checkout: string): Promise<CheckoutLock> {
     const { canonical, gitCommonDir: commonDir } = await this.canonicalizePath(checkout);
