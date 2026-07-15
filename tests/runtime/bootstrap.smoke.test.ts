@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const temporaryPaths: string[] = [];
@@ -23,7 +23,8 @@ async function nodeVersionPrelude(root: string, version: string): Promise<string
     preludePath,
     `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(version)} });\n`,
   );
-  return preludePath;
+  // --import treats a bare `C:\...` path as a URL on Windows; hand it a file URL.
+  return pathToFileURL(preludePath).href;
 }
 
 async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<string> {

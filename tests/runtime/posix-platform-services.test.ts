@@ -117,7 +117,7 @@ describe("PosixPlatformServices", () => {
     await aliasLock.release();
   });
 
-  it("refuses to terminate a process group for non-positive pids", async () => {
+  it.skipIf(process.platform === "win32")("refuses to terminate a process group for non-positive pids", async () => {
     const stillRunning = true;
     await expect(ps.terminateProcessTreeByPid(-1)).resolves.toBeUndefined();
     await expect(ps.terminateProcessTreeByPid(0)).resolves.toBeUndefined();
@@ -128,7 +128,7 @@ describe("PosixPlatformServices", () => {
     expect(stillRunning).toBe(true);
   });
 
-  it("terminates a real process tree when given its actual pid", async () => {
+  it.skipIf(process.platform === "win32")("terminates a real process tree when given its actual pid", async () => {
     const originalPath = process.env.PATH;
     process.env.PATH = `${path.dirname(process.execPath)}${path.delimiter}${originalPath ?? ""}`;
     try {

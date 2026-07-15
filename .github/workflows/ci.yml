@@ -24,6 +24,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # validate-release runs `claude plugin validate`; the CLI is not on
+      # hosted runners, so install it for the POSIX legs.
+      - if: runner.os != 'Windows'
+        run: npm install -g @anthropic-ai/claude-code
       - if: runner.os != 'Windows'
         run: bash scripts/validate-release.sh
       - if: runner.os == 'Windows'

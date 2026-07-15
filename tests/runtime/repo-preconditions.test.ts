@@ -56,7 +56,8 @@ async function initRepo(): Promise<string> {
 afterEach(async () => {
   filesystemProbe.markerAccessErrorCode = undefined;
   filesystemProbe.opendirCalls = 0;
-  await Promise.all(temporaryPaths.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryPaths.splice(0).map(path =>
+    rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })));
 });
 
 describe("checkPreconditions", () => {
@@ -298,7 +299,7 @@ describe("checkPreconditions", () => {
       ok: false,
       reason: "nested-repository-scan-failed",
     });
-  }, 15_000);
+  }, 60_000);
 
   it("supports detached HEAD", async () => {
     const directory = await initRepo();

@@ -19,7 +19,9 @@ describe("P0-A plugin wiring", () => {
     }, "Claude plugin must register the packaged runtime bootstrap without a shell");
     assert.ok(fs.statSync(`${root}/runtime/bootstrap.mjs`).isFile(), "bootstrap must ship");
     assert.ok(fs.statSync(`${root}/runtime/server.mjs`).isFile(), "server bundle must ship");
-    assert.ok(fs.statSync(`${root}/scripts/build-runtime.sh`).mode & 0o111, "build wrapper must be executable");
+    if (process.platform !== "win32") {
+      assert.ok(fs.statSync(`${root}/scripts/build-runtime.sh`).mode & 0o111, "build wrapper must be executable");
+    }
 
     const advisor = read("agents/advisor.md");
     const frontmatterMatch = /^---\n([\s\S]*?)\n---\n/u.exec(advisor);

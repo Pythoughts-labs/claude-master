@@ -187,12 +187,13 @@ describe("CodexAdapter", () => {
   });
 
   it("defaults CODEX_HOME to the host auth store when unset and auth.json exists", () => {
+    const store = join("/hosthome", ".codex");
     const values = defaultCodexEnv({
       env: {},
       homeDirectory: "/hosthome",
-      hasAuthStore: directory => directory === "/hosthome/.codex",
+      hasAuthStore: directory => directory === store,
     });
-    expect(values).toEqual({ CODEX_HOME: "/hosthome/.codex" });
+    expect(values).toEqual({ CODEX_HOME: store });
   });
 
   it("does not default CODEX_HOME when the variable is set or no auth store exists", () => {
