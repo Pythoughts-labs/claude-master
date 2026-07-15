@@ -496,15 +496,15 @@ git commit -m "test(runtime): CRLF events, Windows env keys, and case/drive/UNC 
   - **Cross-session lock races:** lock files now persist `{ pid, processToken }` JSON instead of the bare pid string (`posix-platform-services.ts:121`); reclaim only when the owner is dead OR token-mismatched; a live matching owner leaves the lock alone (today's live-lock-aware behavior, now token-hardened). Old bare-pid lock files parse as `{pid, processToken:null}`.
   - **Update-during-active-attempt:** no code — document that the previous `${CLAUDE_PLUGIN_ROOT}` stays live until `/reload-plugins`, and recovery on next start owns any run the old root left behind; add a test proving recovery of a run dir written by a *different* plugin-root path string.
 
-- [ ] **Step 1: Write failing tests** — (a) live orphan with matching token: assert cooperative-then-forced ordering via an injected fake `PlatformServices` recording call order and a fake clock for the 3s grace; (b) lock owned by live pid with MISMATCHED token → reclaimed; live pid with matching token → untouched; (c) legacy bare-pid lock file → parsed, dead-owner reclaim still works; (d) run-start written under a stale plugin root → still recovered.
+- [x] **Step 1: Write failing tests** — (a) live orphan with matching token: assert cooperative-then-forced ordering via an injected fake `PlatformServices` recording call order and a fake clock for the 3s grace; (b) lock owned by live pid with MISMATCHED token → reclaimed; live pid with matching token → untouched; (c) legacy bare-pid lock file → parsed, dead-owner reclaim still works; (d) run-start written under a stale plugin root → still recovered.
 
-- [ ] **Step 2: Run to verify failure.**
+- [x] **Step 2: Run to verify failure.**
 
-- [ ] **Step 3: Implement** — extend the lock write in both platform services to the JSON form via the shared `acquireWxFileLock`; extend `recovery-manager.ts` lock parsing (`bounded read + JSON.parse` fallback to bare integer), add the escalation sequence with the injectable clock/grace already used by the recovery test seam.
+- [x] **Step 3: Implement** — extend the lock write in both platform services to the JSON form via the shared `acquireWxFileLock`; extend `recovery-manager.ts` lock parsing (`bounded read + JSON.parse` fallback to bare integer), add the escalation sequence with the injectable clock/grace already used by the recovery test seam.
 
-- [ ] **Step 4: Run** — focused recovery suite + full suite + typecheck + build → green.
+- [x] **Step 4: Run** — focused recovery suite + full suite + typecheck + build → green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — landed as `6b62df3`
 
 ```bash
 git add src/runtime/recovery-manager.ts src/platform/ docs/ tests/runtime/recovery-manager.test.ts runtime/server.mjs
