@@ -474,6 +474,36 @@ describe("ArtifactStore", () => {
     });
   });
 
+  it("does not write cleanup intent after the archive root is swapped", async () => {
+    const runId = "run-cleanup-root-swap";
+    const store = new ArtifactStore(runId);
+    await store.writeResult(sampleResult(runId));
+    const runsRoot = join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    const preservedRunsRoot = join(process.env.CLAUDE_PLUGIN_DATA!, "preserved-runs");
+    const cleanupJournal = join(runsRoot, "cleanup.ndjson");
+    const oldTime = new Date(Date.now() - 60_000);
+    await utimes(store.runDirectory, oldTime, oldTime);
+    let swapped = false;
+    filesystemHooks.beforeOpen = async filename => {
+      if (swapped || filename !== cleanupJournal) return;
+      swapped = true;
+      filesystemHooks.beforeOpen = undefined;
+      await rename(runsRoot, preservedRunsRoot);
+      await mkdir(runsRoot);
+    };
+
+    const pruned = await store.prune({
+      maxAgeMs: 1_000,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+    });
+
+    expect(swapped).toBe(true);
+    expect(pruned.removed).not.toContain(runId);
+    expect(pruned.retained.some(entry => entry.runId === runId)).toBe(true);
+    await expect(stat(join(preservedRunsRoot, runId))).resolves.toBeDefined();
+    await expect(readFile(cleanupJournal, "utf8")).resolves.toBe("");
+  });
+
   it("deletes a candidate anchor before pruning its archive", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "claude-architect-prune-repo-"));
     temporaryPaths.push(repoRoot);

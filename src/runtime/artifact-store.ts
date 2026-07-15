@@ -782,6 +782,7 @@ export class ArtifactStore {
   private async appendCleanupRecord(record: CleanupRecord): Promise<void> {
     await enqueueCleanupJournalWrite(async () => {
       await this.ensureRunsRoot();
+      const runsRootIdentity = await ensurePlainDirectory(this.runsRoot);
       const filename = path.join(this.runsRoot, CLEANUP_JOURNAL);
       const handle = await open(
         filename,
@@ -789,15 +790,19 @@ export class ArtifactStore {
         0o600,
       );
       try {
+        await assertDirectoryIdentity(this.runsRoot, runsRootIdentity);
         const metadata = await handle.stat();
         if (!metadata.isFile()) throw new RuntimeError("cleanup journal is not a regular file");
         const line = `${serializeJson(record)}\n`;
         await handle.writeFile(line, { encoding: "utf8" });
         await handle.sync();
+        await assertDirectoryIdentity(this.runsRoot, runsRootIdentity);
       } finally {
         await handle.close();
       }
+      await assertDirectoryIdentity(this.runsRoot, runsRootIdentity);
       await syncDirectory(this.runsRoot);
+      await assertDirectoryIdentity(this.runsRoot, runsRootIdentity);
     });
   }
 
