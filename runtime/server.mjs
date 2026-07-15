@@ -407,11 +407,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants4);
+          this.rhs = optimizeExpr(this.rhs, names, constants5);
         return this;
       }
       get names() {
@@ -428,10 +428,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants4);
+        this.rhs = optimizeExpr(this.rhs, names, constants5);
         return this;
       }
       get names() {
@@ -492,8 +492,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants4) {
-        this.code = optimizeExpr(this.code, names, constants4);
+      optimizeNames(names, constants5) {
+        this.code = optimizeExpr(this.code, names, constants5);
         return this;
       }
       get names() {
@@ -522,12 +522,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants4))
+          if (n.optimizeNames(names, constants5))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -580,12 +580,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants4);
-        if (!(super.optimizeNames(names, constants4) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants5);
+        if (!(super.optimizeNames(names, constants5) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants4);
+        this.condition = optimizeExpr(this.condition, names, constants5);
         return this;
       }
       get names() {
@@ -608,10 +608,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants4) {
-        if (!super.optimizeNames(names, constants4))
+      optimizeNames(names, constants5) {
+        if (!super.optimizeNames(names, constants5))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants4);
+        this.iteration = optimizeExpr(this.iteration, names, constants5);
         return this;
       }
       get names() {
@@ -647,10 +647,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants4) {
-        if (!super.optimizeNames(names, constants4))
+      optimizeNames(names, constants5) {
+        if (!super.optimizeNames(names, constants5))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants4);
+        this.iterable = optimizeExpr(this.iterable, names, constants5);
         return this;
       }
       get names() {
@@ -692,11 +692,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         var _a, _b;
-        super.optimizeNames(names, constants4);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants4);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants4);
+        super.optimizeNames(names, constants5);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants5);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants5);
         return this;
       }
       get names() {
@@ -997,7 +997,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants4) {
+    function optimizeExpr(expr, names, constants5) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1012,14 +1012,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants4[n.str];
+        const c = constants5[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants4[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants5[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -3226,8 +3226,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path8) {
-      let input = path8;
+    function removeDotSegments(path9) {
+      let input = path9;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3479,8 +3479,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path8, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path8 && path8 !== "/" ? path8 : void 0;
+        const [path9, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path9 && path9 !== "/" ? path9 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -8191,8 +8191,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path8, errorMaps, issueData } = params;
-  const fullPath = [...path8, ...issueData.path || []];
+  const { data, path: path9, errorMaps, issueData } = params;
+  const fullPath = [...path9, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -8308,11 +8308,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path8, key) {
+  constructor(parent, value, path9, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path8;
+    this._path = path9;
     this._key = key;
   }
   get path() {
@@ -11950,10 +11950,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path8) {
-  if (!path8)
+function getElementAtPath(obj, path9) {
+  if (!path9)
     return obj;
-  return path8.reduce((acc, key) => acc?.[key], obj);
+  return path9.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12273,11 +12273,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path8, issues) {
+function prefixIssues(path9, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path8);
+    iss.path.unshift(path9);
     return iss;
   });
 }
@@ -25632,9 +25632,9 @@ async function recomputeManifest(args) {
   const rawDiff = parseRawDiff2(rawOutput);
   const rawByPath = new Map(rawDiff.map((entry) => [entry.path, entry]));
   const treeByPath = parseTree2(treeOutput);
-  const changedPaths = sortChangedPaths2(parseNameStatus2(nameStatusOutput).map(({ path: path8, status }) => {
-    const rawEntry = rawByPath.get(path8);
-    const treeEntry = treeByPath.get(path8);
+  const changedPaths = sortChangedPaths2(parseNameStatus2(nameStatusOutput).map(({ path: path9, status }) => {
+    const rawEntry = rawByPath.get(path9);
+    const treeEntry = treeByPath.get(path9);
     if (treeEntry === void 0 && status !== "D") {
       throw new RuntimeError("candidate tree is missing a changed path");
     }
@@ -25642,7 +25642,7 @@ async function recomputeManifest(args) {
       throw new RuntimeError("git diff-tree outputs disagree");
     }
     return {
-      path: path8,
+      path: path9,
       changeType: changeType2(status),
       mode: treeEntry?.mode ?? rawEntry.oldMode,
       contentHash: treeEntry?.oid ?? null
@@ -26017,6 +26017,477 @@ async function handleIntegrateCandidate(runId, expectedArtifactHash, deps = {}) 
   }
 }
 
+// src/runtime/recovery-manager.ts
+import { createHash as createHash7 } from "node:crypto";
+import { constants as constants4 } from "node:fs";
+import {
+  lstat as lstat5,
+  open as open4,
+  readdir as readdir2,
+  realpath as realpath5,
+  rm as rm5
+} from "node:fs/promises";
+import path8 from "node:path";
+import nodeProcess3 from "node:process";
+var NO_FOLLOW3 = constants4.O_NOFOLLOW ?? 0;
+var MAX_STATE_FILE_BYTES = 8e6;
+var SAFE_RUN_ID = /^[a-z0-9][a-z0-9._-]*$/;
+var LOCK_NAME = /^([0-9a-f]{64})\.lock$/;
+var OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+var CANDIDATE_REF_PREFIX2 = "refs/claude-architect/candidates/";
+var BACKUP_REF_PREFIX = "refs/claude-architect/prune-backups/";
+function errorCode3(error2) {
+  return error2.code;
+}
+function isMissing2(error2) {
+  return errorCode3(error2) === "ENOENT";
+}
+function isPlainDirectory(metadata) {
+  return metadata.isDirectory() && !metadata.isSymbolicLink();
+}
+function sameIdentity(metadata, expected) {
+  return metadata.dev === expected.dev && metadata.ino === expected.ino;
+}
+function validateRunId(runId) {
+  if (typeof runId !== "string" || !SAFE_RUN_ID.test(runId)) {
+    throw new RuntimeError("recovery record has an invalid run id");
+  }
+}
+async function stateRoot() {
+  const configured = nodeProcess3.env.CLAUDE_PLUGIN_DATA ?? (nodeProcess3.env.NODE_ENV === "test" ? nodeProcess3.env.CLAUDE_ARCHITECT_STATE_DIR : void 0);
+  if (configured === void 0) return null;
+  const root = path8.resolve(resolveStateDir());
+  try {
+    const metadata = await lstat5(root);
+    if (!isPlainDirectory(metadata)) {
+      throw new RuntimeError("plugin data directory must be a plain directory during recovery");
+    }
+    await realpath5(root);
+    return root;
+  } catch (error2) {
+    if (isMissing2(error2)) return null;
+    throw error2;
+  }
+}
+async function readBoundedRegularFile(filename) {
+  let handle;
+  try {
+    handle = await open4(filename, constants4.O_RDONLY | NO_FOLLOW3);
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > MAX_STATE_FILE_BYTES) {
+      throw new RuntimeError("recovery state entry is not a bounded regular file");
+    }
+    return await handle.readFile({ encoding: "utf8" });
+  } catch (error2) {
+    if (isMissing2(error2)) return null;
+    throw error2;
+  } finally {
+    await handle?.close();
+  }
+}
+async function readCleanupJournal(filename) {
+  let handle;
+  try {
+    handle = await open4(filename, constants4.O_RDWR | NO_FOLLOW3);
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > MAX_STATE_FILE_BYTES) {
+      throw new RuntimeError("cleanup journal is not a bounded regular file");
+    }
+    const text = await handle.readFile({ encoding: "utf8" });
+    if (text === "" || text.endsWith("\n")) return text;
+    const finalNewline = text.lastIndexOf("\n");
+    const completePrefix = finalNewline === -1 ? "" : text.slice(0, finalNewline + 1);
+    await handle.truncate(Buffer.byteLength(completePrefix, "utf8"));
+    await handle.sync();
+    return completePrefix;
+  } catch (error2) {
+    if (isMissing2(error2)) return null;
+    throw error2;
+  } finally {
+    await handle?.close();
+  }
+}
+async function plainDirectoryIdentity(directory) {
+  try {
+    const metadata = await lstat5(directory);
+    if (!isPlainDirectory(metadata)) {
+      throw new RuntimeError("recovery directory must not be a symbolic link");
+    }
+    return { dev: metadata.dev, ino: metadata.ino };
+  } catch (error2) {
+    if (isMissing2(error2)) return null;
+    throw error2;
+  }
+}
+async function removePlainDirectory(directory, expected) {
+  const metadata = await lstat5(directory);
+  if (!isPlainDirectory(metadata) || !sameIdentity(metadata, expected)) {
+    throw new RuntimeError("recovery directory identity changed before removal");
+  }
+  await rm5(directory, { recursive: true, force: false });
+}
+function parseRunStart(text, expectedRunId) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (cause) {
+    throw new RuntimeError("run-start recovery record is invalid JSON", { cause });
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new RuntimeError("run-start recovery record must be an object");
+  }
+  const record2 = value;
+  validateRunId(record2.runId);
+  if (record2.runId !== expectedRunId || typeof record2.lockKey !== "string" || !/^[0-9a-f]{64}$/.test(record2.lockKey) || typeof record2.canonicalCommonDir !== "string" || !path8.isAbsolute(record2.canonicalCommonDir) || record2.pid !== null && (record2.pid === void 0 || !Number.isSafeInteger(record2.pid) || record2.pid <= 1) || typeof record2.startedAt !== "string" || !Number.isFinite(Date.parse(record2.startedAt))) {
+    throw new RuntimeError("run-start recovery record is malformed");
+  }
+  const expectedLockKey = createHash7("sha256").update(record2.canonicalCommonDir).digest("hex");
+  if (record2.lockKey !== expectedLockKey) {
+    throw new RuntimeError("run-start lock key does not match its canonical common directory");
+  }
+  return record2;
+}
+function validateTerminalResult(result, runId) {
+  if (typeof result !== "object" || result === null) {
+    throw new RuntimeError("terminal attempt result is malformed during recovery");
+  }
+  const value = result;
+  if (value.resultVersion !== "1" || value.runId !== runId || typeof value.status !== "string" || !["unavailable", "failed", "cancelled", "verified-candidate"].includes(value.status)) {
+    throw new RuntimeError("terminal attempt result is malformed during recovery");
+  }
+}
+function runGitError(action, result) {
+  const diagnostic = (result.stderr || result.stdout).trim().slice(0, 2e3);
+  return new RuntimeError(`${action} failed${diagnostic ? `: ${diagnostic}` : ""}`);
+}
+async function validateGitCommonDir(commonDir) {
+  const canonical = await realpath5(commonDir);
+  if (canonical !== commonDir) {
+    throw new RuntimeError("recorded Git common directory is no longer canonical");
+  }
+  const result = await git(canonical, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir"
+  ]);
+  if (result.exitCode !== 0) throw runGitError("validate Git common directory", result);
+  const reported = await realpath5(result.stdout.trim());
+  if (reported !== canonical) {
+    throw new RuntimeError("recorded Git common directory no longer identifies the repository");
+  }
+  return canonical;
+}
+async function validateRepositoryRoot(repoRoot) {
+  if (!path8.isAbsolute(repoRoot)) {
+    throw new RuntimeError("cleanup journal repository root is not absolute");
+  }
+  const canonical = await realpath5(repoRoot);
+  if (canonical !== repoRoot) {
+    throw new RuntimeError("cleanup journal repository root is no longer canonical");
+  }
+  const result = await git(canonical, ["rev-parse", "--show-toplevel"]);
+  if (result.exitCode !== 0) throw runGitError("validate cleanup repository", result);
+  if (await realpath5(result.stdout.trim()) !== canonical) {
+    throw new RuntimeError("cleanup journal repository root is not the repository top level");
+  }
+  return canonical;
+}
+async function readDirectRef(repoRoot, ref) {
+  const symbolic = await git(repoRoot, ["symbolic-ref", "--quiet", ref]);
+  if (symbolic.exitCode === 0) {
+    throw new RuntimeError("recovery refuses to mutate a symbolic Git ref");
+  }
+  if (symbolic.exitCode !== 1) throw runGitError("inspect symbolic Git ref", symbolic);
+  const direct = await git(repoRoot, ["rev-parse", "--verify", "--quiet", ref]);
+  if (direct.exitCode === 1) return null;
+  if (direct.exitCode !== 0 || !OID.test(direct.stdout.trim())) {
+    throw runGitError("inspect Git ref", direct);
+  }
+  return direct.stdout.trim();
+}
+async function deleteExactRef(repoRoot, ref, oid) {
+  const result = await git(repoRoot, ["update-ref", "--no-deref", "-d", ref, oid]);
+  if (result.exitCode !== 0) throw runGitError("delete recovery Git ref", result);
+}
+async function createExactRef(repoRoot, ref, oid) {
+  const result = await git(repoRoot, [
+    "update-ref",
+    "--no-deref",
+    ref,
+    oid,
+    "0".repeat(oid.length)
+  ]);
+  if (result.exitCode !== 0) throw runGitError("create recovery Git ref", result);
+}
+async function removeStaleCandidateAnchor(repoRoot, runId) {
+  const ref = `${CANDIDATE_REF_PREFIX2}${runId}`;
+  const oid = await readDirectRef(repoRoot, ref);
+  if (oid !== null) await deleteExactRef(repoRoot, ref, oid);
+}
+function parseCleanupRecord(line) {
+  let value;
+  try {
+    value = JSON.parse(line);
+  } catch (cause) {
+    throw new RuntimeError("cleanup journal contains invalid JSON", { cause });
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new RuntimeError("cleanup journal record must be an object");
+  }
+  const record2 = value;
+  validateRunId(record2.runId);
+  if (!["prune-cleanup-intent", "prune-cleanup-complete", "prune-cleanup-rollback"].includes(record2.event) || !["max-age", "max-bytes"].includes(record2.reason) || !["pending", "not-applicable", "deleted", "already-absent"].includes(record2.anchorCleanup) || !Number.isSafeInteger(record2.archiveBytes) || (record2.archiveBytes ?? -1) < 0 || typeof record2.quarantineName !== "string" || record2.quarantineName !== `.prune-${record2.runId}-${record2.quarantineName.slice(`.prune-${record2.runId}-`.length)}` || !/^\.prune-[a-z0-9][a-z0-9._-]*-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+    record2.quarantineName
+  ) || typeof record2.recordedAt !== "string" || !Number.isFinite(Date.parse(record2.recordedAt))) {
+    throw new RuntimeError("cleanup journal record is malformed");
+  }
+  if (record2.event === "prune-cleanup-intent" && record2.anchorCleanup !== "pending") {
+    throw new RuntimeError("cleanup intent must remain pending until reconciled");
+  }
+  if (record2.event !== "prune-cleanup-intent" && record2.anchorCleanup === "pending") {
+    throw new RuntimeError("terminal cleanup journal record cannot remain pending");
+  }
+  const hasRepository = typeof record2.repoRoot === "string" && typeof record2.anchorRef === "string" && typeof record2.candidateCommitOid === "string";
+  const noRepository = record2.repoRoot === null && record2.anchorRef === null && record2.backupRef === null && record2.candidateCommitOid === null;
+  if (!noRepository && (!hasRepository || record2.anchorRef !== `${CANDIDATE_REF_PREFIX2}${record2.runId}` || !OID.test(record2.candidateCommitOid) || record2.backupRef !== null && record2.backupRef !== `${BACKUP_REF_PREFIX}${record2.runId}`)) {
+    throw new RuntimeError("cleanup journal Git metadata is malformed");
+  }
+  return record2;
+}
+function cleanupOutcome(record2) {
+  if (record2.repoRoot === null) return "not-applicable";
+  return record2.backupRef === null ? "already-absent" : "deleted";
+}
+async function appendCleanupRecord(runsRoot, record2) {
+  const identity = await plainDirectoryIdentity(runsRoot);
+  if (identity === null) throw new RuntimeError("cleanup journal root disappeared");
+  const filename = path8.join(runsRoot, "cleanup.ndjson");
+  const handle = await open4(
+    filename,
+    constants4.O_WRONLY | constants4.O_CREAT | constants4.O_APPEND | NO_FOLLOW3,
+    384
+  );
+  try {
+    const metadata = await handle.stat();
+    const currentRoot2 = await lstat5(runsRoot);
+    if (!metadata.isFile() || !isPlainDirectory(currentRoot2) || !sameIdentity(currentRoot2, identity)) {
+      throw new RuntimeError("cleanup journal identity changed during recovery");
+    }
+    await handle.writeFile(`${JSON.stringify(record2)}
+`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  const currentRoot = await lstat5(runsRoot);
+  if (!isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, identity)) {
+    throw new RuntimeError("cleanup journal root changed after recovery append");
+  }
+}
+async function reconcileCleanupRefs(record2, action) {
+  const outcome = cleanupOutcome(record2);
+  if (outcome === "not-applicable") return outcome;
+  const repoRoot = await validateRepositoryRoot(record2.repoRoot);
+  const anchorRef = record2.anchorRef;
+  const candidateOid = record2.candidateCommitOid;
+  let anchorOid = await readDirectRef(repoRoot, anchorRef);
+  if (anchorOid !== null && anchorOid !== candidateOid) {
+    throw new RuntimeError("candidate anchor moved during interrupted prune recovery");
+  }
+  if (outcome === "already-absent") {
+    if (anchorOid !== null) {
+      throw new RuntimeError("candidate anchor unexpectedly reappeared during prune recovery");
+    }
+    return outcome;
+  }
+  const backupRef = record2.backupRef;
+  let backupOid = await readDirectRef(repoRoot, backupRef);
+  if (backupOid !== null && backupOid !== candidateOid) {
+    throw new RuntimeError("candidate prune backup moved during recovery");
+  }
+  if (action === "finish") {
+    if (anchorOid !== null && backupOid === null) {
+      await createExactRef(repoRoot, backupRef, candidateOid);
+      backupOid = candidateOid;
+    }
+    if (anchorOid !== null) {
+      await deleteExactRef(repoRoot, anchorRef, candidateOid);
+      anchorOid = null;
+    }
+    return outcome;
+  }
+  if (anchorOid === null) {
+    if (backupOid === null) {
+      throw new RuntimeError("cannot restore candidate anchor without its prune backup");
+    }
+    await createExactRef(repoRoot, anchorRef, candidateOid);
+    anchorOid = candidateOid;
+  }
+  if (backupOid !== null) await deleteExactRef(repoRoot, backupRef, candidateOid);
+  return outcome;
+}
+async function commitCleanupRefs(record2) {
+  if (cleanupOutcome(record2) !== "deleted") return;
+  const repoRoot = await validateRepositoryRoot(record2.repoRoot);
+  const backupOid = await readDirectRef(repoRoot, record2.backupRef);
+  if (backupOid === null) return;
+  if (backupOid !== record2.candidateCommitOid) {
+    throw new RuntimeError("candidate prune backup moved before cleanup commit");
+  }
+  await deleteExactRef(repoRoot, record2.backupRef, backupOid);
+}
+async function replayInterruptedPrunes(runsRoot) {
+  const text = await readCleanupJournal(path8.join(runsRoot, "cleanup.ndjson"));
+  if (text === null || text.trim() === "") return;
+  const pending = /* @__PURE__ */ new Map();
+  for (const line of text.trimEnd().split("\n")) {
+    if (line.trim() === "") throw new RuntimeError("cleanup journal contains a blank record");
+    const record2 = parseCleanupRecord(line);
+    if (record2.event === "prune-cleanup-intent") pending.set(record2.runId, record2);
+    else pending.delete(record2.runId);
+  }
+  for (const record2 of [...pending.values()].sort((left, right) => left.runId.localeCompare(right.runId))) {
+    const runDirectory = path8.join(runsRoot, record2.runId);
+    const quarantinePath = path8.join(runsRoot, record2.quarantineName);
+    const runIdentity = await plainDirectoryIdentity(runDirectory);
+    const quarantineIdentity = await plainDirectoryIdentity(quarantinePath);
+    if (runIdentity !== null && quarantineIdentity !== null) {
+      throw new RuntimeError("both retained and quarantined run archives exist during recovery");
+    }
+    const action = runIdentity !== null ? "rollback" : "finish";
+    const outcome = await reconcileCleanupRefs(record2, action);
+    if (action === "finish") {
+      if (quarantineIdentity !== null) {
+        await removePlainDirectory(quarantinePath, quarantineIdentity);
+      }
+      await commitCleanupRefs(record2);
+    }
+    await appendCleanupRecord(runsRoot, {
+      ...record2,
+      event: action === "finish" ? "prune-cleanup-complete" : "prune-cleanup-rollback",
+      anchorCleanup: outcome,
+      recordedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  }
+}
+async function recoverRun(record2, root, ps) {
+  if (record2.pid !== null) await ps.terminateProcessTreeByPid(record2.pid);
+  const commonDir = await validateGitCommonDir(record2.canonicalCommonDir);
+  const store = new ArtifactStore(record2.runId);
+  const logsRef = await store.writeLog(
+    "recovery",
+    "startup recovery reclaimed unfinished run\n"
+  );
+  const worktreePath = path8.join(root, "worktrees", record2.runId);
+  const worktreeIdentity = await plainDirectoryIdentity(worktreePath);
+  if (worktreeIdentity !== null) {
+    await new WorktreeManager(commonDir, record2.runId, ps).remove(worktreePath);
+  }
+  await removeStaleCandidateAnchor(commonDir, record2.runId);
+  await store.writeResult({
+    resultVersion: "1",
+    runId: record2.runId,
+    status: "cancelled",
+    failure: "cancelled",
+    summary: "Interrupted attempt was cancelled during startup recovery.",
+    producerSummary: null,
+    candidate: null,
+    requestedVerification: [],
+    executedVerification: [],
+    unresolvedIssues: ["attempt-interrupted-before-terminal-result"],
+    evidence: {
+      recovery: "startup-stale-run",
+      originalStartedAt: record2.startedAt
+    },
+    logsRef,
+    producerId: null,
+    producerVersion: null,
+    producerModel: null,
+    durationMs: Math.max(0, Date.now() - Date.parse(record2.startedAt)),
+    sessionId: null
+  });
+}
+function defaultIsProcessAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return false;
+  try {
+    nodeProcess3.kill(pid, 0);
+    return true;
+  } catch (error2) {
+    if (errorCode3(error2) === "EPERM") return true;
+    if (errorCode3(error2) === "ESRCH") return false;
+    throw error2;
+  }
+}
+async function reclaimLocks(locksRoot, liveLockKeys, isProcessAlive) {
+  let entries;
+  try {
+    const rootIdentity = await plainDirectoryIdentity(locksRoot);
+    if (rootIdentity === null) return;
+    entries = await readdir2(locksRoot, { withFileTypes: true });
+  } catch (error2) {
+    if (isMissing2(error2)) return;
+    throw error2;
+  }
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const match = LOCK_NAME.exec(entry.name);
+    if (match === null) continue;
+    const lockPath = path8.join(locksRoot, entry.name);
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new RuntimeError("checkout lock must be a regular file during recovery");
+    }
+    const contents = await readBoundedRegularFile(lockPath);
+    if (contents === null) continue;
+    const parsed = Number(contents.trim());
+    const ownerPid = Number.isSafeInteger(parsed) && parsed > 1 ? parsed : null;
+    const ownerIsAlive = ownerPid !== null && isProcessAlive(ownerPid);
+    if (ownerIsAlive && liveLockKeys.has(match[1])) continue;
+    const identity = await lstat5(lockPath);
+    if (!identity.isFile() || identity.isSymbolicLink()) {
+      throw new RuntimeError("checkout lock identity changed during recovery");
+    }
+    await rm5(lockPath, { force: false });
+  }
+}
+async function recoverStaleRuns(dependencies = {}) {
+  const root = await stateRoot();
+  if (root === null) return { recovered: [] };
+  const runsRoot = path8.join(root, "runs");
+  const runsIdentity = await plainDirectoryIdentity(runsRoot);
+  if (runsIdentity !== null) await replayInterruptedPrunes(runsRoot);
+  const ps = dependencies.platformServices ?? getPlatformServices();
+  const liveLockKeys = /* @__PURE__ */ new Set();
+  const stale = [];
+  if (runsIdentity !== null) {
+    const runEntries = await readdir2(runsRoot, { withFileTypes: true });
+    for (const entry of runEntries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
+      const runDirectory = path8.join(runsRoot, entry.name);
+      const runStartText = await readBoundedRegularFile(path8.join(runDirectory, "run-start.json"));
+      if (runStartText === null) continue;
+      const record2 = parseRunStart(runStartText, entry.name);
+      const result = await new ArtifactStore(entry.name).readResult(entry.name);
+      if (result !== null) {
+        validateTerminalResult(result, entry.name);
+        continue;
+      }
+      liveLockKeys.add(record2.lockKey);
+      stale.push(record2);
+    }
+  }
+  const recovered = [];
+  for (const record2 of stale) {
+    await recoverRun(record2, root, ps);
+    liveLockKeys.delete(record2.lockKey);
+    recovered.push(record2.runId);
+  }
+  await reclaimLocks(
+    path8.join(root, "locks"),
+    liveLockKeys,
+    dependencies.isProcessAlive ?? defaultIsProcessAlive
+  );
+  return { recovered };
+}
+
 // src/mcp/server.ts
 var errorOutputFields = {
   ok: external_exports.literal(false).optional(),
@@ -26079,6 +26550,7 @@ async function start(dependencies = {}) {
     process.exitCode = 1;
     return;
   }
+  await (dependencies.recoverStaleRuns ?? recoverStaleRuns)();
   const server = new McpServer({ name: "claude-architect", version: RUNTIME_VERSION });
   server.registerTool(
     "delegate",

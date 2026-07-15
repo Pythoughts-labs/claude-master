@@ -17,6 +17,7 @@ import {
   handleReviewCandidate,
   type ToolDependencies,
 } from "./tools.js";
+import { recoverStaleRuns } from "../runtime/recovery-manager.js";
 
 const errorOutputFields = {
   ok: z.literal(false).optional(),
@@ -67,7 +68,9 @@ const gitReadOutput = z.object({
   diagnostic: z.string().optional(),
 });
 
-export type ServerDependencies = ToolDependencies & DoctorDependencies & GitReadDependencies;
+export type ServerDependencies = ToolDependencies & DoctorDependencies & GitReadDependencies & {
+  recoverStaleRuns?: typeof recoverStaleRuns;
+};
 
 function toolOutput(value: object) {
   const structuredContent = value as Record<string, unknown>;
@@ -83,6 +86,8 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
     process.exitCode = 1;
     return;
   }
+
+  await (dependencies.recoverStaleRuns ?? recoverStaleRuns)();
 
   const server = new McpServer({ name: "claude-architect", version: RUNTIME_VERSION });
   server.registerTool(
