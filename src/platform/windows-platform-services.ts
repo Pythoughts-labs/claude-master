@@ -88,7 +88,9 @@ export async function resolveWindowsExecutable(
 ): Promise<ResolvedExecutable> {
   if (request.explicitPath !== undefined) {
     if (!await deps.fs.isFile(request.explicitPath.toLowerCase())) {
-      throw new RuntimeError("executable was not found", { path: request.explicitPath });
+      throw new RuntimeError(`executable is not accessible: ${request.explicitPath}`, {
+        path: request.explicitPath,
+      });
     }
     return {
       kind: "native", command: request.explicitPath, prefixArgs: [],

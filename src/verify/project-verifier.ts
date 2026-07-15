@@ -7,9 +7,10 @@ import type { PlatformServices, ResolvedExecutable, SupervisedExit } from "../pl
 import { supervise } from "../platform/process-supervisor.js";
 import { getPlatformServices } from "../platform/select-platform.js";
 import { canonicalizeForScope } from "../platform/windows-platform-services.js";
+import { normalizeWindowsEnv } from "../platform/windows-env.js";
 import type { CandidateArtifact, CommandOutcome } from "../protocol/attempt-result.js";
 import type { VerificationCommand } from "../protocol/delegation-spec.js";
-import { registerSensitiveEnvironment } from "../runtime/environment-policy.js";
+import { registerSensitiveEnvironment, WIN32_ESSENTIAL_ENV } from "../runtime/environment-policy.js";
 import { redact } from "../runtime/redaction.js";
 import { RuntimeError } from "../util/errors.js";
 
@@ -95,11 +96,11 @@ function commandEnvironment(
   os: PlatformServices["os"],
 ): Record<string, string> {
   const environment = Object.create(null) as Record<string, string>;
-  if (os !== "win32") {
-    for (const name of POSIX_ESSENTIAL_ENV) {
-      const value = process.env[name];
-      if (value !== undefined) defineEnvironmentValue(environment, name, value);
-    }
+  const platformEnvironment = os === "win32" ? normalizeWindowsEnv(process.env) : process.env;
+  const platformNames = os === "win32" ? WIN32_ESSENTIAL_ENV : POSIX_ESSENTIAL_ENV;
+  for (const name of platformNames) {
+    const value = platformEnvironment[name];
+    if (value !== undefined) defineEnvironmentValue(environment, name, value);
   }
   for (const [name, value] of Object.entries(command.environment ?? {})) {
     defineEnvironmentValue(environment, name, value);
@@ -192,7 +193,7 @@ async function executeCommand(args: {
     executable = await ps.resolveExecutable({
       name: command.executable,
       ...(path.isAbsolute(command.executable) ? { explicitPath: command.executable } : {}),
-      searchPath: environment.PATH ?? "",
+      searchPath: environment.PATH ?? environment.Path ?? "",
     });
     exit = await supervise(ps, {
       executable,

@@ -29,6 +29,13 @@ describe("windows executable resolution (fs-faked, runs on all OSes)", () => {
     async isFile(p: string) { return existing.includes(p.toLowerCase()); },
     async readFile(_p: string): Promise<string> { throw new Error("not needed"); },
   });
+  it("reports an inaccessible explicit executable path consistently", async () => {
+    const explicitPath = "C:\\missing\\tool.exe";
+    await expect(resolveWindowsExecutable(
+      { name: "tool", explicitPath },
+      { pathEntries: [], pathext: [".EXE"], fs: fakeFs([]), nodeExe: "C:\\node\\node.exe" },
+    )).rejects.toThrow(`executable is not accessible: ${explicitPath}`);
+  });
   it("prefers .exe over .cmd on the same PATH entry", async () => {
     const r = await resolveWindowsExecutable(
       { name: "codex" },

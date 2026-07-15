@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git } from "../../src/git/git-exec.js";
 import { WorktreeManager } from "../../src/git/worktree-manager.js";
 
+const failedGitResult = { exitCode: 1, stdout: "", stderr: "locked" };
+const successfulGitResult = { exitCode: 0, stdout: "", stderr: "" };
+
 let temporaryPaths: string[] = [];
 let previousPluginData: string | undefined;
 let previousStateDirectory: string | undefined;
@@ -77,6 +80,38 @@ describe("WorktreeManager", () => {
 
     await expect(stat(attempt.path)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await runGit(directory, ["worktree", "list", "--porcelain"])).not.toContain(attempt.path);
+  });
+
+  it("retries Windows worktree removal until a later attempt succeeds", async () => {
+    const calls: string[][] = [];
+    const delays: number[] = [];
+    const manager = new WorktreeManager("repo", "run-retry", { os: "win32" }, {
+      git: async (_cwd, args) => {
+        calls.push(args);
+        return calls.length < 3 ? failedGitResult : successfulGitResult;
+      },
+      delay: async milliseconds => { delays.push(milliseconds); },
+    });
+    const managedPath = join(process.env.CLAUDE_PLUGIN_DATA!, "worktrees", "run-retry");
+
+    await manager.remove(managedPath);
+
+    expect(calls).toHaveLength(3);
+    expect(delays).toEqual([250, 250]);
+  });
+
+  it("throws after exhausting Windows worktree removal retries", async () => {
+    let calls = 0;
+    const delays: number[] = [];
+    const manager = new WorktreeManager("repo", "run-exhausted", { os: "win32" }, {
+      git: async () => { calls += 1; return failedGitResult; },
+      delay: async milliseconds => { delays.push(milliseconds); },
+    });
+    const managedPath = join(process.env.CLAUDE_PLUGIN_DATA!, "worktrees", "run-exhausted");
+
+    await expect(manager.remove(managedPath)).rejects.toThrow("git worktree remove failed: locked");
+    expect(calls).toBe(5);
+    expect(delays).toEqual([250, 250, 250, 250]);
   });
 
   it("refuses to remove a path outside its managed worktree", async () => {

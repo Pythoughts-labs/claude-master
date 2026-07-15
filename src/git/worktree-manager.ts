@@ -7,6 +7,17 @@ import { RuntimeError } from "../util/errors.js";
 import { git, type GitResult } from "./git-exec.js";
 
 const MAX_DIAGNOSTIC_LENGTH = 2_000;
+const WINDOWS_REMOVE_ATTEMPTS = 5;
+const WINDOWS_REMOVE_RETRY_DELAY_MS = 250;
+
+interface WorktreeManagerDependencies {
+  git?: typeof git;
+  delay?: (milliseconds: number) => Promise<void>;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
 
 function failure(action: string, result: GitResult): RuntimeError {
   const diagnostic = (result.stderr || result.stdout).trim().slice(0, MAX_DIAGNOSTIC_LENGTH);
@@ -18,6 +29,7 @@ export class WorktreeManager {
     private readonly repoRoot: string,
     private readonly runId: string,
     private readonly platformServices: Pick<PlatformServices, "os"> = getPlatformServices(),
+    private readonly dependencies: WorktreeManagerDependencies = {},
   ) {}
 
   private managedWorktreePath(): { worktreesRoot: string; worktreePath: string } {
@@ -32,7 +44,10 @@ export class WorktreeManager {
   async create(baseCommitOid: string): Promise<{ path: string; cleanup(): Promise<void> }> {
     const { worktreesRoot, worktreePath } = this.managedWorktreePath();
     await mkdir(worktreesRoot, { recursive: true });
-    const result = await git(this.repoRoot, ["worktree", "add", "--detach", worktreePath, baseCommitOid]);
+    const result = await (this.dependencies.git ?? git)(
+      this.repoRoot,
+      ["worktree", "add", "--detach", worktreePath, baseCommitOid],
+    );
     if (result.exitCode !== 0) {
       throw failure("git worktree add", result);
     }
@@ -46,7 +61,14 @@ export class WorktreeManager {
     if (worktreePath !== this.managedWorktreePath().worktreePath) {
       throw new RuntimeError("refusing to remove unmanaged worktree path");
     }
-    const result = await git(this.repoRoot, ["worktree", "remove", "--force", worktreePath]);
-    if (result.exitCode !== 0) throw failure("git worktree remove", result);
+    const runGit = this.dependencies.git ?? git;
+    const wait = this.dependencies.delay ?? delay;
+    const attempts = this.platformServices.os === "win32" ? WINDOWS_REMOVE_ATTEMPTS : 1;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const result = await runGit(this.repoRoot, ["worktree", "remove", "--force", worktreePath]);
+      if (result.exitCode === 0) return;
+      if (attempt === attempts) throw failure("git worktree remove", result);
+      await wait(WINDOWS_REMOVE_RETRY_DELAY_MS);
+    }
   }
 }

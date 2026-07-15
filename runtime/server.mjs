@@ -22265,7 +22265,9 @@ async function packageBinEntries(request, directory, fileSystem) {
 async function resolveWindowsExecutable(request, deps) {
   if (request.explicitPath !== void 0) {
     if (!await deps.fs.isFile(request.explicitPath.toLowerCase())) {
-      throw new RuntimeError("executable was not found", { path: request.explicitPath });
+      throw new RuntimeError(`executable is not accessible: ${request.explicitPath}`, {
+        path: request.explicitPath
+      });
     }
     return {
       kind: "native",
@@ -25393,15 +25395,21 @@ async function freezeCandidate(args) {
 import { mkdir as mkdir2 } from "node:fs/promises";
 import path6 from "node:path";
 var MAX_DIAGNOSTIC_LENGTH4 = 2e3;
+var WINDOWS_REMOVE_ATTEMPTS = 5;
+var WINDOWS_REMOVE_RETRY_DELAY_MS = 250;
+function delay2(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 function failure(action, result) {
   const diagnostic = (result.stderr || result.stdout).trim().slice(0, MAX_DIAGNOSTIC_LENGTH4);
   return new RuntimeError(`${action} failed${diagnostic ? `: ${diagnostic}` : ""}`);
 }
 var WorktreeManager = class {
-  constructor(repoRoot, runId, platformServices = getPlatformServices()) {
+  constructor(repoRoot, runId, platformServices = getPlatformServices(), dependencies = {}) {
     this.repoRoot = repoRoot;
     this.runId = runId;
     this.platformServices = platformServices;
+    this.dependencies = dependencies;
   }
   managedWorktreePath() {
     const worktreesRoot = path6.resolve(resolveStateDir(), "worktrees");
@@ -25414,7 +25422,10 @@ var WorktreeManager = class {
   async create(baseCommitOid) {
     const { worktreesRoot, worktreePath } = this.managedWorktreePath();
     await mkdir2(worktreesRoot, { recursive: true });
-    const result = await git(this.repoRoot, ["worktree", "add", "--detach", worktreePath, baseCommitOid]);
+    const result = await (this.dependencies.git ?? git)(
+      this.repoRoot,
+      ["worktree", "add", "--detach", worktreePath, baseCommitOid]
+    );
     if (result.exitCode !== 0) {
       throw failure("git worktree add", result);
     }
@@ -25427,8 +25438,15 @@ var WorktreeManager = class {
     if (worktreePath !== this.managedWorktreePath().worktreePath) {
       throw new RuntimeError("refusing to remove unmanaged worktree path");
     }
-    const result = await git(this.repoRoot, ["worktree", "remove", "--force", worktreePath]);
-    if (result.exitCode !== 0) throw failure("git worktree remove", result);
+    const runGit = this.dependencies.git ?? git;
+    const wait = this.dependencies.delay ?? delay2;
+    const attempts = this.platformServices.os === "win32" ? WINDOWS_REMOVE_ATTEMPTS : 1;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const result = await runGit(this.repoRoot, ["worktree", "remove", "--force", worktreePath]);
+      if (result.exitCode === 0) return;
+      if (attempt === attempts) throw failure("git worktree remove", result);
+      await wait(WINDOWS_REMOVE_RETRY_DELAY_MS);
+    }
   }
 };
 
@@ -26208,11 +26226,11 @@ function defineEnvironmentValue(environment, name, value) {
 }
 function commandEnvironment(command, os) {
   const environment = /* @__PURE__ */ Object.create(null);
-  if (os !== "win32") {
-    for (const name of POSIX_ESSENTIAL_ENV2) {
-      const value = process.env[name];
-      if (value !== void 0) defineEnvironmentValue(environment, name, value);
-    }
+  const platformEnvironment = os === "win32" ? normalizeWindowsEnv(process.env) : process.env;
+  const platformNames = os === "win32" ? WIN32_ESSENTIAL_ENV : POSIX_ESSENTIAL_ENV2;
+  for (const name of platformNames) {
+    const value = platformEnvironment[name];
+    if (value !== void 0) defineEnvironmentValue(environment, name, value);
   }
   for (const [name, value] of Object.entries(command.environment ?? {})) {
     defineEnvironmentValue(environment, name, value);
@@ -26278,7 +26296,7 @@ async function executeCommand(args) {
     executable = await ps.resolveExecutable({
       name: command.executable,
       ...path9.isAbsolute(command.executable) ? { explicitPath: command.executable } : {},
-      searchPath: environment.PATH ?? ""
+      searchPath: environment.PATH ?? environment.Path ?? ""
     });
     exit = await supervise(ps, {
       executable,

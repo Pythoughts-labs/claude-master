@@ -41,7 +41,7 @@ const POSIX_ESSENTIAL_ENV = [
   "XDG_RUNTIME_DIR",
 ] as const;
 
-const WIN32_ESSENTIAL_ENV = [
+export const WIN32_ESSENTIAL_ENV = [
   "SystemRoot",
   "ComSpec",
   "TEMP",

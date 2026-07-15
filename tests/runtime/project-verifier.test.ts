@@ -127,6 +127,20 @@ describe("projectVerify", () => {
       .not.toContain(process.env.CLAUDE_PLUGIN_DATA);
   });
 
+  it("resolves and runs git by name", async () => {
+    const fixture = await frozenFixture();
+
+    const result = await projectVerify({
+      repoRoot: fixture.repoRoot,
+      artifact: fixture.artifact,
+      commands: [command({ id: "git-version", executable: "git", args: ["--version"] })],
+    });
+
+    expect(result.failures).toEqual([]);
+    expect(result.commandOutcomes[0]).toMatchObject({ id: "git-version", exitCode: 0 });
+    expect(result.outputLogs[0]?.text).toContain("git version");
+  });
+
   it("detects a verification command that mutates the materialized candidate", async () => {
     const fixture = await frozenFixture();
 
