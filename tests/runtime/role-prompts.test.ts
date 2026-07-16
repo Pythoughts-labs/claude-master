@@ -43,6 +43,16 @@ describe("renderRolePrompt", () => {
     const prompt = renderRolePrompt("reviewer-systems", pkg);
     expect(prompt).not.toContain("F-001");
   });
+  it("reviewer prompts require a per-criterion verdict", () => {
+    const prompt = renderRolePrompt("reviewer-correctness", pkg);
+    expect(prompt).toContain("For EACH success criterion");
+    expect(prompt).toContain("met | not-met | cannot-verify");
+  });
+  it("reviewer prompts require evidence locations and unverifiable disclosure", () => {
+    const prompt = renderRolePrompt("reviewer-systems", pkg);
+    expect(prompt).toContain("cite the exact diff hunk or file:line");
+    expect(prompt).toContain("could not verify");
+  });
 });
 
 describe("untrusted-data fencing", () => {
