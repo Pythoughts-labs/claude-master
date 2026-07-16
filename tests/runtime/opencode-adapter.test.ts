@@ -1,13 +1,19 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import type {
   PlatformServices,
   ResolvedExecutable,
   SupervisedExit,
 } from "../../src/platform/platform-services.js";
+import { PosixPlatformServices } from "../../src/platform/posix-platform-services.js";
+import { supervise } from "../../src/platform/process-supervisor.js";
+import { wrapInvocationWithSeatbelt } from "../../src/platform/sandbox/seatbelt.js";
 import type { DelegationSpec } from "../../src/protocol/delegation-spec.js";
 import { OpenCodeAdapter } from "../../src/producers/opencode-adapter.js";
 import type {
@@ -15,8 +21,13 @@ import type {
   InvocationContext,
   ProbeContext,
 } from "../../src/producers/producer-adapter.js";
-import { selectOsWriteConfinementBackend } from "../../src/producers/plain-text.js";
+import {
+  normalizePlainText,
+  selectOsWriteConfinementBackend,
+} from "../../src/producers/plain-text.js";
+import { buildEnvironment } from "../../src/runtime/environment-policy.js";
 
+const execFileAsync = promisify(execFile);
 const executable: ResolvedExecutable = {
   kind: "native",
   command: "/usr/local/bin/opencode",
@@ -438,6 +449,162 @@ describe("OpenCodeAdapter", () => {
       temporaryHomeStrategy: "temp HOME with XDG_DATA_HOME passthrough for the auth store",
     });
   });
+
+  it.skipIf(
+    process.platform !== "darwin"
+      || process.arch !== "arm64"
+      || process.env.RUN_SEATBELT_CONFINEMENT_GATE !== "1",
+  )(
+    "proves macOS Seatbelt permits worktree writes and blocks an outside write",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "claude-architect-seatbelt-gate-"));
+      const worktreePath = join(root, "worktree");
+      const insidePath = join(worktreePath, "inside-probe.txt");
+      const outsidePath = join(
+        "/Users/Shared",
+        `.claude-architect-seatbelt-probe-${randomUUID()}`,
+      );
+
+      try {
+        await mkdir(worktreePath);
+        await execFileAsync("git", ["init", "-q"], { cwd: worktreePath });
+        const ps = new PosixPlatformServices();
+        const invocation = {
+          executable: {
+            kind: "native" as const,
+            command: "/usr/bin/touch",
+            prefixArgs: [],
+            resolvedFrom: "seatbelt-confinement-gate",
+          },
+          args: [insidePath],
+          requiredEnv: [],
+          network: "denied" as const,
+        };
+        const policy = { worktreePath, tempHome: null, allowNetwork: false };
+        const insideExit = await supervise(ps, {
+          executable: wrapInvocationWithSeatbelt(invocation, policy).executable,
+          args: wrapInvocationWithSeatbelt(invocation, policy).args,
+          cwd: worktreePath,
+          env: {},
+          timeoutMs: 30_000,
+          maxOutputBytes: 64 * 1024,
+        }, {});
+
+        expect(
+          insideExit.exitCode,
+          `stdout:\n${insideExit.stdout}\nstderr:\n${insideExit.stderr}`,
+        ).toBe(0);
+        await expect(access(insidePath)).resolves.toBeUndefined();
+
+        const outsideInvocation = wrapInvocationWithSeatbelt({
+          ...invocation,
+          args: [outsidePath],
+        }, policy);
+        const outsideExit = await supervise(ps, {
+          executable: outsideInvocation.executable,
+          args: outsideInvocation.args,
+          cwd: worktreePath,
+          env: {},
+          timeoutMs: 30_000,
+          maxOutputBytes: 64 * 1024,
+        }, {});
+
+        expect(outsideExit.spawnError).toBeUndefined();
+        expect(
+          outsideExit.exitCode,
+          `stdout:\n${outsideExit.stdout}\nstderr:\n${outsideExit.stderr}`,
+        ).not.toBe(0);
+        await expect(access(outsidePath)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await rm(outsidePath, { force: true });
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  it.skipIf(
+    process.platform !== "darwin"
+      || process.arch !== "arm64"
+      || process.env.RUN_OPENCODE_SMOKE !== "1",
+  )(
+    "runs a real OpenCode invocation through macOS Seatbelt",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "claude-architect-opencode-smoke-"));
+      const worktreePath = join(root, "worktree");
+      const smokePath = join(worktreePath, "smoke.txt");
+      let builtEnvironment: ReturnType<typeof buildEnvironment> | undefined;
+
+      try {
+        await mkdir(worktreePath);
+        await execFileAsync("git", ["init", "-q"], { cwd: worktreePath });
+        const ps = new PosixPlatformServices();
+        const adapter = new OpenCodeAdapter();
+        const report = await adapter.probe({
+          ps,
+          os: "darwin",
+          arch: process.arch,
+          environmentType: "native",
+        });
+        if (!report.available) {
+          expect(typeof report.reason).toBe("string");
+          expect(report.reason).not.toBe("");
+          return;
+        }
+        expect(report.resolvedExecutable).not.toBeNull();
+        expect(typeof report.version).toBe("string");
+        if (report.resolvedExecutable === null) return;
+        console.info(`OpenCode smoke probe version: ${report.version}`);
+
+        const spec = sampleSpec();
+        spec.objective = "Create a file named smoke.txt containing ok.";
+        spec.context = "This is an opt-in macOS arm64 adapter smoke test.";
+        spec.writeAllowlist = ["smoke.txt"];
+        spec.forbiddenScope = [];
+        spec.successCriteria = ["smoke.txt exists and contains ok."];
+        spec.timeoutMs = 300_000;
+        const invocation = wrapInvocationWithSeatbelt(adapter.buildInvocation(spec, {
+          worktreePath,
+          runId: "run-opencode-smoke",
+          capabilityReport: report,
+          executable: report.resolvedExecutable,
+        }), {
+          worktreePath,
+          tempHome: null,
+          allowNetwork: true,
+        });
+        builtEnvironment = buildEnvironment({
+          os: "darwin",
+          adapterAllowlist: invocation.requiredEnv,
+          ...(invocation.env === undefined ? {} : { adapterValues: invocation.env }),
+        });
+        const supervisedExit = await supervise(ps, {
+          executable: invocation.executable,
+          args: invocation.args,
+          cwd: worktreePath,
+          env: builtEnvironment.env,
+          timeoutMs: 300_000,
+          ...(invocation.stdin === undefined ? {} : { stdin: invocation.stdin }),
+          maxOutputBytes: 1_000_000,
+        }, {});
+        const normalized = normalizePlainText({
+          stdout: supervisedExit.stdout,
+          stderr: supervisedExit.stderr,
+          exit: supervisedExit,
+        });
+
+        expect(
+          normalized.ok,
+          `stdout:\n${supervisedExit.stdout}\nstderr:\n${supervisedExit.stderr}`,
+        ).toBe(true);
+        expect((await readFile(smokePath, "utf8")).trim()).toBe("ok");
+      } finally {
+        builtEnvironment?.secretRegistration.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    330_000,
+  );
 });
 
 describe("selectOsWriteConfinementBackend", () => {

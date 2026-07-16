@@ -1,22 +1,32 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import type {
   PlatformServices,
   ResolvedExecutable,
   SupervisedExit,
 } from "../../src/platform/platform-services.js";
+import { PosixPlatformServices } from "../../src/platform/posix-platform-services.js";
+import { supervise } from "../../src/platform/process-supervisor.js";
+import { wrapInvocationWithSeatbelt } from "../../src/platform/sandbox/seatbelt.js";
 import type { DelegationSpec } from "../../src/protocol/delegation-spec.js";
-import { renderProducerPrompt } from "../../src/producers/plain-text.js";
+import {
+  normalizePlainText,
+  renderProducerPrompt,
+} from "../../src/producers/plain-text.js";
 import type {
   CapabilityReport,
   InvocationContext,
   ProbeContext,
 } from "../../src/producers/producer-adapter.js";
 import { PythinkerAdapter } from "../../src/producers/pythinker-adapter.js";
+import { buildEnvironment } from "../../src/runtime/environment-policy.js";
 
+const execFileAsync = promisify(execFile);
 const executable: ResolvedExecutable = {
   kind: "native",
   command: "/usr/local/bin/pythinker",
@@ -442,4 +452,87 @@ describe("PythinkerAdapter", () => {
       ok: true,
     });
   });
+
+  it.skipIf(
+    process.platform !== "darwin"
+      || process.arch !== "arm64"
+      || process.env.RUN_PYTHINKER_SMOKE !== "1",
+  )(
+    "runs a real Pythinker invocation through macOS Seatbelt",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "claude-architect-pythinker-smoke-"));
+      const worktreePath = join(root, "worktree");
+      const smokePath = join(worktreePath, "smoke.txt");
+      let builtEnvironment: ReturnType<typeof buildEnvironment> | undefined;
+
+      try {
+        await mkdir(worktreePath);
+        await execFileAsync("git", ["init", "-q"], { cwd: worktreePath });
+        const ps = new PosixPlatformServices();
+        const adapter = new PythinkerAdapter();
+        const report = await adapter.probe({
+          ps,
+          os: "darwin",
+          arch: process.arch,
+          environmentType: "native",
+        });
+        if (!report.available) {
+          expect(typeof report.reason).toBe("string");
+          expect(report.reason).not.toBe("");
+          return;
+        }
+        expect(report.resolvedExecutable).not.toBeNull();
+        expect(typeof report.version).toBe("string");
+        if (report.resolvedExecutable === null) return;
+        console.info(`Pythinker smoke probe version: ${report.version}`);
+
+        const spec = sampleSpec();
+        spec.objective = "Create a file named smoke.txt containing ok.";
+        spec.context = "This is an opt-in macOS arm64 adapter smoke test.";
+        spec.writeAllowlist = ["smoke.txt"];
+        spec.forbiddenScope = [];
+        spec.successCriteria = ["smoke.txt exists and contains ok."];
+        spec.timeoutMs = 300_000;
+        const invocation = wrapInvocationWithSeatbelt(adapter.buildInvocation(spec, {
+          worktreePath,
+          runId: "run-pythinker-smoke",
+          capabilityReport: report,
+          executable: report.resolvedExecutable,
+        }), {
+          worktreePath,
+          tempHome: null,
+          allowNetwork: true,
+        });
+        builtEnvironment = buildEnvironment({
+          os: "darwin",
+          adapterAllowlist: invocation.requiredEnv,
+          ...(invocation.env === undefined ? {} : { adapterValues: invocation.env }),
+        });
+        const supervisedExit = await supervise(ps, {
+          executable: invocation.executable,
+          args: invocation.args,
+          cwd: worktreePath,
+          env: builtEnvironment.env,
+          timeoutMs: 300_000,
+          ...(invocation.stdin === undefined ? {} : { stdin: invocation.stdin }),
+          maxOutputBytes: 1_000_000,
+        }, {});
+        const normalized = normalizePlainText({
+          stdout: supervisedExit.stdout,
+          stderr: supervisedExit.stderr,
+          exit: supervisedExit,
+        });
+
+        expect(
+          normalized.ok,
+          `stdout:\n${supervisedExit.stdout}\nstderr:\n${supervisedExit.stderr}`,
+        ).toBe(true);
+        expect((await readFile(smokePath, "utf8")).trim()).toBe("ok");
+      } finally {
+        builtEnvironment?.secretRegistration.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    330_000,
+  );
 });
