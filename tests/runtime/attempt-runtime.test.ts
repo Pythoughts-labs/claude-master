@@ -388,8 +388,8 @@ describe("runAttempt", () => {
       validSpec(),
       dependencies(new FakeAdapter(), "run-dirty-precondition"),
     )).rejects.toMatchObject({
-      message: "repository precondition failed",
-      detail: { reason: "dirty-checkout" },
+      message: "repository precondition failed (dirty-checkout):  M a.txt",
+      detail: { reason: "dirty-checkout", detail: [" M a.txt"] },
     });
 
     await expect(access(join(

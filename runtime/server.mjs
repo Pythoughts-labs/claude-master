@@ -23715,6 +23715,11 @@ import { createHash as createHash8 } from "node:crypto";
 // src/git/repo-preconditions.ts
 import { access, lstat, opendir, realpath } from "node:fs/promises";
 import path3 from "node:path";
+var MAX_DETAIL_ENTRIES = 20;
+function boundedDetail(lines) {
+  if (lines.length <= MAX_DETAIL_ENTRIES) return lines;
+  return [...lines.slice(0, MAX_DETAIL_ENTRIES), `\u2026 and ${lines.length - MAX_DETAIL_ENTRIES} more`];
+}
 var IN_PROGRESS_PATHS = [
   "MERGE_HEAD",
   "rebase-merge",
@@ -23830,7 +23835,13 @@ async function checkPreconditions(repoRoot, options = {}) {
   }
   const submodules = await git(canonical, ["submodule", "status", "--recursive"]);
   if (!succeeded(submodules)) return { ok: false, reason: "git-command-failed" };
-  if (/^[+-]/m.test(submodules.stdout)) return { ok: false, reason: "changed-submodule" };
+  if (/^[+-]/m.test(submodules.stdout)) {
+    return {
+      ok: false,
+      reason: "changed-submodule",
+      detail: boundedDetail(submodules.stdout.split("\n").filter((line) => /^[+-]/.test(line)))
+    };
+  }
   const status = await git(canonical, [
     "status",
     "--porcelain=v1",
@@ -23838,7 +23849,13 @@ async function checkPreconditions(repoRoot, options = {}) {
     "--ignore-submodules=none"
   ]);
   if (!succeeded(status)) return { ok: false, reason: "git-command-failed" };
-  if (status.stdout.length > 0) return { ok: false, reason: "dirty-checkout" };
+  if (status.stdout.length > 0) {
+    return {
+      ok: false,
+      reason: "dirty-checkout",
+      detail: boundedDetail(status.stdout.split("\n").filter((line) => line.length > 0))
+    };
+  }
   const sparseCheckout = await git(canonical, ["config", "--bool", "core.sparseCheckout"]);
   if (sparseCheckout.exitCode !== 0 && sparseCheckout.exitCode !== 1) {
     return { ok: false, reason: "git-command-failed" };
@@ -23860,8 +23877,9 @@ async function checkPreconditions(repoRoot, options = {}) {
     } catch {
       return { ok: false, reason: "nested-repository-scan-failed" };
     }
-    if (nestedRepositories.some((nestedRoot) => options.writeAllowlist.some((pattern) => patternOverlapsRepository(pattern, nestedRoot)))) {
-      return { ok: false, reason: "nested-repository" };
+    const offending = nestedRepositories.filter((nestedRoot) => options.writeAllowlist.some((pattern) => patternOverlapsRepository(pattern, nestedRoot)));
+    if (offending.length > 0) {
+      return { ok: false, reason: "nested-repository", detail: boundedDetail(offending) };
     }
   }
   const commonDirectoryResult = await git(canonical, [
@@ -26737,9 +26755,11 @@ async function runAttempt(checkoutPath, spec, deps) {
     writeAllowlist: spec.writeAllowlist
   });
   if (!preconditions.ok) {
-    throw new RuntimeError("repository precondition failed", {
-      reason: preconditions.reason
-    });
+    const detailSuffix = preconditions.detail === void 0 ? "" : `: ${preconditions.detail.join(", ")}`;
+    throw new RuntimeError(
+      `repository precondition failed (${preconditions.reason})${detailSuffix}`,
+      { reason: preconditions.reason, detail: preconditions.detail ?? [] }
+    );
   }
   reportPhase(deps, "probing producers");
   const reports = await probeAll({

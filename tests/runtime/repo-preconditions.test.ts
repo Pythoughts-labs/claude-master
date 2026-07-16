@@ -130,7 +130,43 @@ describe("checkPreconditions", () => {
     const directory = await initRepo();
     await writeFile(join(directory, "a.txt"), "changed\n");
 
-    await expect(checkPreconditions(directory)).resolves.toEqual({ ok: false, reason: "dirty-checkout" });
+    await expect(checkPreconditions(directory)).resolves.toEqual({
+      ok: false,
+      reason: "dirty-checkout",
+      detail: [" M a.txt"],
+    });
+  });
+
+  it("names the dirty paths when the checkout is dirty", async () => {
+    const directory = await initRepo();
+    await writeFile(join(directory, "untracked-file.txt"), "x");
+
+    const result = await checkPreconditions(directory);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("dirty-checkout");
+    expect(result.detail).toEqual(["?? untracked-file.txt"]);
+  });
+
+  it("bounds dirty path detail", async () => {
+    const directory = await initRepo();
+    await Promise.all(Array.from(
+      { length: 22 },
+      (_, index) => writeFile(join(directory, `untracked-${String(index).padStart(2, "0")}.txt`), "x"),
+    ));
+
+    const result = await checkPreconditions(directory);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.detail).toEqual([
+      ...Array.from(
+        { length: 20 },
+        (_, index) => `?? untracked-${String(index).padStart(2, "0")}.txt`,
+      ),
+      "… and 2 more",
+    ]);
   });
 
   it("rejects sparse checkout", async () => {
@@ -150,7 +186,11 @@ describe("checkPreconditions", () => {
     await runGit(submoduleCheckout, ["add", "-A"]);
     await runGit(submoduleCheckout, ["commit", "-q", "-m", "advance"]);
 
-    await expect(checkPreconditions(directory)).resolves.toEqual({ ok: false, reason: "changed-submodule" });
+    await expect(checkPreconditions(directory)).resolves.toEqual({
+      ok: false,
+      reason: "changed-submodule",
+      detail: [expect.stringContaining(" dependency ")],
+    });
   }, 15_000);
 
   it("rejects uncommitted changes inside a submodule", async () => {
@@ -171,6 +211,7 @@ describe("checkPreconditions", () => {
     await expect(checkPreconditions(directory)).resolves.toEqual({
       ok: false,
       reason: "dirty-checkout",
+      detail: [" M dependency"],
     });
   }, 15_000);
 
@@ -190,7 +231,7 @@ describe("checkPreconditions", () => {
 
     await expect(checkPreconditions(directory, {
       writeAllowlist: ["dependency/**"],
-    })).resolves.toEqual({ ok: false, reason: "nested-repository" });
+    })).resolves.toEqual({ ok: false, reason: "nested-repository", detail: ["dependency"] });
   }, 15_000);
 
   it("rejects skip-worktree and assume-unchanged index entries", async () => {
@@ -214,9 +255,9 @@ describe("checkPreconditions", () => {
 
     await expect(checkPreconditions(directory)).resolves.toMatchObject({ ok: true });
     await expect(checkPreconditions(directory, { writeAllowlist: ["src/**"] })).resolves.toMatchObject({ ok: true });
-    await expect(checkPreconditions(directory, { writeAllowlist: ["nested/file.txt"] })).resolves.toEqual({ ok: false, reason: "nested-repository" });
-    await expect(checkPreconditions(directory, { writeAllowlist: ["nested/*"] })).resolves.toEqual({ ok: false, reason: "nested-repository" });
-    await expect(checkPreconditions(directory, { writeAllowlist: ["**/*.txt"] })).resolves.toEqual({ ok: false, reason: "nested-repository" });
+    await expect(checkPreconditions(directory, { writeAllowlist: ["nested/file.txt"] })).resolves.toEqual({ ok: false, reason: "nested-repository", detail: ["nested"] });
+    await expect(checkPreconditions(directory, { writeAllowlist: ["nested/*"] })).resolves.toEqual({ ok: false, reason: "nested-repository", detail: ["nested"] });
+    await expect(checkPreconditions(directory, { writeAllowlist: ["**/*.txt"] })).resolves.toEqual({ ok: false, reason: "nested-repository", detail: ["nested"] });
   });
 
   it.skipIf(process.platform === "win32")("rejects a filesystem symlink in write scope", async () => {
@@ -233,7 +274,7 @@ describe("checkPreconditions", () => {
     })).resolves.toMatchObject({ ok: true });
     await expect(checkPreconditions(directory, {
       writeAllowlist: ["linked/**"],
-    })).resolves.toEqual({ ok: false, reason: "nested-repository" });
+    })).resolves.toEqual({ ok: false, reason: "nested-repository", detail: ["linked"] });
   });
 
   it("streams nested-repository discovery with opendir", async () => {

@@ -9,7 +9,14 @@ export interface PreconditionOptions {
 
 export type PreconditionResult =
   | { ok: true; baseCommitOid: string; gitCommonDir: string }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; detail?: string[] };
+
+const MAX_DETAIL_ENTRIES = 20;
+
+function boundedDetail(lines: string[]): string[] {
+  if (lines.length <= MAX_DETAIL_ENTRIES) return lines;
+  return [...lines.slice(0, MAX_DETAIL_ENTRIES), `… and ${lines.length - MAX_DETAIL_ENTRIES} more`];
+}
 
 const IN_PROGRESS_PATHS = [
   "MERGE_HEAD",
@@ -156,7 +163,13 @@ export async function checkPreconditions(
 
   const submodules = await git(canonical, ["submodule", "status", "--recursive"]);
   if (!succeeded(submodules)) return { ok: false, reason: "git-command-failed" };
-  if (/^[+-]/m.test(submodules.stdout)) return { ok: false, reason: "changed-submodule" };
+  if (/^[+-]/m.test(submodules.stdout)) {
+    return {
+      ok: false,
+      reason: "changed-submodule",
+      detail: boundedDetail(submodules.stdout.split("\n").filter(line => /^[+-]/.test(line))),
+    };
+  }
 
   const status = await git(canonical, [
     "status",
@@ -165,7 +178,13 @@ export async function checkPreconditions(
     "--ignore-submodules=none",
   ]);
   if (!succeeded(status)) return { ok: false, reason: "git-command-failed" };
-  if (status.stdout.length > 0) return { ok: false, reason: "dirty-checkout" };
+  if (status.stdout.length > 0) {
+    return {
+      ok: false,
+      reason: "dirty-checkout",
+      detail: boundedDetail(status.stdout.split("\n").filter(line => line.length > 0)),
+    };
+  }
 
   const sparseCheckout = await git(canonical, ["config", "--bool", "core.sparseCheckout"]);
   if (sparseCheckout.exitCode !== 0 && sparseCheckout.exitCode !== 1) {
@@ -190,9 +209,10 @@ export async function checkPreconditions(
     } catch {
       return { ok: false, reason: "nested-repository-scan-failed" };
     }
-    if (nestedRepositories.some(nestedRoot =>
-      options.writeAllowlist!.some(pattern => patternOverlapsRepository(pattern, nestedRoot)))) {
-      return { ok: false, reason: "nested-repository" };
+    const offending = nestedRepositories.filter(nestedRoot =>
+      options.writeAllowlist!.some(pattern => patternOverlapsRepository(pattern, nestedRoot)));
+    if (offending.length > 0) {
+      return { ok: false, reason: "nested-repository", detail: boundedDetail(offending) };
     }
   }
 

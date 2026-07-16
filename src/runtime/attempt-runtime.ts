@@ -466,9 +466,13 @@ export async function runAttempt(
     writeAllowlist: spec.writeAllowlist,
   });
   if (!preconditions.ok) {
-    throw new RuntimeError("repository precondition failed", {
-      reason: preconditions.reason,
-    });
+    const detailSuffix = preconditions.detail === undefined
+      ? ""
+      : `: ${preconditions.detail.join(", ")}`;
+    throw new RuntimeError(
+      `repository precondition failed (${preconditions.reason})${detailSuffix}`,
+      { reason: preconditions.reason, detail: preconditions.detail ?? [] },
+    );
   }
 
   reportPhase(deps, "probing producers");
