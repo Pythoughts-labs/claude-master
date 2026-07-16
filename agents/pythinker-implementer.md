@@ -179,3 +179,4 @@ GAPS: [spec ambiguities, unfinished items, model-default fallback note, or "none
 - If the task turns out to be architectural — the spec itself is wrong — stop and report; that decision belongs upstream (consult `claude-advisor`).
 - Never wait in the background or end your turn while pythinker is still running: invoke the adapter in the foreground and block on it. If you must poll a progress file, poll in a foreground loop.
 - On `STATUS: timeout`, the on-disk `git status`/diff is the primary evidence — the FINAL message flushes only at session end and may be empty even when the work completed. Inspect the tree before declaring the run lost.
+- If you abandon or retry a run, first kill the previous run's process group (`kill -- -<pgid>`); never leave an in-flight adapter run behind.
