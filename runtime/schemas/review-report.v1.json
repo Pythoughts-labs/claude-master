@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reportVersion", "verdict", "findings", "coverageGaps"],
+  "properties": {
+    "reportVersion": { "const": "1" },
+    "verdict": { "enum": ["approve", "request-changes"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "location", "claim", "evidence", "reproduction", "requiredOutcome", "confidence"],
+        "properties": {
+          "severity": { "enum": ["blocker", "major", "minor", "nit"] },
+          "location": { "type": "string", "minLength": 1 },
+          "claim": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 },
+          "reproduction": { "type": "string" },
+          "requiredOutcome": { "type": "string", "minLength": 1 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "coverageGaps": { "type": "array", "items": { "type": "string" } }
+  }
+}

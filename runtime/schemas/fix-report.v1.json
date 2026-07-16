@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reportVersion", "candidateCommit", "dispositions"],
+  "properties": {
+    "reportVersion": { "const": "1" },
+    "candidateCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "dispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["findingId", "disposition", "evidence"],
+        "properties": {
+          "findingId": { "type": "string", "pattern": "^F-\\d{3,}$" },
+          "disposition": { "enum": ["fixed", "already_satisfied", "rejected_with_evidence", "blocked", "requires_human_decision"] },
+          "evidence": { "type": "string", "minLength": 1 },
+          "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+        }
+      }
+    }
+  }
+}
