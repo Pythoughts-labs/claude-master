@@ -123,6 +123,17 @@ OPENCODE_VARIANT="${VARIANT:-}" \
 bash "$RUNTIME" "$SPEC" "$FINAL"
 ```
 
+**Progress streaming.** When the caller's prompt supplies a `PROGRESS_LOG: <path>` line, stream the run's live output there so the architect can tail it while you work — create the parent directory, then wrap the invocation:
+
+```bash
+mkdir -p "$(dirname "$PROGRESS_LOG")"
+set -o pipefail
+OPENCODE_MODEL="${PROVIDER_MODEL:-}" OPENCODE_VARIANT="${VARIANT:-}" \
+  bash "$RUNTIME" "$SPEC" "$FINAL" 2>&1 | tee -a "$PROGRESS_LOG"
+```
+
+`set -o pipefail` keeps the adapter's real exit code observable through the pipe. Without a `PROGRESS_LOG` in the prompt, invoke plainly as above.
+
 Adapter discipline (non-negotiable):
 
 | Flag | Why |
