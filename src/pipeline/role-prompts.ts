@@ -15,7 +15,21 @@ export interface RolePackage {
 }
 
 function readSchemaText(name: string): string {
-  return readFileSync(new URL(`../../runtime/schemas/${name}`, import.meta.url), "utf8");
+  // Source layout: src/pipeline/ → ../../runtime/schemas/.
+  // Bundled layout: runtime/server.mjs → ./schemas/.
+  const candidates = [
+    new URL(`../../runtime/schemas/${name}`, import.meta.url),
+    new URL(`./schemas/${name}`, import.meta.url),
+  ];
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      return readFileSync(candidate, "utf8");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 const REVIEW_SCHEMA = readSchemaText("review-report.v1.json");

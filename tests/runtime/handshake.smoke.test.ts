@@ -124,6 +124,7 @@ describe("MCP server handshake", () => {
       expect(names).toEqual([
         "decideCandidate",
         "delegate",
+        "delegatePipeline",
         "doctor",
         "gitChangedFiles",
         "gitDiff",
