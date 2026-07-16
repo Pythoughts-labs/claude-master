@@ -421,7 +421,7 @@ const FENCE = /```json\s*([\s\S]*?)```/g;
 
 export function extractJson(raw: string): string | null {
   let last: string | null = null;
-  for (const match of raw.matchAll(FENCE)) last = match[1].trim();
+  for (const match of raw.matchAll(FENCE)) last = (match[1] ?? "").trim();
   const candidate = last ?? raw.trim();
   try {
     JSON.parse(candidate);
