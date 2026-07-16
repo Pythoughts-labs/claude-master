@@ -6,6 +6,20 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-16
+
+### Added
+
+- Routing failures now return a per-producer `considered` trail (selected / unknown-producer / authentication-required / ineligible with a reason) in attempt evidence and unresolved issues, so `no-eligible-producer` explains itself.
+- Delegation-spec enum validation errors list the allowed values (e.g. `verification[].network` reports `allowed values: denied, allowed`).
+- Repository precondition failures name the offending paths (dirty files, changed submodules, nested repositories), bounded to 20 entries.
+- Prompt-injection hardening in the review pipeline: candidate diffs, test evidence, and consolidated findings are wrapped in explicit untrusted-data fences with a data-not-instructions preface, a 200k-character cap with truncation evidence, and fence-forgery neutralization.
+- The pythinker implementer lane forwards a caller-supplied `TIMEOUT_SECONDS` (default 1800s) to the adapter and forbids background waits.
+
+### Fixed
+
+- The committed `runtime/server.mjs` bundle shipped with 0.13.0 was stale: it lacked the `delegatePipeline` tool, pinned `RUNTIME_VERSION` at 0.12.1, and a fresh rebuild broke schema resolution. Role-prompt schemas now resolve from both the source and bundled layouts, and the regenerated bundle actually exposes all ten MCP tools. Installed copies must update and reload to receive `delegatePipeline`.
+
 ## [0.13.0] - 2026-07-16
 
 ### Added
