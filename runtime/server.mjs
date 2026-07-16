@@ -25174,15 +25174,28 @@ function classifyFailure(s) {
 
 // src/producers/routing-policy.ts
 function route(preferences, reports) {
+  const considered = [];
   for (const producerId of preferences) {
     const report = reports.find((candidate) => candidate.producerId === producerId);
-    if (report === void 0) continue;
-    if (report.reason === "authentication-required") {
-      return { producerId: null, reason: "authentication-required" };
+    if (report === void 0) {
+      considered.push({ producerId, outcome: "unknown-producer", detail: null });
+      continue;
     }
-    if (report.laneEligibility.edit === true) return { producerId };
+    if (report.reason === "authentication-required") {
+      considered.push({ producerId, outcome: "authentication-required", detail: report.reason });
+      return { producerId: null, reason: "authentication-required", considered };
+    }
+    if (report.laneEligibility.edit === true) {
+      considered.push({ producerId, outcome: "selected", detail: null });
+      return { producerId, considered };
+    }
+    considered.push({
+      producerId,
+      outcome: "ineligible",
+      detail: report.reason ?? "laneEligibility.edit=false"
+    });
   }
-  return { producerId: null, reason: "no-eligible-producer" };
+  return { producerId: null, reason: "no-eligible-producer", considered };
 }
 
 // src/runtime/artifact-store.ts
@@ -26755,8 +26768,11 @@ async function runAttempt(checkoutPath, spec, deps) {
       producerSummary: null,
       candidate: null,
       commandOutcomes: [],
-      unresolvedIssues: [routing.reason],
-      evidence: { routing: routing.reason, reports },
+      unresolvedIssues: [
+        routing.reason,
+        ...routing.considered.map((candidate) => `producer ${candidate.producerId}: ${candidate.outcome}${candidate.detail === null ? "" : ` (${candidate.detail})`}`)
+      ],
+      evidence: { routing: routing.reason, considered: routing.considered, reports },
       producerLog: producerLog(null),
       repositoryInstructions,
       packagedVerifier

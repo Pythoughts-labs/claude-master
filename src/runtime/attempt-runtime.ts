@@ -500,8 +500,12 @@ export async function runAttempt(
       producerSummary: null,
       candidate: null,
       commandOutcomes: [],
-      unresolvedIssues: [routing.reason],
-      evidence: { routing: routing.reason, reports },
+      unresolvedIssues: [
+        routing.reason,
+        ...routing.considered.map(candidate =>
+          `producer ${candidate.producerId}: ${candidate.outcome}${candidate.detail === null ? "" : ` (${candidate.detail})`}`),
+      ],
+      evidence: { routing: routing.reason, considered: routing.considered, reports },
       producerLog: producerLog(null),
       repositoryInstructions,
       packagedVerifier,
