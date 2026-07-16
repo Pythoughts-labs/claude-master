@@ -1,5 +1,5 @@
 ---
-description: Local implementation lane. Sends a complete spec through Pi, using its configured model unless the caller supplies an override, and independently verifies the result.
+description: Multi-provider Pi implementation lane (cloud or local models). Sends a complete spec through Pi, using its configured model unless the caller supplies an override, and independently verifies the result.
 mode: subagent
 permission:
   read: allow

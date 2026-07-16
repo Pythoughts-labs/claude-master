@@ -108,9 +108,9 @@ Top-tier model tokens are expensive, and most of what a coding task spends them 
 Claude Architect splits the two jobs:
 
 - The **architect** (your session, on Fable 5 or Opus) reasons once, writes the spec, and reviews. That is where the expensive tokens go, and it is a small fraction of the total.
-- The **implementation** runs on a lane you choose for the job. Codex bills against a subscription. The OpenCode pool uses whatever provider credit you already hold. Pi runs an open-weight model on your own hardware at zero marginal token cost. Pythinker runs your own agent unattended.
+- The **implementation** runs on a lane you choose for the job. Codex bills against a subscription. The OpenCode pool uses whatever provider credit you already hold. Pi is a multi-provider harness: it can run cloud models (for example `openai-codex/gpt-5.6-sol`, MiniMax, GLM) or an open-weight model on your own hardware at zero marginal token cost. Pythinker runs your own agent unattended.
 
-So you stop paying flagship rates to generate a fixture file. You pay for the decision and the review, and let a cheaper or local model produce the code. The `pi-implementer` lane in particular costs nothing per token once the local server is up.
+So you stop paying flagship rates to generate a fixture file. You pay for the decision and the review, and let a cheaper or local model produce the code. The `pi-implementer` lane costs nothing per token when pointed at a local model server, and doubles as a second cloud harness when pointed at a provider model.
 
 ## How it works
 
@@ -124,11 +124,11 @@ Every delegation carries the same five-part spec: the objective, the exact files
 |---|---|---|---|
 | Cloud | `codex-implementer` | GPT-5.6 Sol via the Codex CLI | General implementation, or when a second model family is worth it for correctness |
 | Provider pool | `opencode-implementer` | Any authenticated OpenCode provider (Zen/Go, MiniMax coding plan, OpenAI) | The right model sits behind an OpenCode credential the other lanes cannot reach |
-| Local, $0 | `pi-implementer` | Open-weight model on local hardware via Pi | Routine work you want to keep local at zero marginal token cost |
+| Multi-provider | `pi-implementer` | Any Pi-configured model: cloud (`openai-codex/gpt-5.6-sol`, MiniMax, GLM, DeepSeek) or local open-weight | The model you want lives in Pi's registry, or you want local $0-per-token execution |
 | Autonomous | `pythinker-implementer` | Your own Pythinker agent, headless `--yolo` | A trusted spec should run to completion with no human in the loop |
 | Judgment | `claude-architect:advisor` | Claude's strongest tier, read only | Architecture, migrations, API shape, a broad refactor, or a problem that has resisted two attempts |
 
-There is no implicit lane default. If `/claude-architect:delegate` does not name Codex, OpenCode, Pi, Pythinker, or an implementer, the architect asks which CLI to use before preparing or launching the delegation. Reach for OpenCode when the model you want only lives in its provider pool, Pi when local execution and zero token cost matter, and Pythinker when full unattended execution is the point. Each lane is a harness around a producer. Codex pins its own model; Pi, OpenCode, and Pythinker accept optional model and thinking or variant overrides, and otherwise defer to the selected CLI's configured defaults. Every CLI lane runs a preflight and returns a structured `unavailable` report rather than quietly implementing the work itself. A lane that promises Codex and silently becomes a Claude lane is worse than a loud failure, because you chose that lane for a reason.
+There is no implicit lane default. If `/claude-architect:delegate` does not name Codex, OpenCode, Pi, Pythinker, or an implementer, the architect asks which CLI to use before preparing or launching the delegation. Reach for OpenCode when the model you want only lives in its provider pool, Pi when its provider registry has the model you want (cloud or local — local execution at zero token cost is one option, not the lane's definition), and Pythinker when full unattended execution is the point. Each lane is a harness around a producer. Codex pins its own model; Pi, OpenCode, and Pythinker accept optional model and thinking or variant overrides, and otherwise defer to the selected CLI's configured defaults. Every CLI lane runs a preflight and returns a structured `unavailable` report rather than quietly implementing the work itself. A lane that promises Codex and silently becomes a Claude lane is worse than a loud failure, because you chose that lane for a reason.
 
 Every implementation lane uses one shared process-isolation lifecycle through its own CLI-specific adapter. Codex is uncapped by default. Pi, Pythinker, and OpenCode fail closed after 900 seconds by default; set `PI_TIMEOUT_SECONDS=0`, `PYTHINKER_TIMEOUT_SECONDS=0`, or `OPENCODE_TIMEOUT_SECONDS=0`, respectively, to disable that cap.
 
@@ -195,7 +195,7 @@ The spec it produces always names the objective, the exact files, the interfaces
 
 - **Codex lane:** install and authenticate the [OpenAI Codex CLI](https://github.com/openai/codex). The MCP edit Lane requires a certified or tested native confinement backend (currently macOS arm64 or Linux) and a successful native confinement probe; unsupported environments remain diagnostics-only and must not fall back around a failed confinement or edit-eligibility gate.
 - **OpenCode lane:** install the [OpenCode CLI](https://opencode.ai) and authenticate a provider with `opencode auth login`. The lane runs `opencode run --agent build --auto`; optional model and variant overrides otherwise defer to OpenCode configuration.
-- **Pi lane:** install the [Pi coding agent](https://pi.dev) and start a local model server. Optional model and thinking overrides otherwise defer to Pi configuration.
+- **Pi lane:** install the [Pi coding agent](https://pi.dev). Cloud provider models (for example `openai-codex/gpt-5.6-sol`) need only the provider login; local models additionally need their model server running. Optional model and thinking overrides otherwise defer to Pi configuration.
 - **Pythinker lane:** install the [Pythinker CLI](https://pythoughts-labs.github.io/pythinker-code/), authenticate a provider, and optionally pass a model or `--thinking-effort off|minimal|low|medium|high|xhigh|max` override. Absent overrides defer to Pythinker configuration. This lane runs unattended in `--yolo` mode.
 - **Advisor:** Claude Code users need access to Opus for the strictly non-mutating `claude-architect:advisor`. OpenCode retains the legacy `claude-advisor.md` agent and may configure its preferred model.
 
