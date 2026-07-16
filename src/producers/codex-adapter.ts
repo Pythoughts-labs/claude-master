@@ -229,7 +229,9 @@ export class CodexAdapter implements ProducerAdapter {
       "--json",
       "--ephemeral",
       "--sandbox",
-      "workspace-write",
+      // Read-only roles use Codex's native read-only sandbox: wrapping Codex in
+      // an outer Seatbelt profile EPERM-crashes its internal sandbox init.
+      ctx.readOnly === true ? "read-only" : "workspace-write",
       "--ignore-user-config",
       "--ignore-rules",
       "--disable",

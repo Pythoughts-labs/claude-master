@@ -90,6 +90,7 @@ class FakeAdapter implements ProducerAdapter {
   invocationCount = 0;
   readonly tempHomes: string[] = [];
   readonly spawnedCommands: string[] = [];
+  readonly readOnlyRequests: boolean[] = [];
 
   constructor(private readonly options: FakeAdapterOptions = {}) {}
 
@@ -100,6 +101,7 @@ class FakeAdapter implements ProducerAdapter {
   buildInvocation(_spec: DelegationSpec, ctx: InvocationContext): ProducerInvocation {
     this.invocationCount += 1;
     if (ctx.tempHome !== undefined) this.tempHomes.push(ctx.tempHome);
+    this.readOnlyRequests.push(ctx.readOnly === true);
     return {
       executable: nodeExecutable,
       args: [],
@@ -293,9 +295,10 @@ describe("runRole", () => {
     expect(adapter.spawnCount).toBe(0);
   });
 
-  it("runs a read-only role for a producer that reports only its own native backend", async () => {
+  it("delegates read-only confinement to a producer-native sandbox instead of wrapping it", async () => {
     // Regression: real Codex reports codex-native-sandbox (producer-native).
-    // Read-only confinement is the HOST's seatbelt wrap, so the role must run.
+    // Wrapping it in an outer Seatbelt profile EPERM-crashes its own sandbox
+    // init, so the role must run the producer directly with readOnly=true.
     const adapter = new FakeAdapter({
       cannedStdout: REVIEW_OUTPUT,
       writeConfinementBackend: "codex-native-sandbox",
@@ -305,7 +308,8 @@ describe("runRole", () => {
 
     expect(result.ok).toBe(true);
     expect(result.failure).toBeNull();
-    expect(adapter.spawnedCommands).toEqual(["/usr/bin/sandbox-exec"]);
+    expect(adapter.spawnedCommands).not.toContain("/usr/bin/sandbox-exec");
+    expect(adapter.readOnlyRequests).toEqual([true]);
   });
 
   it("retries exactly once on process failure, then reports failure", async () => {

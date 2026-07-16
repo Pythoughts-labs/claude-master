@@ -54,6 +54,8 @@ export interface InvocationContext {
   tempHome?: string;
   capabilityReport: CapabilityReport;
   executable: ResolvedExecutable;
+  /** Read-only role sessions: adapters with a native sandbox must deny writes themselves. */
+  readOnly?: boolean;
 }
 
 export interface ProducerAdapter {

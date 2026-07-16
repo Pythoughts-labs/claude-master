@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 import type { PlatformServices, SupervisedExit } from "../platform/platform-services.js";
 import { supervise } from "../platform/process-supervisor.js";
+import { selectSandboxBackend } from "../platform/sandbox/backends.js";
 import { selectOsWriteConfinementBackend } from "../producers/plain-text.js";
 import {
   buildReadOnlySeatbeltPolicy,
@@ -144,11 +145,13 @@ export async function runRole(args: RoleRunArgs): Promise<RoleRunResult> {
   }
 
   const readOnly = READ_ONLY_ROLES.has(args.role);
-  if (readOnly) {
-    // Read-only roles are confined by wrapping the invocation in the HOST's
-    // read-only Seatbelt profile, so availability is a host property — not a
-    // property of the selected producer's own write-confinement backend
-    // (Codex always reports codex-native-sandbox, which is irrelevant here).
+  // Producers with a native sandbox (Codex) must confine read-only roles
+  // themselves: wrapping them in an outer Seatbelt profile EPERM-crashes their
+  // internal sandbox init. Producers without one get the HOST's read-only
+  // Seatbelt wrap, so that path's availability is a host property.
+  const nativeReadOnly = readOnly
+    && selectSandboxBackend(report).backend?.kind === "producer-native";
+  if (readOnly && !nativeReadOnly) {
     const osBackend = selectOsWriteConfinementBackend({
       ps: args.ps,
       os: args.ps.os,
@@ -177,8 +180,9 @@ export async function runRole(args: RoleRunArgs): Promise<RoleRunResult> {
         tempHome,
         capabilityReport: report,
         executable: report.resolvedExecutable,
+        readOnly: nativeReadOnly,
       });
-      if (readOnly) {
+      if (readOnly && !nativeReadOnly) {
         invocation = wrapInvocationWithSeatbelt(
           invocation,
           buildReadOnlySeatbeltPolicy({ tempHome }),

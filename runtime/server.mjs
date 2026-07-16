@@ -22808,7 +22808,9 @@ var CodexAdapter = class {
       "--json",
       "--ephemeral",
       "--sandbox",
-      "workspace-write",
+      // Read-only roles use Codex's native read-only sandbox: wrapping Codex in
+      // an outer Seatbelt profile EPERM-crashes its internal sandbox init.
+      ctx.readOnly === true ? "read-only" : "workspace-write",
       "--ignore-user-config",
       "--ignore-rules",
       "--disable",
@@ -27651,7 +27653,8 @@ async function runRole(args) {
     };
   }
   const readOnly = READ_ONLY_ROLES.has(args.role);
-  if (readOnly) {
+  const nativeReadOnly = readOnly && selectSandboxBackend(report).backend?.kind === "producer-native";
+  if (readOnly && !nativeReadOnly) {
     const osBackend = selectOsWriteConfinementBackend({
       ps: args.ps,
       os: args.ps.os,
@@ -27678,9 +27681,10 @@ async function runRole(args) {
         runId: args.runId,
         tempHome,
         capabilityReport: report,
-        executable: report.resolvedExecutable
+        executable: report.resolvedExecutable,
+        readOnly: nativeReadOnly
       });
-      if (readOnly) {
+      if (readOnly && !nativeReadOnly) {
         invocation = wrapInvocationWithSeatbelt(
           invocation,
           buildReadOnlySeatbeltPolicy({ tempHome })

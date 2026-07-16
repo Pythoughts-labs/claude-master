@@ -217,6 +217,16 @@ describe("CodexAdapter", () => {
     })).toEqual({});
   });
 
+  it("uses the read-only sandbox when the context is a read-only role", () => {
+    const invocation = new CodexAdapter().buildInvocation(sampleSpec(), {
+      ...invocationContext(),
+      readOnly: true,
+    });
+    const sandboxIndex = invocation.args.indexOf("--sandbox");
+    expect(invocation.args[sandboxIndex + 1]).toBe("read-only");
+    expect(invocation.args).not.toContain("workspace-write");
+  });
+
   it("carries the defaulted auth store on the invocation env", () => {
     const invocation = new CodexAdapter().buildInvocation(sampleSpec(), invocationContext());
     expect(invocation.env === undefined || typeof invocation.env === "object").toBe(true);
