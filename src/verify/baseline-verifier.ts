@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { WorktreeManager } from "../git/worktree-manager.js";
 import type { PlatformServices } from "../platform/platform-services.js";
 import { getPlatformServices } from "../platform/select-platform.js";
@@ -42,7 +43,10 @@ export async function verifyBaseline(args: BaselineVerifyArgs): Promise<Baseline
   const now = args.now ?? Date.now;
   const manager = new WorktreeManager(
     args.repoRoot,
-    `baseline-${args.runId ?? args.verificationId?.() ?? args.headCommitOid}`,
+    // A runId gives recovery a deterministic, reclaimable name; without one
+    // (only unit callers), fall back to a unique id so repeated same-commit
+    // fixtures cannot collide on a shared worktrees root.
+    `baseline-${args.runId ?? args.verificationId?.() ?? randomUUID()}`,
     ps,
   );
   const materialized = await manager.create(args.headCommitOid);

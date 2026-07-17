@@ -24996,7 +24996,7 @@ function checkVersionCompat(skillProtocolVersion) {
 }
 
 // src/runtime/attempt-runtime.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { constants as constants3 } from "node:fs";
 import {
   access as access3,
@@ -25452,6 +25452,9 @@ function route(preferences, reports) {
   }
   return { producerId: null, reason: "no-eligible-producer", considered };
 }
+
+// src/verify/baseline-verifier.ts
+import { randomUUID } from "node:crypto";
 
 // src/verify/project-verifier.ts
 import { realpath as realpath2 } from "node:fs/promises";
@@ -25975,7 +25978,10 @@ async function verifyBaseline(args) {
   const now = args.now ?? Date.now;
   const manager = new WorktreeManager(
     args.repoRoot,
-    `baseline-${args.runId ?? args.verificationId?.() ?? args.headCommitOid}`,
+    // A runId gives recovery a deterministic, reclaimable name; without one
+    // (only unit callers), fall back to a unique id so repeated same-commit
+    // fixtures cannot collide on a shared worktrees root.
+    `baseline-${args.runId ?? args.verificationId?.() ?? randomUUID()}`,
     ps
   );
   const materialized = await manager.create(args.headCommitOid);
@@ -26036,7 +26042,7 @@ async function verifyBaseline(args) {
 }
 
 // src/runtime/artifact-store.ts
-import { createHash as createHash6, randomUUID } from "node:crypto";
+import { createHash as createHash6, randomUUID as randomUUID2 } from "node:crypto";
 import { constants as constants2 } from "node:fs";
 import {
   link,
@@ -26616,7 +26622,7 @@ var ArtifactStore = class {
     const directory = await this.ensureArchiveDirectory(relativePath);
     const directoryIdentity = await ensurePlainDirectory(directory);
     const destination = path9.join(directory, path9.basename(relativePath));
-    const temporaryPath = path9.join(directory, `.${path9.basename(destination)}.${randomUUID()}.tmp`);
+    const temporaryPath = path9.join(directory, `.${path9.basename(destination)}.${randomUUID2()}.tmp`);
     let handle;
     let temporaryCreated = false;
     try {
@@ -26667,7 +26673,7 @@ var ArtifactStore = class {
     if (directory === null) throw new RuntimeError("run archive does not exist");
     const directoryIdentity = await ensurePlainDirectory(directory);
     const destination = path9.join(directory, relativePath);
-    const temporaryPath = path9.join(directory, `.${relativePath}.${randomUUID()}.tmp`);
+    const temporaryPath = path9.join(directory, `.${relativePath}.${randomUUID2()}.tmp`);
     const serialized = `${serializeJson(value, 2)}
 `;
     let handle;
@@ -27047,7 +27053,7 @@ var ArtifactStore = class {
     const removeEntry = async (entry, reason) => {
       if (attempted.has(entry.runId)) return;
       attempted.add(entry.runId);
-      const quarantineName = `.prune-${entry.runId}-${randomUUID()}`;
+      const quarantineName = `.prune-${entry.runId}-${randomUUID2()}`;
       const quarantinePath = path9.join(this.runsRoot, quarantineName);
       let prepared = null;
       let transaction = null;
@@ -27304,7 +27310,7 @@ async function writeRunStart(target, record2, create) {
   }
   const temporaryPath = path10.join(
     target.canonicalDirectory,
-    `.run-start.${randomUUID2()}.tmp`
+    `.run-start.${randomUUID3()}.tmp`
   );
   let created = false;
   let handle;
@@ -27474,7 +27480,7 @@ async function runAttempt(checkoutPath, spec, deps) {
   const producerRegistry = deps.producerRegistry ?? registry2;
   const now = deps.now ?? Date.now;
   const startedAtMs = now();
-  const runId = (deps.runId ?? randomUUID2)();
+  const runId = (deps.runId ?? randomUUID3)();
   const store = new ArtifactStore(runId);
   const repositoryInstructions = deps.repositoryInstructions ?? [];
   const packagedVerifier = deps.packagedVerifier ?? { version: "pending", content: "" };

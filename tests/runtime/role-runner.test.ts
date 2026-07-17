@@ -364,7 +364,7 @@ describe("runRole", () => {
     ]]);
   });
 
-  it("wraps an OS-confined fixer with write-enabled Seatbelt roots", async () => {
+  it.skipIf(process.platform === "win32")("wraps an OS-confined fixer with write-enabled Seatbelt roots", async () => {
     await configureFixerGitRoots();
     const adapter = new FakeAdapter({ writeConfinementBackend: "macos-seatbelt" });
 
