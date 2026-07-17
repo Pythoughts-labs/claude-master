@@ -629,6 +629,7 @@ export async function runPipeline(
     verification: verified.verification,
     roundsUsed: rounds.length,
     maxRounds,
+    finalRoundReviewed: (lastRound?.fix ?? null) === null,
     artifactsValid: true,
     baselineDrift: verified.baselineDrift,
   });

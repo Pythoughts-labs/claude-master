@@ -7,6 +7,7 @@ export interface GateInput {
   verification: VerificationReport | null;
   roundsUsed: number;
   maxRounds: number;
+  finalRoundReviewed: boolean;
   artifactsValid: boolean;
   baselineDrift: boolean;
 }
@@ -57,6 +58,10 @@ export function evaluateGates(input: GateInput): GateResult {
 
   if (!input.artifactsValid) reasons.push("missing or invalid artifact");
   if (input.baselineDrift) reasons.push("candidate no longer based on approved baseline");
+  if (!input.finalRoundReviewed) {
+    reasons.push("final fix was not re-reviewed");
+    requiresHumanDecision = true;
+  }
   if (input.roundsUsed > input.maxRounds) {
     reasons.push(`round cap exceeded (${input.roundsUsed} > ${input.maxRounds})`);
     requiresHumanDecision = true;

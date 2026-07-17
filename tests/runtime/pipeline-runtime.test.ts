@@ -360,7 +360,7 @@ describe("runPipeline", () => {
     expect(result.rounds[0]?.roleLogRefs).toContain("logs/role-fixer-round1.log");
   });
 
-  it("requires human decision when blockers remain at the round cap", async () => {
+  it("requires human decision when the final-round fix was not re-reviewed", async () => {
     const repo = await initRepo();
     const roleRunner = roundReviews([
       { correctness: blocker, systems: approve },
@@ -372,8 +372,9 @@ describe("runPipeline", () => {
         candidateCommit: commit,
         dispositions: [{
           findingId: "F-001",
-          disposition: "blocked",
-          evidence: "The blocker remains unresolved.",
+          disposition: "fixed",
+          evidence: "Committed the requested correction.",
+          commit,
         }],
       }));
     });
@@ -386,6 +387,8 @@ describe("runPipeline", () => {
 
     expect(result.status).toBe("human-decision-required");
     expect(result.gate.requiresHumanDecision).toBe(true);
+    expect(result.gate.reasons).toContain("final fix was not re-reviewed");
+    expect(result.rounds.at(-1)?.fix).not.toBeNull();
   });
 
   it("fails after invalid reviewer output and one invalid repair", async () => {

@@ -18,12 +18,26 @@ function passVerification(overrides: Partial<VerificationReport> = {}): Verifica
 }
 function base(overrides: Partial<GateInput> = {}): GateInput {
   return { findings: [], dispositions: [], verification: passVerification(),
-    roundsUsed: 1, maxRounds: 2, artifactsValid: true, baselineDrift: false, ...overrides };
+    roundsUsed: 1, maxRounds: 2, finalRoundReviewed: true,
+    artifactsValid: true, baselineDrift: false, ...overrides };
 }
 
 describe("evaluateGates", () => {
   it("clean run is decision-ready", () => {
     expect(evaluateGates(base())).toEqual({ decisionReady: true, requiresHumanDecision: false, reasons: [] });
+  });
+
+  it("requires human decision when a fixed disposition was not re-reviewed", () => {
+    const out = evaluateGates(base({
+      findings: [finding("F-001", "blocker")],
+      dispositions: [fixed("F-001")],
+      finalRoundReviewed: false,
+    }));
+    expect(out).toEqual({
+      decisionReady: false,
+      requiresHumanDecision: true,
+      reasons: ["final fix was not re-reviewed"],
+    });
   });
 
   it.each<[string, GateInput, boolean]>([
