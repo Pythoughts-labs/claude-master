@@ -1,3 +1,4 @@
+import path from "node:path";
 import { loadSchemas } from "./schema-loader.js";
 import {
   RUNTIME_MIN_EDIT_TIMEOUT_MS,
@@ -37,7 +38,26 @@ export function validateSpec(input: unknown): ValidateResult {
     };
   }
   const ok = schemas.delegationSpec(input);
-  if (ok) return { ok: true, spec: input as DelegationSpec };
+  if (ok) {
+    const spec = input as DelegationSpec;
+    for (const [index, command] of spec.verification.entries()) {
+      const normalizedCwd = path.posix.normalize(command.cwd);
+      if (
+        path.isAbsolute(command.cwd)
+        || normalizedCwd === ".."
+        || normalizedCwd.startsWith("../")
+      ) {
+        return {
+          ok: false,
+          errors: [{
+            path: `/verification/${index}/cwd`,
+            message: "must be a repository-relative path that does not escape the checkout",
+          }],
+        };
+      }
+    }
+    return { ok: true, spec };
+  }
   const errors = (schemas.delegationSpec.errors ?? []).map(e => {
     let message = e.message ?? "invalid";
     const allowed = (e.params as Record<string, unknown> | undefined)?.allowedValues;

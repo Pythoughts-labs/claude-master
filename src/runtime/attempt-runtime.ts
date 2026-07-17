@@ -487,18 +487,25 @@ export async function runAttempt(
   const repositoryInstructions = deps.repositoryInstructions ?? [];
   const packagedVerifier = deps.packagedVerifier ?? { version: "pending", content: "" };
   const canonical = await ps.canonicalizePath(checkoutPath);
-  const preconditions = await checkPreconditions(canonical.canonical, {
-    writeAllowlist: spec.writeAllowlist,
-  });
-  if (!preconditions.ok) {
-    const detailSuffix = preconditions.detail === undefined
-      ? ""
-      : `: ${preconditions.detail.join(", ")}`;
-    throw new RuntimeError(
-      `repository precondition failed (${preconditions.reason})${detailSuffix}`,
-      { reason: preconditions.reason, detail: preconditions.detail ?? [] },
-    );
-  }
+  let lock: CheckoutLock | null = null;
+  let worktree: { path: string; cleanup(): Promise<void> } | null = null;
+  let tempHome: string | null = null;
+  let builtEnvironment: BuiltEnvironment | null = null;
+  let primaryError: unknown;
+  try {
+    lock = await ps.acquireCheckoutLock(canonical.canonical);
+    const preconditions = await checkPreconditions(canonical.canonical, {
+      writeAllowlist: spec.writeAllowlist,
+    });
+    if (!preconditions.ok) {
+      const detailSuffix = preconditions.detail === undefined
+        ? ""
+        : `: ${preconditions.detail.join(", ")}`;
+      throw new RuntimeError(
+        `repository precondition failed (${preconditions.reason})${detailSuffix}`,
+        { reason: preconditions.reason, detail: preconditions.detail ?? [] },
+      );
+    }
 
   const executionMode = (spec as { executionMode: string }).executionMode;
   let baselineEvidence: Record<string, unknown> = { baseline: "skipped — read-only spec" };
@@ -612,13 +619,6 @@ export async function runAttempt(
     });
   }
 
-  let lock: CheckoutLock | null = null;
-  let worktree: { path: string; cleanup(): Promise<void> } | null = null;
-  let tempHome: string | null = null;
-  let builtEnvironment: BuiltEnvironment | null = null;
-  let primaryError: unknown;
-  try {
-    lock = await ps.acquireCheckoutLock(canonical.canonical);
     const runStart: RunStartRecord = {
       runId,
       lockKey: lock.key,

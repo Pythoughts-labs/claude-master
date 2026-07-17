@@ -277,6 +277,46 @@ afterEach(async () => {
 });
 
 describe("runAttempt", () => {
+  it("acquires the checkout lock before baseline verification and releases it", async () => {
+    const repoRoot = await initRepo();
+    const platformServices = getPlatformServices();
+    let lockHeld = false;
+    let lockReleased = false;
+
+    const result = await runAttempt(repoRoot, validSpec(), dependencies(
+      new FakeAdapter(),
+      "run-lock-before-baseline",
+      {
+        ps: Object.assign(Object.create(platformServices), {
+          acquireCheckoutLock: async checkout => {
+            const lock = await platformServices.acquireCheckoutLock(checkout);
+            lockHeld = true;
+            return {
+              key: lock.key,
+              release: async () => {
+                await lock.release();
+                lockHeld = false;
+                lockReleased = true;
+              },
+            };
+          },
+        }),
+        baselineVerifier: async args => {
+          expect(lockHeld).toBe(true);
+          return {
+            baselineCommitOid: args.headCommitOid,
+            commands: args.commands.map(command => ({ id: command.id, exitCode: 0, ok: true })),
+            dependencyLink: "none",
+          };
+        },
+      },
+    ));
+
+    expect(result.status).toBe("verified-candidate");
+    expect(lockHeld).toBe(false);
+    expect(lockReleased).toBe(true);
+  });
+
   it("stops on a failing baseline before probing producers", async () => {
     const repoRoot = await initRepo();
     const spec = validSpec();
@@ -485,15 +525,31 @@ describe("runAttempt", () => {
   it("does not misclassify a repository precondition rejection as producer unavailability", async () => {
     const repoRoot = await initRepo();
     await writeFile(join(repoRoot, "a.txt"), "dirty\n");
+    const platformServices = getPlatformServices();
+    let lockReleased = false;
 
     await expect(runAttempt(
       repoRoot,
       validSpec(),
-      dependencies(new FakeAdapter(), "run-dirty-precondition"),
+      dependencies(new FakeAdapter(), "run-dirty-precondition", {
+        ps: Object.assign(Object.create(platformServices), {
+          acquireCheckoutLock: async checkout => {
+            const lock = await platformServices.acquireCheckoutLock(checkout);
+            return {
+              key: lock.key,
+              release: async () => {
+                await lock.release();
+                lockReleased = true;
+              },
+            };
+          },
+        }),
+      }),
     )).rejects.toMatchObject({
       message: "repository precondition failed (dirty-checkout):  M a.txt",
       detail: { reason: "dirty-checkout", detail: [" M a.txt"] },
     });
+    expect(lockReleased).toBe(true);
 
     await expect(access(join(
       process.env.CLAUDE_PLUGIN_DATA!,

@@ -19,6 +19,25 @@ const base = {
 };
 describe("validateSpec", () => {
   it("accepts a valid spec", () => expect(validateSpec(base).ok).toBe(true));
+  it("validates verification command cwd within the checkout", () => {
+    expect(validateSpec({
+      ...base,
+      verification: [{ ...base.verification[0], cwd: "src/runtime" }],
+    }).ok).toBe(true);
+
+    for (const cwd of ["/absolute/path", "../escape"]) {
+      expect(validateSpec({
+        ...base,
+        verification: [{ ...base.verification[0], cwd }],
+      })).toEqual({
+        ok: false,
+        errors: [{
+          path: "/verification/0/cwd",
+          message: "must be a repository-relative path that does not escape the checkout",
+        }],
+      });
+    }
+  });
   it("accepts the intentional baseline-failure opt-out", () =>
     expect(validateSpec({ ...base, expectBaselineFailure: true }).ok).toBe(true));
   it("rejects a non-boolean baseline-failure opt-out", () =>
