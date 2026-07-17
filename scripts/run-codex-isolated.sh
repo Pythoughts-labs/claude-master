@@ -3,13 +3,21 @@
 set -euo pipefail
 
 TIMEOUT_SECONDS=${CODEX_TIMEOUT_SECONDS:-600}
+TIMEOUT_IS_DEFAULT=$([[ -z "${CODEX_TIMEOUT_SECONDS:-}" ]] && echo 1 || echo 0)
 
 if [[ "$TIMEOUT_SECONDS" == 0 ]]; then
   :
 elif [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   if ! command -v gtimeout >/dev/null 2>&1 && ! command -v timeout >/dev/null 2>&1; then
-    printf 'ERROR: CODEX_TIMEOUT_SECONDS=%s requires timeout or gtimeout; install coreutils or set CODEX_TIMEOUT_SECONDS=0.\n' "$TIMEOUT_SECONDS" >&2
-    exit 69
+    if [[ "$TIMEOUT_IS_DEFAULT" == 1 ]]; then
+      # The 600s cap is only a default; without coreutils, degrade to uncapped
+      # (the caller's Bash-tool timeout remains the enforced outer bound).
+      printf 'WARNING: no timeout/gtimeout found; running without the default 600s internal cap.\n' >&2
+      TIMEOUT_SECONDS=0
+    else
+      printf 'ERROR: CODEX_TIMEOUT_SECONDS=%s requires timeout or gtimeout; install coreutils or set CODEX_TIMEOUT_SECONDS=0.\n' "$TIMEOUT_SECONDS" >&2
+      exit 69
+    fi
   fi
 else
   printf 'ERROR: CODEX_TIMEOUT_SECONDS must be 0 or a positive integer; got %q\n' "$TIMEOUT_SECONDS" >&2
