@@ -49,6 +49,8 @@ Always run the producer inside a dedicated git worktree — never directly in a 
 
 NEVER run tree-wide git state mutations on a shared or pre-existing checkout: `git stash` (push/pop/apply/drop), `git checkout -- .`, `git restore .`, `git reset --hard`, `git clean`, or any command that rewrites uncommitted state you did not author — these have destroyed concurrent lanes' work.
 
+The producer never creates commits. State in the spec that all changes must be left uncommitted — `git add`, `git commit`, and any other commit-creating command are forbidden inside the run; the caller commits the reviewed diff outside the producer run. Under codex's `workspace-write` sandbox a commit attempt fails with `.git/index.lock: Operation not permitted` — that denial is the sandbox working as designed, never a task failure; classify it as sandbox-attributable.
+
 To prove a failure pre-exists on unmodified base, never touch the shared tree: create a disposable worktree (`git worktree add --detach <tmpdir> <base-oid>`), run the failing command there, then `git worktree remove --force <tmpdir>`.
 
 Append these git-state prohibitions verbatim to the producer's own prompt/spec file so the external CLI obeys them too.

@@ -64,6 +64,8 @@ The prompt you receive should contain the standard five-part spec: **objective, 
 
 Run the producer CLI through the isolated adapter in **one foreground blocking Bash call with timeout 600000ms**. Do not use `run_in_background`, `&`, `nohup`, `disown`, Monitor, deferred TaskOutput, or "wait for notification"; do not end the turn while that call is running. There are exactly two valid turn endings: (1) a full report after independent verification, or (2) a concrete blocker report.
 
+Set the Bash tool's `timeout` parameter to `600000` explicitly on the tool call — the tool's ~2-minute default silently kills the producer mid-run, and a shell `timeout` command or a number written only in prose is not a substitute.
+
 PID-rejoin recovery is the only exception to the one-call shape, and the rejoin itself must remain blocking and include stall detection. Every cycle must check progress by output-file growth or process CPU-time delta. If neither changes for 10 consecutive minutes, kill the process, then either relaunch fresh once or return a concrete blocker report. Never wait indefinitely on a silent PID.
 
 ### Worktree isolation and git-state discipline — hard constraint
@@ -71,6 +73,8 @@ PID-rejoin recovery is the only exception to the one-call shape, and the rejoin 
 Always run the producer inside a dedicated git worktree — never directly in a shared or pre-existing checkout, whether or not the dispatch is concurrent. Create it from the caller-specified base commit (`git worktree add --detach <lane-dir> <base-oid>`; default to the checkout's current HEAD when the caller names no base) and pass that directory as the producer working root instead of `$(pwd)`. Remove the worktree only after the caller has collected the diff. These git-state prohibitions must also be appended verbatim to the producer's own prompt/spec file so the external CLI obeys them too.
 
 NEVER run tree-wide git state mutations on a shared or pre-existing checkout: `git stash` (push/pop/apply/drop), `git checkout -- .`, `git restore .`, `git reset --hard`, `git clean`, or any command that rewrites uncommitted state you did not author — these have destroyed concurrent lanes' work.
+
+The producer never creates commits. State in the spec that all changes must be left uncommitted — `git add`, `git commit`, and any other commit-creating command are forbidden inside the run; the caller commits the reviewed diff outside the producer run.
 
 To prove a failure pre-exists on unmodified base, never touch the shared tree: create a disposable worktree (`git worktree add --detach <tmpdir> <base-oid>`), run the failing command there, then `git worktree remove --force <tmpdir>`.
 
@@ -192,6 +196,7 @@ GAPS: [spec ambiguities, unfinished items, model-default fallback note, or "none
 
 - **Hard constraint: the architect reviews your diff before anything is accepted.** This lane runs `--yolo`, so the architect's review is the only safety check between the spec and the working tree. Surface the complete diff and real verification output; never present your report as grounds to skip review.
 - One pythinker invocation per task, performed by the foreground blocking Bash call, unless the caller explicitly decomposed it.
+- If the producer reports a failing verification gate from inside its sandbox (denied sockets, Docker, network, or git metadata writes), rerun the exact authorized command yourself outside the sandbox before relaying it; report the failure as real only when your rerun also fails.
 - Never claim completion without re-running the verification yourself. "Pythinker said it works" is forbidden as evidence.
 - Report the resolved model when Pythinker exposes it. If it remains unknown, report `MODEL: unresolved` rather than guessing.
 - If pythinker's changes are wrong, report that plainly with the failing output — do not patch them yourself. Fix decisions belong to the caller.

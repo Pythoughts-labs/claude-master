@@ -90,6 +90,11 @@ for (const [host, lane, file, adapter] of agents) {
     /never recover a lost temp path by globbing/i,
     `${context}: missing prohibition on re-globbing the shared temp dir to recover a lost spec path`,
   );
+  requirePattern(
+    source,
+    /producer never creates commits/i,
+    `${context}: missing producer-never-commits rule (caller commits outside the run)`,
+  );
   if (host === "OpenCode") {
     requirePattern(
       executableLines.join("\n"),
@@ -160,6 +165,7 @@ for (const file of claudeLaneFiles) {
 
   requirePattern(source, /### Foreground execution and turn completion — hard constraint/, `${context}: missing foreground lifecycle section`);
   requirePattern(source, /one foreground blocking Bash call with timeout 600000ms/i, `${context}: missing mandatory Bash timeout`);
+  requirePattern(source, /Set the Bash tool's `timeout` parameter to `600000`/, `${context}: missing explicit Bash tool timeout-parameter clarifier`);
   requirePattern(source, /single Bash tool call/i, `${context}: missing single-Bash-tool-call atomicity rule for spec/runtime/producer steps`);
   requirePattern(source, /Do not use `run_in_background`[^\n]*`nohup`[^\n]*Monitor[^\n]*"wait for notification"/i, `${context}: missing Monitor/background prohibition`);
   requirePattern(source, /exactly two valid turn endings:[^\n]*full report after independent verification[^\n]*concrete blocker report/i, `${context}: missing two-valid-endings contract`);
@@ -171,6 +177,9 @@ for (const file of claudeLaneFiles) {
   requirePattern(source, /git worktree remove --force/, `${context}: missing disposable-worktree cleanup procedure`);
   requirePattern(source, /Always run the producer inside a dedicated git worktree — never directly in a shared or pre-existing checkout, whether or not the dispatch is concurrent/, `${context}: worktree isolation must be unconditional`);
   requirePattern(source, /must also be appended verbatim to the producer's own prompt\/spec file/, `${context}: missing producer-prompt propagation of git-state prohibitions`);
+  requirePattern(source, /The producer never creates commits/, `${context}: missing producer-never-commits rule`);
+  requirePattern(source, /Set the Bash tool's `timeout` parameter to `600000` explicitly/, `${context}: missing explicit Bash tool timeout parameter clarifier`);
+  requirePattern(source, /outside (?:the |codex's |its )?(?:workspace-write )?sandbox/i, `${context}: missing outside-sandbox rerun rule`);
 }
 
 for (const file of codexLaneFiles) {
@@ -186,6 +195,11 @@ for (const file of codexLaneFiles) {
     source,
     /outside codex(?:'|’|&#39;)s workspace-write sandbox/i,
     `${context}: missing outside-sandbox rerun rule`,
+  );
+  requirePattern(
+    source,
+    /\.git\/index\.lock: Operation not permitted/,
+    `${context}: missing expected-sandbox-commit-denial (.git/index.lock) note`,
   );
   requirePattern(
     source,
