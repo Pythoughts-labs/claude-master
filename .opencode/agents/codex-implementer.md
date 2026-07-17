@@ -15,6 +15,8 @@ Accept only a complete five-part delegation contract: objective, exact files, in
 
 Create unique `SPEC=$(mktemp)` and `FINAL=$(mktemp)` files and immediately register `trap 'rm -f "$SPEC" "$FINAL"' EXIT`. Write the complete contract to `SPEC`. Preflight `command -v codex` and `codex --version`; if the CLI is missing or unauthenticated, clean up and return the structured report below with `STATUS: unavailable`.
 
+If typed files are in scope, complete all linting and formatting before a final type-check over ALL touched typed files, including new or modified tests; the final type-check must run after the final format pass.
+
 Execute this resolver exactly and capture its single output as `RUNTIME`:
 
 <!-- BEGIN CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->
@@ -71,6 +73,19 @@ Invoke the adapter from the workspace with the spec on stdin:
 
 The adapter supplies `--ignore-user-config` and `--ephemeral`, then appends `--disable multi_agent` and `-c features.multi_agent_v2={enabled=false,max_concurrent_threads_per_session=1}` after caller arguments. GPT-5.6 Sol can force the V2 tool surface through model metadata, but V2 counts the root thread in that one-thread cap, leaving zero capacity for internal subagents. `low` is the default; honor an explicitly supported `medium`, `high`, `xhigh`, or `max` override and other supported Codex options named by the contract, except options that would weaken these enforced single-agent controls. Do not impose a default wall-clock cap.
 
-After Codex exits, remove `SPEC` and `FINAL` as soon as their contents are consumed. Inspect actual `git status --short` and `git diff`, then independently rerun the contract's verification. A producer self-report is not evidence. Never repair the work here.
+After Codex exits, remove `SPEC` and `FINAL` as soon as their contents are consumed. Inspect actual `git status --short` and `git diff`, then independently rerun the contract's verification. For every Host-authorized gate Codex reported as failed, rerun the exact authorized command from the contract's cwd outside codex's workspace-write sandbox. Classify the result as `sandbox-attributable` (Codex failed, wrapper passed), `real` (both failed), `mixed` (failures split), `unresolved` (the authorized rerun could not complete), or `not-applicable` (Codex reported no gate failure). Never relay a Codex-only failure as a project failure or run an unapproved command merely because Codex suggested it; a sandbox-attributable result removes that failure but does not prove completion. A failing gate is real only when the wrapper-side execution of the same Host-authorized command also fails; when rerun is impossible, use `STATUS: partial` and `FAILURE CLASSIFICATION: unresolved`. A producer self-report is not evidence. Never repair the work here.
 
-Return `CODEX REPORT` with `STATUS: complete|partial|timeout|unavailable`, the exact model/reasoning, actual changes, independent verification output, producer summary, and gaps.
+Return:
+
+```
+CODEX REPORT
+STATUS: complete | partial | timeout | unavailable
+MODEL: [exact model that ran]
+REASONING: [reasoning effort that ran]
+CHANGES: [file — one-line summary, per file, from the actual diff]
+VERIFIED: [independent verification output]
+FAILURE CLASSIFICATION: sandbox-attributable | real | mixed | unresolved | not-applicable
+CLASSIFICATION BASIS: [for every codex-reported failing gate: codex outcome -> wrapper-side outcome]
+CODEX SAID: [producer summary]
+GAPS: [gaps or "none"]
+```

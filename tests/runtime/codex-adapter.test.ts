@@ -265,6 +265,9 @@ describe("CodexAdapter", () => {
     expect(invocation.stdin.startsWith(`${CODEX_EDIT_ACTION_PREAMBLE}\n\n`)).toBe(true);
     expect(invocation.stdin).toContain(spec.context);
     expect(invocation.stdin).toContain("src/greeting.ts");
+    expect(invocation.stdin).toContain(
+      "If you run linting, formatting, or type checking, complete all linting and formatting first, then run a final type-check covering every typed file you changed, including new or modified tests.",
+    );
     expect(invocation.requiredEnv).toEqual([
       "CODEX_HOME",
       "CODEX_API_KEY",

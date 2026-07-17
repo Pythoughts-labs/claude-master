@@ -136,6 +136,8 @@ function renderPrompt(spec: DelegationSpec, readOnly: boolean): string {
     "Success criteria:",
     renderList(spec.successCriteria),
     "",
+    "If you run linting, formatting, or type checking, complete all linting and formatting first, then run a final type-check covering every typed file you changed, including new or modified tests.",
+    "",
     "Make only the requested edits. Return a concise final summary of the work performed.",
   ].join("\n");
   return readOnly ? prompt : `${CODEX_EDIT_ACTION_PREAMBLE}\n\n${prompt}`;

@@ -15,6 +15,10 @@ const agents = [
 ];
 
 const claudeLaneFiles = agents.slice(0, 4).map(([, , file]) => file);
+const codexLaneFiles = [
+  "agents/codex-implementer.md",
+  ".opencode/agents/codex-implementer.md",
+];
 
 function read(relativePath) {
   return fs.readFileSync(`${root}/${relativePath}`, "utf8");
@@ -165,6 +169,34 @@ for (const file of claudeLaneFiles) {
   requirePattern(source, /Always run the producer inside a dedicated git worktree — never directly in a shared or pre-existing checkout, whether or not the dispatch is concurrent/, `${context}: worktree isolation must be unconditional`);
   requirePattern(source, /must also be appended verbatim to the producer's own prompt\/spec file/, `${context}: missing producer-prompt propagation of git-state prohibitions`);
 }
+
+for (const file of codexLaneFiles) {
+  const source = read(file);
+  const context = `Codex ${file}`;
+
+  requirePattern(
+    source,
+    /FAILURE CLASSIFICATION: sandbox-attributable \| real \| mixed \| unresolved \| not-applicable/,
+    `${context}: missing failure classification field`,
+  );
+  requirePattern(
+    source,
+    /outside codex(?:'|’|&#39;)s workspace-write sandbox/i,
+    `${context}: missing outside-sandbox rerun rule`,
+  );
+  requirePattern(
+    source,
+    /If typed files are in scope, complete all linting and formatting before a final type-check over ALL touched typed files, including new or modified tests; the final type-check must run after the final format pass\./,
+    `${context}: missing lint-before-final-typecheck rule`,
+  );
+  requirePattern(source, /CHANGES: \[file — one-line summary, per file, from the actual diff\]/, `${context}: report template must keep per-file CHANGES`);
+}
+
+requirePattern(
+  read(".opencode/agents/codex-implementer.md"),
+  /MODEL: \[exact model that ran\][^`]*REASONING: \[reasoning effort that ran\]/,
+  "OpenCode codex lane: report template must keep exact model and reasoning",
+);
 
 assert.equal(
   fs.existsSync(`${root}/.opencode/agents/opencode-implementer.md`),

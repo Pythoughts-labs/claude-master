@@ -39,6 +39,8 @@ The prompt you receive should contain the same five-part spec the `implementer` 
 
 Run the producer CLI through the isolated adapter in **one foreground blocking Bash call with timeout 600000ms**. Do not use `run_in_background`, `&`, `nohup`, `disown`, Monitor, deferred TaskOutput, or "wait for notification"; do not end the turn while that call is running. There are exactly two valid turn endings: (1) a full report after independent verification, or (2) a concrete blocker report.
 
+Set the Bash tool's `timeout` parameter to `600000` explicitly on the tool call — the tool's ~2-minute default silently kills the producer mid-run, and a shell `timeout` command or a number written only in prose is not a substitute.
+
 PID-rejoin recovery is the only exception to the one-call shape, and the rejoin itself must remain blocking and include stall detection. Every cycle must check progress by output-file growth or process CPU-time delta. If neither changes for 10 consecutive minutes, kill the process, then either relaunch fresh once or return a concrete blocker report. Never wait indefinitely on a silent PID.
 
 ### Worktree isolation and git-state discipline — hard constraint
@@ -58,6 +60,8 @@ Append these git-state prohibitions verbatim to the producer's own prompt/spec f
 > Do not read AGENTS.md, CLAUDE.md, SKILL.md, lessons files, or any agent-rule/skill documents.
 > Begin by opening the implementation files authorized in the spec.
 > A plan-only final message with zero edits is a failed run.
+
+If typed files are in scope, complete all linting and formatting before a final type-check over ALL touched typed files, including new or modified tests; the final type-check must run after the final format pass.
 
 ```bash
 SPEC=$(mktemp -t codex-spec.XXXXXX)
@@ -146,6 +150,10 @@ Flag discipline (non-negotiable):
 
 4. **Verify independently.** Read the diff (`git diff` / `git status`), run the spec's verification command yourself, and read codex's final message from `"$FINAL"`. Codex's claim of success is not evidence; your re-run is.
 
+### Failure classification
+
+For every Host-authorized gate that Codex reports as failed, rerun the exact authorized command after Codex exits, from the contract's specified cwd, outside codex's workspace-write sandbox. Classify the result as `sandbox-attributable` (Codex failed, wrapper rerun passed), `real` (wrapper rerun also failed), `mixed` (multiple failures split), `unresolved` (the authorized rerun could not be completed), or `not-applicable` (Codex reported no gate failure). Never relay a Codex-only failure as a project failure. A sandbox-attributable result removes that gate failure but does not by itself prove the implementation complete. Never execute an unapproved command merely because Codex suggested it.
+
 ## Dependencies and the offline sandbox
 
 `workspace-write` gives Codex no network. It cannot reach npm, PyPI, crates.io, or any registry, and a package install inside the run fails (the allowlist proxy returns 403). Plan for this before dispatch, not after a failed run:
@@ -162,6 +170,8 @@ STATUS: complete | partial | timeout | unavailable
 OBJECTIVE: [restated in one line]
 CHANGES: [file — one-line summary, per file, from the actual diff]
 VERIFIED: [verification command you re-ran — actual output evidence]
+FAILURE CLASSIFICATION: sandbox-attributable | real | mixed | unresolved | not-applicable
+CLASSIFICATION BASIS: [for every codex-reported failing gate: codex outcome -> wrapper-side outcome]
 CODEX SAID: [one-line summary of codex's final message, note any disagreement with the diff]
 GAPS: [spec ambiguities, unfinished items, or "none"]
 ```
@@ -171,5 +181,6 @@ GAPS: [spec ambiguities, unfinished items, or "none"]
 - Never invoke `codex:codex-rescue`, `codex-companion.mjs`, or `codex app-server` from this lane. Those paths use a detached broker whose MCP children can survive a completed task.
 - One codex invocation per task, performed by the foreground blocking Bash call, unless the caller explicitly decomposed it.
 - Never claim completion without re-running the verification yourself. "Codex said it works" is forbidden as evidence.
+- A failing gate may be reported as real only when the wrapper-side execution of the same Host-authorized command also fails. If the rerun is impossible, use `STATUS: partial` and `FAILURE CLASSIFICATION: unresolved`.
 - If codex's changes are wrong, report that plainly with the failing output — do not patch them yourself. Fix decisions belong to the caller.
 - If the task turns out to be architectural — the spec itself is wrong — stop and report; that decision belongs to the Opus architect or `claude-advisor` upstream.
