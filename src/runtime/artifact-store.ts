@@ -705,6 +705,26 @@ export class ArtifactStore {
     await this.writeJson("manifest.json", sanitizeRunManifest(manifest));
   }
 
+  async promoteTerminalArtifacts(args: {
+    result: AttemptResult;
+    manifest: RunManifest;
+  }): Promise<void> {
+    if (args.result.runId !== this.runId) {
+      throw new RuntimeError("attempt result run id does not match artifact store");
+    }
+    if (args.manifest.runId !== this.runId) {
+      throw new RuntimeError("run manifest id does not match artifact store");
+    }
+    if (await this.readDecision(this.runId) !== null) {
+      throw new RuntimeError("terminal artifacts cannot be promoted after a decision");
+    }
+    const result = sanitizeAttemptResult(args.result);
+    verifyAttemptResult(result, this.runId);
+    const manifest = sanitizeRunManifest(args.manifest);
+    await this.replaceJson("result.json", result);
+    await this.replaceJson("manifest.json", manifest);
+  }
+
   async readResult(runId: string): Promise<AttemptResult | null> {
     validateComponent(runId, "run id");
     const runDirectory = path.join(this.runsRoot, runId);

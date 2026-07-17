@@ -27,6 +27,7 @@ import {
 import type { ReviewReport } from "../../src/pipeline/report-types.js";
 import type { RoleRunArgs, RoleRunResult } from "../../src/pipeline/role-runner.js";
 import { ArtifactStore } from "../../src/runtime/artifact-store.js";
+import { buildRunManifest } from "../../src/runtime/run-manifest.js";
 import type { AcceptanceVerifierLike } from "../../src/runtime/attempt-runtime.js";
 import { clearRegisteredSecrets } from "../../src/runtime/redaction.js";
 
@@ -206,10 +207,28 @@ function fakeAttempt(runId: string, edit: (repo: string) => Promise<void>) {
     await runGit(repo, ["add", "-A"]);
     await runGit(repo, ["commit", "-q", "-m", "candidate"]);
     const candidateCommit = await runGit(repo, ["rev-parse", "HEAD"]);
-    return attemptResult(
+    const result = attemptResult(
       runId,
       await artifactFor(repo, runId, baselineCommit, candidateCommit),
     );
+    // Mirror AttemptRuntime, which archives result.json + manifest.json before
+    // the pipeline runs; candidate promotion reads and replaces both.
+    const store = new ArtifactStore(runId);
+    await store.writeResult(result);
+    await store.writeManifest(buildRunManifest({
+      runId,
+      repoRoot: repo,
+      baseCommitOid: baselineCommit,
+      candidateManifestHash: result.candidate!.manifestHash,
+      producer: { id: "stub", version: "1", model: null },
+      effectivePolicy: { isolation: "temporary-home", retries: 0 },
+      repositoryInstructions: [],
+      prompt: "test",
+      executionPolicy: { network: "denied", writeAllowlist: ["**"] },
+      environment: [],
+      packagedVerifier: { version: "1", content: "test" },
+    }));
+    return result;
   };
 }
 

@@ -1,5 +1,6 @@
 import {
   mkdtemp,
+  readFile,
   realpath,
   rm,
   writeFile,
@@ -374,6 +375,7 @@ describe.runIf(process.platform === "darwin")("end-to-end review pipeline", () =
       manifest!.candidateManifestHash!,
       deps,
     )).resolves.toMatchObject({ integration: "applied" });
+    await expect(readFile(path.join(repo, "a.txt"), "utf8")).resolves.toBe("fixed\n");
   });
 
   it("pipeline with an unfixable blocker ends at human-decision-required", async () => {

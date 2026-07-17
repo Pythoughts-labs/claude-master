@@ -23,6 +23,7 @@ import type { AttemptResult } from "../../src/protocol/attempt-result.js";
 import { ArtifactStore } from "../../src/runtime/artifact-store.js";
 import {
   buildRunManifest,
+  sanitizeRunManifest,
   type BuildRunManifestArgs,
 } from "../../src/runtime/run-manifest.js";
 import {
@@ -165,6 +166,45 @@ afterEach(async () => {
 });
 
 describe("ArtifactStore", () => {
+  it("promotes terminal artifacts before a decision and recomputes manifest integrity", async () => {
+    const runId = "run-promote";
+    const store = new ArtifactStore(runId);
+    const original = sampleResult(runId);
+    const promoted = { ...original, summary: "promoted result" };
+    const originalManifest = buildRunManifest(manifestArgs(runId, "/repo"));
+    const promotedManifest = { ...originalManifest, candidateManifestHash: emptyCandidateManifestHash };
+    await store.writeResult(original);
+    await store.writeManifest(originalManifest);
+
+    await store.promoteTerminalArtifacts({ result: promoted, manifest: promotedManifest });
+
+    await expect(store.readResult(runId)).resolves.toEqual(promoted);
+    await expect(store.readManifest(runId)).resolves.toEqual(sanitizeRunManifest(promotedManifest));
+  });
+
+  it("rejects terminal promotion across run ids or after a decision", async () => {
+    const runId = "run-promote-guarded";
+    const store = new ArtifactStore(runId);
+    const manifest = buildRunManifest(manifestArgs(runId, "/repo"));
+    await store.writeResult(sampleResult(runId));
+    await store.writeManifest(manifest);
+
+    await expect(store.promoteTerminalArtifacts({
+      result: sampleResult("different-run"),
+      manifest,
+    })).rejects.toThrow(/run id/i);
+    await expect(store.promoteTerminalArtifacts({
+      result: sampleResult(runId),
+      manifest: buildRunManifest(manifestArgs("different-run", "/repo")),
+    })).rejects.toThrow(/manifest id/i);
+
+    await store.writeDecision({ decision: "accepted", recordedAt: new Date().toISOString() });
+    await expect(store.promoteTerminalArtifacts({
+      result: { ...sampleResult(runId), summary: "too late" },
+      manifest,
+    })).rejects.toThrow(/after a decision/i);
+  });
+
   it("creates each missing plugin-data directory before archiving", async () => {
     const parent = await mkdtemp(join(tmpdir(), "claude-architect-missing-state-"));
     temporaryPaths.push(parent);

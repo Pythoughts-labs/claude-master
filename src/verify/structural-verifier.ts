@@ -140,7 +140,10 @@ function isAllowed(pathname: string, writeAllowlist: string[], forbiddenScope: s
     && !forbiddenScope.some(pattern => globMatches(pattern, pathname, true));
 }
 
-async function recomputeManifest(args: StructuralVerifyArgs): Promise<{
+export async function recomputeManifest(args: Pick<
+  StructuralVerifyArgs,
+  "worktreePath" | "baseCommitOid" | "artifact"
+>): Promise<{
   changedPaths: ChangedPath[];
   manifestHash: string;
   rawDiff: RawDiffEntry[];

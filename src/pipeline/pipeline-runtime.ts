@@ -1,8 +1,7 @@
-import { createHash } from "node:crypto";
 import { git, type GitResult } from "../git/git-exec.js";
 import { WorktreeManager } from "../git/worktree-manager.js";
 import { getPlatformServices } from "../platform/select-platform.js";
-import type { CandidateArtifact, ChangedPath, AttemptResult } from "../protocol/attempt-result.js";
+import type { CandidateArtifact, AttemptResult } from "../protocol/attempt-result.js";
 import {
   resolveReviewConfig,
   type DelegationSpec,
@@ -17,7 +16,11 @@ import {
 import { ArtifactStore } from "../runtime/artifact-store.js";
 import { RuntimeError } from "../util/errors.js";
 import { projectVerify } from "../verify/project-verifier.js";
-import { structuralVerify, type StructuralFailure } from "../verify/structural-verifier.js";
+import {
+  recomputeManifest,
+  structuralVerify,
+  type StructuralFailure,
+} from "../verify/structural-verifier.js";
 import { consolidate, type ConsolidationResult } from "./consolidator.js";
 import { evaluateGates, type GateResult } from "./gates.js";
 import type {
@@ -184,55 +187,6 @@ function globMatches(pattern: string, candidate: string): boolean {
   return new RegExp(`${expression}$`).test(candidate);
 }
 
-function splitNul(value: string): string[] {
-  const fields = value.split("\0");
-  if (fields.at(-1) === "") fields.pop();
-  return fields;
-}
-
-function changeType(status: string): ChangedPath["changeType"] {
-  if (status === "A") return "added";
-  if (status === "D") return "deleted";
-  return "modified";
-}
-
-async function changedPathsFor(
-  worktreePath: string,
-  baselineCommit: string,
-  candidateCommit: string,
-): Promise<ChangedPath[]> {
-  const fields = splitNul(await checkedGit(worktreePath, [
-    "diff",
-    "--name-status",
-    "--no-renames",
-    "-z",
-    `${baselineCommit}..${candidateCommit}`,
-  ]));
-  if (fields.length % 2 !== 0) {
-    throw new RuntimeError("git diff returned invalid name-status output");
-  }
-
-  const changes: ChangedPath[] = [];
-  for (let index = 0; index < fields.length; index += 2) {
-    const status = fields[index];
-    const pathname = fields[index + 1];
-    if (status === undefined || pathname === undefined) {
-      throw new RuntimeError("git diff returned an incomplete name-status record");
-    }
-    const sourceCommit = status === "D" ? baselineCommit : candidateCommit;
-    const entry = (await checkedGit(worktreePath, ["ls-tree", sourceCommit, "--", pathname])).trim();
-    const match = /^(\d{6})\s+blob\s+([0-9a-f]+)\t/.exec(entry);
-    if (match === null) throw new RuntimeError(`git ls-tree omitted changed path: ${pathname}`);
-    changes.push({
-      path: pathname,
-      changeType: changeType(status),
-      mode: match[1] ?? "",
-      contentHash: status === "D" ? null : match[2] ?? null,
-    });
-  }
-  return changes.sort((left, right) => left.path.localeCompare(right.path));
-}
-
 async function candidateArtifact(args: {
   worktreePath: string;
   baselineCommit: string;
@@ -240,12 +194,7 @@ async function candidateArtifact(args: {
   anchorRef: string;
   diffText: string;
 }): Promise<CandidateArtifact> {
-  const changedPaths = await changedPathsFor(
-    args.worktreePath,
-    args.baselineCommit,
-    args.candidateCommit,
-  );
-  return {
+  const artifact: CandidateArtifact = {
     baseCommitOid: args.baselineCommit,
     candidateTreeOid: (await checkedGit(
       args.worktreePath,
@@ -253,9 +202,19 @@ async function candidateArtifact(args: {
     )).trim(),
     candidateCommitOid: args.candidateCommit,
     anchorRef: args.anchorRef,
-    manifestHash: createHash("sha256").update(JSON.stringify(changedPaths)).digest("hex"),
-    changedPaths,
+    manifestHash: "",
+    changedPaths: [],
     patch: args.diffText,
+  };
+  const canonical = await recomputeManifest({
+    worktreePath: args.worktreePath,
+    baseCommitOid: args.baselineCommit,
+    artifact,
+  });
+  return {
+    ...artifact,
+    changedPaths: canonical.changedPaths,
+    manifestHash: canonical.manifestHash,
   };
 }
 
@@ -496,6 +455,7 @@ export async function runPipeline(
 
   const { reviewers, maxRounds } = resolveReviewConfig(spec);
   const store = new ArtifactStore(attempt.runId);
+  let finalAttempt = attempt;
   const rounds: PipelineRound[] = [];
   const baselineCommit = attempt.candidate.baseCommitOid;
   let currentCandidateCommit = attempt.candidate.candidateCommitOid;
@@ -613,11 +573,51 @@ export async function runPipeline(
     }
   }
 
+  if (currentCandidateCommit !== attempt.candidate.candidateCommitOid) {
+    const finalTree = (await checkedGit(
+      checkoutPath,
+      ["rev-parse", `${currentCandidateCommit}^{tree}`],
+    )).trim();
+    const canonicalCommit = (await checkedGit(checkoutPath, [
+      "commit-tree",
+      finalTree,
+      "-p",
+      baselineCommit,
+      "-m",
+      `candidate ${attempt.runId}`,
+    ])).trim();
+    await checkedGit(checkoutPath, [
+      "update-ref",
+      attempt.candidate.anchorRef,
+      canonicalCommit,
+      attempt.candidate.candidateCommitOid,
+    ]);
+    currentCandidateCommit = canonicalCommit;
+    const diffText = await checkedGit(
+      checkoutPath,
+      ["diff", `${baselineCommit}..${canonicalCommit}`],
+    );
+    const candidate = await candidateArtifact({
+      worktreePath: checkoutPath,
+      baselineCommit,
+      candidateCommit: canonicalCommit,
+      anchorRef: attempt.candidate.anchorRef,
+      diffText,
+    });
+    const manifest = await store.readManifest(attempt.runId);
+    if (manifest === null) throw new RuntimeError("run manifest is missing during promotion");
+    finalAttempt = { ...attempt, candidate };
+    await store.promoteTerminalArtifacts({
+      result: finalAttempt,
+      manifest: { ...manifest, candidateManifestHash: candidate.manifestHash },
+    });
+  }
+
   const verified = await verifyCandidate({
     checkoutPath,
     spec,
     deps,
-    attempt,
+    attempt: finalAttempt,
     baselineCommit,
     candidateCommit: currentCandidateCommit,
   });
@@ -635,7 +635,7 @@ export async function runPipeline(
   const result: PipelineResult = {
     runId: attempt.runId,
     status: gate.decisionReady ? "decision-ready" : "human-decision-required",
-    attempt,
+    attempt: finalAttempt,
     rounds,
     verification: verified.verification,
     gate,
