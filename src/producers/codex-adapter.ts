@@ -257,6 +257,12 @@ export class CodexAdapter implements ProducerAdapter {
       "sandbox_workspace_write.exclude_tmpdir_env_var=true",
       "-c",
       "sandbox_workspace_write.exclude_slash_tmp=true",
+      ...(ctx.extraWritableRoots === undefined || ctx.extraWritableRoots.length === 0
+        ? []
+        : [
+          "-c",
+          `sandbox_workspace_write.writable_roots=${JSON.stringify(ctx.extraWritableRoots)}`,
+        ]),
       "-c",
       'shell_environment_policy.inherit="none"',
       "-c",

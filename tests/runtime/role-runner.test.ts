@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -91,6 +91,7 @@ class FakeAdapter implements ProducerAdapter {
   readonly tempHomes: string[] = [];
   readonly spawnedCommands: string[] = [];
   readonly readOnlyRequests: boolean[] = [];
+  readonly extraWritableRootRequests: Array<string[] | undefined> = [];
 
   constructor(private readonly options: FakeAdapterOptions = {}) {}
 
@@ -102,6 +103,7 @@ class FakeAdapter implements ProducerAdapter {
     this.invocationCount += 1;
     if (ctx.tempHome !== undefined) this.tempHomes.push(ctx.tempHome);
     this.readOnlyRequests.push(ctx.readOnly === true);
+    this.extraWritableRootRequests.push(ctx.extraWritableRoots);
     return {
       executable: nodeExecutable,
       args: [],
@@ -330,6 +332,23 @@ describe("runRole", () => {
     expect(result.failure).toBe("producer-failure");
     expect(adapter.spawnCount).toBe(2);
     expect(adapter.invocationCount).toBe(2);
+  });
+
+  it("passes linked-worktree git metadata roots to the fixer", async () => {
+    const gitDir = join(await temporaryDirectory("ca-role-git-"), "worktrees", "fix");
+    const commonDir = join(gitDir, "..", "..");
+    await mkdir(gitDir, { recursive: true });
+    await mkdir(join(commonDir, "objects"));
+    await writeFile(join(worktreePath, ".git"), `gitdir: ${gitDir}\n`);
+    await writeFile(join(gitDir, "commondir"), "../..\n");
+    const adapter = new FakeAdapter();
+
+    await runRole(argsWith(adapter, "fixer"));
+
+    expect(adapter.extraWritableRootRequests).toEqual([[
+      gitDir,
+      join(commonDir, "objects"),
+    ]]);
   });
 
   it("recovers when the retry succeeds", async () => {

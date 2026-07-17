@@ -4,6 +4,7 @@ import type { PlatformServices } from "../platform/platform-services.js";
 import { getPlatformServices } from "../platform/select-platform.js";
 import type { VerificationCommand } from "../protocol/delegation-spec.js";
 import { appliesToPlatform, executeCommand, resolveCommandCwd } from "./project-verifier.js";
+import { linkPrimaryDependencies, type DependencyLink } from "./dependency-link.js";
 
 export interface BaselineCommandResult {
   id: string;
@@ -14,6 +15,7 @@ export interface BaselineCommandResult {
 export interface BaselineReport {
   baselineCommitOid: string;
   commands: BaselineCommandResult[];
+  dependencyLink: DependencyLink;
 }
 
 export interface BaselineVerifyArgs {
@@ -38,6 +40,7 @@ export async function verifyBaseline(args: BaselineVerifyArgs): Promise<Baseline
   const materialized = await manager.create(args.headCommitOid);
   let primaryError: unknown;
   try {
+    const dependencyLink = await linkPrimaryDependencies(args.repoRoot, materialized.path);
     const commands: BaselineCommandResult[] = [];
     for (let index = 0; index < args.commands.length; index += 1) {
       const command = args.commands[index]!;
@@ -57,7 +60,7 @@ export async function verifyBaseline(args: BaselineVerifyArgs): Promise<Baseline
         ok: !executed.failed,
       });
     }
-    return { baselineCommitOid: args.headCommitOid, commands };
+    return { baselineCommitOid: args.headCommitOid, commands, dependencyLink };
   } catch (error) {
     primaryError = error;
     throw error;

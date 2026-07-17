@@ -50,6 +50,7 @@ export interface ProbeContext {
 
 export interface InvocationContext {
   worktreePath: string;
+  extraWritableRoots?: string[];
   runId: string;
   tempHome?: string;
   capabilityReport: CapabilityReport;

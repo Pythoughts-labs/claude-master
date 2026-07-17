@@ -24,6 +24,7 @@ import {
   type PipelineRole,
   type RolePackage,
 } from "./role-prompts.js";
+import { resolveLinkedWorktreeWritableRoots } from "./git-writable-roots.js";
 
 export interface RoleRunArgs {
   role: PipelineRole;
@@ -145,6 +146,9 @@ export async function runRole(args: RoleRunArgs): Promise<RoleRunResult> {
   }
 
   const readOnly = READ_ONLY_ROLES.has(args.role);
+  const extraWritableRoots = args.role === "fixer"
+    ? await resolveLinkedWorktreeWritableRoots(args.worktreePath)
+    : [];
   // Producers with a native sandbox (Codex) must confine read-only roles
   // themselves: wrapping them in an outer Seatbelt profile EPERM-crashes their
   // internal sandbox init. Producers without one get the HOST's read-only
@@ -176,6 +180,7 @@ export async function runRole(args: RoleRunArgs): Promise<RoleRunResult> {
       tempHome = await args.ps.createSecureTempDirectory();
       let invocation = adapter.buildInvocation(roleSpec, {
         worktreePath: args.worktreePath,
+        ...(extraWritableRoots.length === 0 ? {} : { extraWritableRoots }),
         runId: args.runId,
         tempHome,
         capabilityReport: report,

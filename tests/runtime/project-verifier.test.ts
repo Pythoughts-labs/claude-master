@@ -31,16 +31,19 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
   return result.stdout.trim();
 }
 
-async function frozenFixture(): Promise<Fixture> {
+async function frozenFixture(candidateLock?: string): Promise<Fixture> {
   const root = await temporaryDirectory("ca-project-verifier-");
   const repoRoot = join(root, "repo");
   const producerWorktree = join(root, "producer-worktree");
   await mkdir(repoRoot);
   await runGit(repoRoot, ["init", "-q"]);
   await writeFile(join(repoRoot, "a.txt"), "hello\n");
-  await writeFile(join(repoRoot, ".gitignore"), "ignored-output/\n");
+  await writeFile(join(repoRoot, ".gitignore"), "ignored-output/\nnode_modules/\n");
+  await writeFile(join(repoRoot, "package-lock.json"), "{}\n");
   await runGit(repoRoot, ["add", "-A"]);
   await runGit(repoRoot, ["commit", "-q", "-m", "initial"]);
+  await mkdir(join(repoRoot, "node_modules"));
+  await writeFile(join(repoRoot, "node_modules", "sentinel"), "safe\n");
   const baseCommitOid = await runGit(repoRoot, ["rev-parse", "HEAD"]);
   await runGit(repoRoot, [
     "worktree",
@@ -50,13 +53,16 @@ async function frozenFixture(): Promise<Fixture> {
     producerWorktree,
     baseCommitOid,
   ]);
+  if (candidateLock !== undefined) {
+    await writeFile(join(producerWorktree, "package-lock.json"), candidateLock);
+  }
   await writeFile(join(producerWorktree, "a.txt"), "candidate\n");
   const frozen = await freezeCandidate({
     repoRoot,
     worktreePath: producerWorktree,
     baseCommitOid,
     runId: "project-verifier",
-    writeAllowlist: ["a.txt"],
+    writeAllowlist: ["a.txt", "package-lock.json"],
     forbiddenScope: [],
   });
   expect(frozen.ok).toBe(true);
@@ -119,12 +125,26 @@ describe("projectVerify", () => {
         skipped: false,
       }),
     ]);
+    expect(result.evidence.dependencyLink).toBe("inherited");
     expect(result.commandOutcomes[0]).toMatchObject({
       stdoutRef: "logs/verification-0-stdout.log",
       stderrRef: "logs/verification-0-stderr.log",
     });
     expect(await runGit(fixture.repoRoot, ["worktree", "list", "--porcelain"]))
       .not.toContain(process.env.CLAUDE_PLUGIN_DATA);
+  });
+
+  it("records a skipped dependency link when the candidate changes the lockfile", async () => {
+    const fixture = await frozenFixture('{"changed":true}\n');
+
+    const result = await projectVerify({
+      repoRoot: fixture.repoRoot,
+      artifact: fixture.artifact,
+      commands: [command()],
+    });
+
+    expect(result.failures).toEqual([]);
+    expect(result.evidence.dependencyLink).toBe("skipped-lockfile-mismatch");
   });
 
   it("resolves and runs git by name", async () => {

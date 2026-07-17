@@ -13,6 +13,7 @@ import type { VerificationCommand } from "../protocol/delegation-spec.js";
 import { registerSensitiveEnvironment, WIN32_ESSENTIAL_ENV } from "../runtime/environment-policy.js";
 import { redact } from "../runtime/redaction.js";
 import { RuntimeError } from "../util/errors.js";
+import { linkPrimaryDependencies, type DependencyLink } from "./dependency-link.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 1_000_000;
 const MAX_DIAGNOSTIC_LENGTH = 2_000;
@@ -60,7 +61,7 @@ export interface ProjectVerifyResult {
   commandOutcomes: CommandOutcome[];
   mutated: boolean;
   failures: string[];
-  evidence: { commands: ProjectCommandEvidence[] };
+  evidence: { commands: ProjectCommandEvidence[]; dependencyLink: DependencyLink };
   outputLogs: ProjectOutputLog[];
 }
 
@@ -284,6 +285,7 @@ export async function projectVerify(args: ProjectVerifyArgs): Promise<ProjectVer
   const materialized = await manager.create(args.artifact.candidateCommitOid);
   let primaryError: unknown;
   try {
+    const dependencyLink = await linkPrimaryDependencies(args.repoRoot, materialized.path);
     const materializedTree = (await checkedGit(
       materialized.path,
       ["rev-parse", "HEAD^{tree}"],
@@ -293,7 +295,7 @@ export async function projectVerify(args: ProjectVerifyArgs): Promise<ProjectVer
         commandOutcomes: [],
         mutated: false,
         failures: ["candidate-materialization-mismatch"],
-        evidence: { commands: [] },
+        evidence: { commands: [], dependencyLink },
         outputLogs: [],
       };
     }
@@ -346,9 +348,15 @@ export async function projectVerify(args: ProjectVerifyArgs): Promise<ProjectVer
         ]),
         checkedGit(materialized.path, ["rev-parse", "--verify", "HEAD"]),
       ]);
+      // The inherited node_modules symlink is Host-created, not a command
+      // mutation; gitignore's `node_modules/` dir pattern does not match a
+      // symlink, so it must be excluded here explicitly.
+      const records = status.split("\0").filter(record =>
+        record.length > 0
+        && !(dependencyLink === "inherited" && /^[?!] node_modules$/.test(record)));
       const disallowedRecords = command.allowedMutations === "ignored-paths"
-        ? status.split("\0").filter(record => record.length > 0 && !record.startsWith("! "))
-        : status.length > 0 ? [status] : [];
+        ? records.filter(record => !record.startsWith("! "))
+        : records;
       if (disallowedRecords.length > 0 || currentHead.trim() !== args.artifact.candidateCommitOid) {
         mutated = true;
         failures.push("verification-mutated");
@@ -360,7 +368,7 @@ export async function projectVerify(args: ProjectVerifyArgs): Promise<ProjectVer
       commandOutcomes,
       mutated,
       failures,
-      evidence: { commands: commandEvidence },
+      evidence: { commands: commandEvidence, dependencyLink },
       outputLogs,
     };
   } catch (error) {

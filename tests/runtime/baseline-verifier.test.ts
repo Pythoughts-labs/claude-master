@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,8 +19,12 @@ async function fixture(): Promise<{ repoRoot: string; headCommitOid: string }> {
     expect((await git(repoRoot, args)).exitCode).toBe(0);
   }
   await writeFile(join(repoRoot, "a.txt"), "baseline\n");
+  await writeFile(join(repoRoot, ".gitignore"), "node_modules/\n");
+  await writeFile(join(repoRoot, "package-lock.json"), "{}\n");
   expect((await git(repoRoot, ["add", "-A"])).exitCode).toBe(0);
   expect((await git(repoRoot, ["commit", "-q", "-m", "initial"])).exitCode).toBe(0);
+  await mkdir(join(repoRoot, "node_modules"));
+  await writeFile(join(repoRoot, "node_modules", "sentinel"), "safe\n");
   const head = await git(repoRoot, ["rev-parse", "HEAD"]);
   expect(head.exitCode).toBe(0);
   return { repoRoot, headCommitOid: head.stdout.trim() };
@@ -49,6 +53,7 @@ describe("verifyBaseline", () => {
     await expect(verifyBaseline({ ...repo, commands: [command(0)] })).resolves.toEqual({
       baselineCommitOid: repo.headCommitOid,
       commands: [{ id: "exit-0", exitCode: 0, ok: true }],
+      dependencyLink: "inherited",
     });
   });
 

@@ -259,6 +259,7 @@ describe("CodexAdapter", () => {
     );
     expect(invocation.args).toContain("sandbox_workspace_write.exclude_tmpdir_env_var=true");
     expect(invocation.args).toContain("sandbox_workspace_write.exclude_slash_tmp=true");
+    expect(invocation.args.some(arg => arg.startsWith("sandbox_workspace_write.writable_roots="))).toBe(false);
     expect(invocation.args.at(-1)).toBe("-");
     expect(invocation.args.join(" ")).not.toContain(spec.objective);
     expect(invocation.stdin).toContain(spec.objective);
@@ -276,6 +277,17 @@ describe("CodexAdapter", () => {
       "SSL_CERT_FILE",
     ]);
     expect(invocation.network).toBe("denied");
+  });
+
+  it("renders additional writable roots for linked-worktree git metadata", () => {
+    const context = invocationContext();
+    context.extraWritableRoots = ["/repo/.git/worktrees/fix", "/repo/.git/objects"];
+
+    const invocation = new CodexAdapter().buildInvocation(sampleSpec(), context);
+
+    expect(invocation.args).toContain(
+      'sandbox_workspace_write.writable_roots=["/repo/.git/worktrees/fix","/repo/.git/objects"]',
+    );
   });
 
   it("reports a missing executable without spawning or guessing auth state", async () => {
