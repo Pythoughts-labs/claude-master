@@ -19,10 +19,7 @@ import {
 } from "../../src/mcp/tools.js";
 import type { ResolvedExecutable } from "../../src/platform/platform-services.js";
 import { getPlatformServices } from "../../src/platform/select-platform.js";
-import {
-  FAILURE_PRECEDENCE,
-  type FailureClassification,
-} from "../../src/protocol/attempt-result.js";
+import type { FailureClassification } from "../../src/protocol/attempt-result.js";
 import type { DelegationSpec } from "../../src/protocol/delegation-spec.js";
 import type {
   CapabilityReport,
@@ -298,8 +295,22 @@ describe("P0-A end-to-end vertical slice", () => {
 
   it("surfaces all canonical failure classifications through the delegate handler", async () => {
     const observed: FailureClassification[] = [];
+    // This intentionally mirrors FAILURE_PRECEDENCE so a production reordering or removal fails this test.
+    const expectedFailurePrecedence: FailureClassification[] = [
+      "invalid-specification",
+      "environment-defect",
+      "unavailable",
+      "authentication-required",
+      "spawn-failure",
+      "cancelled",
+      "timeout",
+      "sandbox-violation",
+      "invalid-output",
+      "producer-failure",
+      "verification-failure",
+    ];
 
-    for (const classification of FAILURE_PRECEDENCE) {
+    for (const classification of expectedFailurePrecedence) {
       if (classification === "invalid-specification") {
         const invalid = await handleDelegate(
           "/checkout-not-needed-for-invalid-spec",
@@ -381,7 +392,7 @@ describe("P0-A end-to-end vertical slice", () => {
       observed.push(classification);
     }
 
-    expect(observed).toEqual([...FAILURE_PRECEDENCE]);
+    expect(observed).toEqual(expectedFailurePrecedence);
   }, 90_000);
 
   it("structures the nested-delegation guard as a handler error", async () => {

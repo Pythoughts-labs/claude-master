@@ -14,7 +14,8 @@ const agents = [
   ["OpenCode", "pythinker", ".opencode/agents/pythinker-implementer.md", "run-pythinker-isolated"],
 ];
 
-const claudeLaneFiles = agents.slice(0, 4).map(([, , file]) => file);
+const fullContractLaneFiles = agents.map(([, , file]) => file);
+const openCodeLaneFiles = agents.slice(4).map(([, , file]) => file);
 const codexLaneFiles = [
   "agents/codex-implementer.md",
   ".opencode/agents/codex-implementer.md",
@@ -26,6 +27,39 @@ function read(relativePath) {
 
 function requirePattern(source, pattern, context) {
   assert.match(source, pattern, context);
+}
+
+const negatingToken = /\b(?:no|never|not|don['’]t|do not|avoid)\b/i;
+
+function requireNormativeLine(source, pattern, context) {
+  const flags = pattern.flags.replace(/[gy]/g, "");
+  const linePattern = new RegExp(pattern.source, flags);
+  const match = source.split("\n").find((line) => {
+    const result = linePattern.exec(line);
+    return result && !negatingToken.test(line.slice(0, result.index));
+  });
+
+  assert.ok(match, context);
+}
+
+function forbidPermissiveBackgroundMentions(source, context) {
+  const mentionPattern = /`run_in_background`|\bbackground(?:ed|ing|s|-wait)?\b|\bMonitor\b|deferred TaskOutput|wait for notification/gi;
+
+  for (const line of source.split("\n")) {
+    for (const mention of line.matchAll(mentionPattern)) {
+      const sentenceStart = Math.max(
+        line.lastIndexOf(".", mention.index),
+        line.lastIndexOf("!", mention.index),
+        line.lastIndexOf("?", mention.index),
+        line.lastIndexOf(";", mention.index),
+      ) + 1;
+      assert.match(
+        line.slice(sentenceStart, mention.index),
+        negatingToken,
+        `${context}: background waits/monitors may appear only in prohibition sentences: ${line}`,
+      );
+    }
+  }
 }
 
 function shellFenceLines(markdown) {
@@ -127,14 +161,14 @@ for (const [host, lane, file, adapter] of agents) {
       `${context}: missing executable ${adapter}.sh delegation`,
     );
   }
-  requirePattern(source, /git status(?: --short)?/i, `${context}: missing actual git status inspection`);
-  requirePattern(source, /git diff/i, `${context}: missing actual git diff inspection`);
-  requirePattern(
+  requireNormativeLine(source, /git status(?: --short)?/i, `${context}: missing affirmative actual git status inspection`);
+  requireNormativeLine(source, /git diff/i, `${context}: missing affirmative actual git diff inspection`);
+  requireNormativeLine(
     source,
     /independent(?:ly)? (?:re-?run|rerun)|run the spec's verification command yourself/i,
-    `${context}: missing independent verification rerun`,
+    `${context}: missing affirmative independent verification rerun`,
   );
-  requirePattern(
+  requireNormativeLine(
     source,
     /(?:producer|codex|opencode|pi|pythinker)(?:'s)? (?:claim|self-report).*not evidence/i,
     `${context}: producer self-report must not count as evidence`,
@@ -159,18 +193,19 @@ for (const [host, lane, file, adapter] of agents) {
   }
 }
 
-for (const file of claudeLaneFiles) {
+for (const file of fullContractLaneFiles) {
   const source = read(file);
-  const context = `Claude ${file}`;
+  const context = `Full contract ${file}`;
 
   requirePattern(source, /### Foreground execution and turn completion — hard constraint/, `${context}: missing foreground lifecycle section`);
-  requirePattern(source, /one foreground blocking Bash call with timeout 600000ms/i, `${context}: missing mandatory Bash timeout`);
+  requireNormativeLine(source, /one foreground blocking Bash call with timeout 600000ms/i, `${context}: missing affirmative mandatory Bash timeout`);
   requirePattern(source, /Set the Bash tool's `timeout` parameter to `600000`/, `${context}: missing explicit Bash tool timeout-parameter clarifier`);
   requirePattern(source, /single Bash tool call/i, `${context}: missing single-Bash-tool-call atomicity rule for spec/runtime/producer steps`);
   requirePattern(source, /Do not use `run_in_background`[^\n]*`nohup`[^\n]*Monitor[^\n]*"wait for notification"/i, `${context}: missing Monitor/background prohibition`);
+  forbidPermissiveBackgroundMentions(source, context);
   requirePattern(source, /exactly two valid turn endings:[^\n]*full report after independent verification[^\n]*concrete blocker report/i, `${context}: missing two-valid-endings contract`);
-  requirePattern(source, /stall detection[^\n]*Every cycle must check progress by output-file growth or process CPU-time delta[^\n]*10 consecutive minutes/i, `${context}: missing PID-rejoin stall detection`);
-  requirePattern(source, /10 consecutive minutes, kill the process, then either relaunch fresh once or return a concrete blocker report/i, `${context}: missing stalled-PID kill and bounded relaunch outcome`);
+  requireNormativeLine(source, /stall detection[^\n]*Every cycle must check progress by output-file growth or process CPU-time delta[^\n]*10 consecutive minutes/i, `${context}: missing affirmative PID-rejoin stall detection`);
+  requireNormativeLine(source, /After a detected stall, at most one fresh relaunch is allowed — maximum two producer invocations total — and the lane's outer timeout is always honored over internal waits/i, `${context}: missing affirmative bounded relaunch and outer-timeout rule`);
   requirePattern(source, /### Worktree isolation and git-state discipline — hard constraint/, `${context}: missing worktree isolation and git-state discipline section`);
   requirePattern(source, /git worktree add --detach/, `${context}: missing detached worktree procedure`);
   requirePattern(source, /NEVER run tree-wide git state mutations[^\n]*`git stash`[^\n]*`git reset --hard`[^\n]*`git clean`/i, `${context}: missing shared-checkout git-state prohibition`);
@@ -180,6 +215,20 @@ for (const file of claudeLaneFiles) {
   requirePattern(source, /The producer never creates commits/, `${context}: missing producer-never-commits rule`);
   requirePattern(source, /Set the Bash tool's `timeout` parameter to `600000` explicitly/, `${context}: missing explicit Bash tool timeout parameter clarifier`);
   requirePattern(source, /outside (?:the |codex's |its )?(?:workspace-write )?sandbox/i, `${context}: missing outside-sandbox rerun rule`);
+}
+
+for (const file of openCodeLaneFiles) {
+  const source = read(file);
+  const context = `OpenCode ${file}`;
+
+  requirePattern(source, /> This is an action-first edit run\./, `${context}: missing action-first preamble`);
+  requirePattern(source, /> Begin by opening the implementation files authorized in the spec\./, `${context}: missing implementation-first preamble rule`);
+  requirePattern(source, /> A plan-only final message with zero edits is a failed run\./, `${context}: missing zero-edit failure rule`);
+  requirePattern(
+    source,
+    /FAILURE CLASSIFICATION: sandbox-attributable \| real \| mixed \| unresolved \| not-applicable/,
+    `${context}: missing failure classification field`,
+  );
 }
 
 for (const file of codexLaneFiles) {

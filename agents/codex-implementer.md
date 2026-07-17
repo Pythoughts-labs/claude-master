@@ -41,7 +41,7 @@ Run the producer CLI through the isolated adapter in **one foreground blocking B
 
 Set the Bash tool's `timeout` parameter to `600000` explicitly on the tool call — the tool's ~2-minute default silently kills the producer mid-run, and a shell `timeout` command or a number written only in prose is not a substitute.
 
-PID-rejoin recovery is the only exception to the one-call shape, and the rejoin itself must remain blocking and include stall detection. Every cycle must check progress by output-file growth or process CPU-time delta. If neither changes for 10 consecutive minutes, kill the process, then either relaunch fresh once or return a concrete blocker report. Never wait indefinitely on a silent PID.
+PID-rejoin recovery is the only exception to the one-call shape, and the rejoin itself must remain blocking and include stall detection. Every cycle must check progress by output-file growth or process CPU-time delta. If neither changes for 10 consecutive minutes, kill the process. After a detected stall, at most one fresh relaunch is allowed — maximum two producer invocations total — and the lane's outer timeout is always honored over internal waits; otherwise return a concrete blocker report. Never wait indefinitely on a silent PID.
 
 ### Worktree isolation and git-state discipline — hard constraint
 
