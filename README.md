@@ -2,11 +2,23 @@
   <img src="assets/banner.svg?v=6" alt="Claude Architect: CLI coding-agent orchestration for Claude" width="880">
 </p>
 
-# Claude Architect
+<p align="center">
+  <a href="#available-skills-agents-and-mcp-tools"><img alt="codex-implementer" src="https://img.shields.io/badge/lane-codex--implementer-d97757?style=flat-square&labelColor=0b0e14"></a>
+  <a href="#available-skills-agents-and-mcp-tools"><img alt="opencode-implementer" src="https://img.shields.io/badge/lane-opencode--implementer-58a6ff?style=flat-square&labelColor=0b0e14"></a>
+  <a href="#available-skills-agents-and-mcp-tools"><img alt="pi-implementer" src="https://img.shields.io/badge/lane-pi--implementer%20%C2%B7%20%240-3fb950?style=flat-square&labelColor=0b0e14"></a>
+  <a href="#available-skills-agents-and-mcp-tools"><img alt="pythinker-implementer" src="https://img.shields.io/badge/lane-pythinker--implementer-d29922?style=flat-square&labelColor=0b0e14"></a>
+  <a href="#available-skills-agents-and-mcp-tools"><img alt="claude-advisor" src="https://img.shields.io/badge/advisor-claude--advisor-f85149?style=flat-square&labelColor=0b0e14"></a>
+  <a href="#quick-start"><img alt="delegate skill" src="https://img.shields.io/badge/skill-delegate-e6edf3?style=flat-square&labelColor=0b0e14"></a>
+</p>
+
+<p align="center">
+  <img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-plugin-d97757?style=flat-square&labelColor=0b0e14">
+  <img alt="OpenCode" src="https://img.shields.io/badge/OpenCode-native-58a6ff?style=flat-square&labelColor=0b0e14">
+  <img alt="version" src="https://img.shields.io/badge/version-0.15.0-9aa4b2?style=flat-square&labelColor=0b0e14">
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-3fb950?style=flat-square&labelColor=0b0e14">
+</p>
 
 Verified coding-agent delegation for Claude Code: isolate untrusted Producers, freeze their output, verify it independently, and leave acceptance to you.
-
-![version 0.15.0](https://img.shields.io/badge/version-0.15.0-9aa4b2?style=flat-square&labelColor=0b0e14) ![license MIT](https://img.shields.io/badge/license-MIT-3fb950?style=flat-square&labelColor=0b0e14)
 
 ## Status
 
