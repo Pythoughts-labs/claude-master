@@ -76,6 +76,7 @@ write_timeout_stub() {
 
   cat > "$bin/timeout" <<EOF
 #!$BASH_BIN
+case "\$1" in --kill-after=*) shift ;; esac
 printf '%s\n' "\$1" > "\$LANE_TEST_TIMEOUT"
 shift
 printf '%s\0' "\$@" > "\$LANE_TEST_WRAPPED_ARGS"

@@ -103,7 +103,10 @@ set -e
 
 terminate_process_group "$DELEGATED_PID"
 trap - EXIT INT TERM HUP
-if [[ "$STATUS" -eq 137 ]]; then
+# Only a deadline enforced by the timeout wrapper turns 137 (KILL after the
+# grace period) into the timeout result; a SIGKILL without an active timeout
+# stays a genuine signal category.
+if (( ${#TIMEOUT_PREFIX[@]} )) && [[ "$STATUS" -eq 137 ]]; then
   STATUS=124
 fi
 record_run || true

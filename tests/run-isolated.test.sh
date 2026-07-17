@@ -161,6 +161,8 @@ assert_timeout_wrapper_forwards_command() {
   ln -s "$PERL_BIN" "$bin/perl"
   cat > "$bin/timeout" <<EOF
 #!$BASH_BIN
+printf '%s\n' "\$1" > "$state/kill-after"
+shift
 printf '%s\n' "\$1" > "$state/duration"
 shift
 printf '%s\0' "\$@" > "$state/wrapped-argv"
@@ -177,6 +179,7 @@ EOF
       delegated-command alpha 'two words'
 
   printf 'delegated-command\0alpha\0two words\0' > "$state/expected-argv"
+  grep -Fxq -- '--kill-after=2s' "$state/kill-after"
   grep -Fxq '17' "$state/duration"
   cmp "$state/expected-argv" "$state/wrapped-argv"
 

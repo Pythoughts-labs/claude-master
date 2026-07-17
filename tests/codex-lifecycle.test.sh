@@ -212,6 +212,8 @@ assert_requested_timeout_is_enforced() {
   ln -s "$PERL_BIN" "$bin/perl"
   cat > "$bin/timeout" <<EOF
 #!$BASH_BIN
+printf '%s\n' "\$1" > "$state/kill-after"
+shift
 printf '%s\n' "\$1" > "$state/duration"
 shift
 exec "\$@"
@@ -226,6 +228,7 @@ EOF
     "$BASH_BIN" "$ROOT/scripts/run-codex-isolated.sh" --model test-model \
     > "$state/stdout" 2> "$state/stderr"
 
+  grep -Fxq -- '--kill-after=2s' "$state/kill-after"
   grep -Fxq '900' "$state/duration"
   grep -Fxq 'started' "$state/codex-started"
 

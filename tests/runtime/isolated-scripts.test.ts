@@ -102,7 +102,7 @@ wait
     expect(await waitUntilDead(childPid)).toBe(true);
   }, 8_000);
 
-  it("maps a delegated SIGKILL exit to the timeout result", async () => {
+  it("preserves a delegated SIGKILL as a signal when no timeout is active", async () => {
     const fixture = await makeBin();
     const delegate = path.join(fixture.bin, "sigkill-self");
     await writeFile(delegate, "#!/bin/bash\nkill -KILL $$\n");
@@ -113,7 +113,9 @@ wait
       RUN_TIMEOUT_SECONDS: "0",
     });
 
-    expect(result.exitCode).toBe(124);
+    // Without an active timeout wrapper, 137 is a genuine signal, not a
+    // timeout; the 137->124 remap only applies under the timeout deadline.
+    expect(result.exitCode).toBe(137);
   });
 
   it.each([
