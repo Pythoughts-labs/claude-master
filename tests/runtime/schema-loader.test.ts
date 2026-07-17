@@ -57,6 +57,32 @@ describe("schema loader", () => {
     expect(v.delegationSpec(validDelegationSpec)).toBe(true);
   });
 
+  it("rejects unknown delegation fields while preserving the environment map", () => {
+    const v = loadSchemas();
+    expect(v.delegationSpec({ ...validDelegationSpec, expectBaselineFailures: true })).toBe(false);
+    expect(v.delegationSpec({
+      ...validDelegationSpec,
+      verification: [{
+        ...validDelegationSpec.verification[0],
+        environment: { CUSTOM_FLAG: "yes" },
+        typo: true,
+      }],
+    })).toBe(false);
+    expect(v.delegationSpec({
+      ...validDelegationSpec,
+      verification: [{
+        ...validDelegationSpec.verification[0],
+        environment: { CUSTOM_FLAG: "yes" },
+      }],
+    })).toBe(true);
+  });
+
+  it("encodes the edit timeout floor in the canonical schema", () => {
+    const v = loadSchemas();
+    expect(v.delegationSpec({ ...validDelegationSpec, timeoutMs: 599_999 })).toBe(false);
+    expect(v.delegationSpec({ ...validDelegationSpec, timeoutMs: 600_000 })).toBe(true);
+  });
+
   it("rejects a delegation spec with a wrong const value", () => {
     const v = loadSchemas();
     expect(
@@ -67,6 +93,23 @@ describe("schema loader", () => {
   it("accepts a valid attempt result", () => {
     const v = loadSchemas();
     expect(v.attemptResult(validAttemptResult)).toBe(true);
+  });
+
+  it("closes attempt-result command objects but preserves evidence maps", () => {
+    const v = loadSchemas();
+    expect(v.attemptResult({
+      ...validAttemptResult,
+      evidence: { verifierSpecific: { freeForm: true } },
+    })).toBe(true);
+    expect(v.attemptResult({ ...validAttemptResult, unexpected: true })).toBe(false);
+    expect(v.attemptResult({
+      ...validAttemptResult,
+      requestedVerification: [{
+        ...validDelegationSpec.verification[0],
+        expectBaselineFailure: true,
+        unexpected: true,
+      }],
+    })).toBe(false);
   });
 
   it("rejects an attempt result with a wrong status value", () => {
@@ -116,6 +159,40 @@ describe("schema loader", () => {
       failure: "verification-failure",
       candidate: preservedCandidate,
     })).toBe(true);
+    expect(v.attemptResult({
+      ...validAttemptResult,
+      failure: "verification-failure",
+      candidate: {
+        ...preservedCandidate,
+        baseCommitOid: "1".repeat(64),
+        candidateTreeOid: "2".repeat(64),
+        candidateCommitOid: "3".repeat(64),
+        changedPaths: [{
+          path: "src/example.ts",
+          changeType: "modified",
+          mode: "100644",
+          contentHash: "4".repeat(64),
+        }],
+      },
+    })).toBe(true);
+    expect(v.attemptResult({
+      ...validAttemptResult,
+      failure: "verification-failure",
+      candidate: { ...preservedCandidate, candidateCommitOid: "3".repeat(41) },
+    })).toBe(false);
+    expect(v.attemptResult({
+      ...validAttemptResult,
+      failure: "verification-failure",
+      candidate: {
+        ...preservedCandidate,
+        changedPaths: [{
+          path: "src/example.ts",
+          changeType: "modified",
+          mode: "100644",
+          contentHash: "4".repeat(41),
+        }],
+      },
+    })).toBe(false);
   });
 });
 
@@ -126,9 +203,18 @@ describe("checkVersionCompat", () => {
   });
 
   it("reports a diagnostic for a mismatched protocol version", () => {
-    const result = checkVersionCompat("0.0.1");
+    const result = checkVersionCompat("2.0.0");
     expect(result.ok).toBe(false);
     expect(typeof result.diagnostic).toBe("string");
     expect((result.diagnostic as string).length).toBeGreaterThan(0);
+  });
+
+  it("rejects every non-matching protocol version", () => {
+    for (const version of ["1.0.0", "1.99.0", "2.0.0", "not-semver"]) {
+      const result = checkVersionCompat(version);
+      expect(result.ok).toBe(false);
+      expect(result.diagnostic).toContain(`skill declares ${version}`);
+      expect(result.diagnostic).toContain(`runtime expects ${PROTOCOL_VERSION}`);
+    }
   });
 });

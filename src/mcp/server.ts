@@ -84,6 +84,28 @@ const gitReadOutput = z.object({
   diagnostic: z.string().optional(),
 });
 
+const protocolVersionInput = z.literal(PROTOCOL_VERSION, {
+  errorMap: issue => ({
+    message: "protocol version mismatch: received "
+      + (issue.code === z.ZodIssueCode.invalid_literal && issue.received !== undefined
+        ? String(issue.received)
+        : "(missing)")
+      + `, expected ${PROTOCOL_VERSION}`,
+  }),
+});
+
+export const delegateInputSchema = z.object({
+  checkoutPath: z.string(),
+  spec: z.unknown(),
+  protocolVersion: protocolVersionInput,
+}).strict();
+
+export const delegatePipelineInputSchema = z.object({
+  checkoutPath: z.string(),
+  spec: z.unknown(),
+  protocolVersion: protocolVersionInput,
+}).strict();
+
 export type ServerDependencies = ToolDependencies & DoctorDependencies & GitReadDependencies & {
   recoverStaleRuns?: typeof recoverStaleRuns;
 };
@@ -111,11 +133,7 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
     {
       title: "Delegate an implementation subtask",
       description: "Validate a Delegation Spec and run one verified attempt.",
-      inputSchema: {
-        checkoutPath: z.string(),
-        spec: z.unknown(),
-        protocolVersion: z.string().optional(),
-      },
+      inputSchema: delegateInputSchema,
       outputSchema: delegateOutput,
     },
     async ({ checkoutPath, spec, protocolVersion }, extra) => {
@@ -145,7 +163,7 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
           spec,
           {
             ...dependencies,
-            skillProtocolVersion: protocolVersion ?? dependencies.skillProtocolVersion ?? PROTOCOL_VERSION,
+            skillProtocolVersion: protocolVersion,
             ...(onProgress === undefined ? {} : { onProgress }),
           },
         ));
@@ -159,11 +177,7 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
     {
       title: "Run the fresh-context review pipeline",
       description: "Validate a Delegation Spec and run the full implement/review/fix pipeline.",
-      inputSchema: {
-        checkoutPath: z.string(),
-        spec: z.unknown(),
-        protocolVersion: z.string().optional(),
-      },
+      inputSchema: delegatePipelineInputSchema,
       outputSchema: delegatePipelineOutput,
     },
     async ({ checkoutPath, spec, protocolVersion }, extra) => {
@@ -193,7 +207,7 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
           spec,
           {
             ...dependencies,
-            skillProtocolVersion: protocolVersion ?? dependencies.skillProtocolVersion ?? PROTOCOL_VERSION,
+            skillProtocolVersion: protocolVersion,
             ...(onProgress === undefined ? {} : { onProgress }),
           },
         ));

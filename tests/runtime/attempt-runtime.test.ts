@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git } from "../../src/git/git-exec.js";
 import { verifyBaseline } from "../../src/verify/baseline-verifier.js";
-import type { ResolvedExecutable } from "../../src/platform/platform-services.js";
+import type {
+  PlatformServices,
+  ResolvedExecutable,
+} from "../../src/platform/platform-services.js";
 import { getPlatformServices } from "../../src/platform/select-platform.js";
 import type { DelegationSpec } from "../../src/protocol/delegation-spec.js";
 import { ProducerRegistry } from "../../src/producers/producer-registry.js";
@@ -288,7 +291,9 @@ describe("runAttempt", () => {
       "run-lock-before-baseline",
       {
         ps: Object.assign(Object.create(platformServices), {
-          acquireCheckoutLock: async checkout => {
+          acquireCheckoutLock: async (
+            checkout: Parameters<PlatformServices["acquireCheckoutLock"]>[0],
+          ) => {
             const lock = await platformServices.acquireCheckoutLock(checkout);
             lockHeld = true;
             return {
@@ -379,20 +384,42 @@ describe("runAttempt", () => {
     const repoRoot = await initRepo();
     const spec = validSpec();
     spec.verification[0]!.expectedExitCodes = [1];
-    spec.expectBaselineFailure = true;
+    spec.verification[0]!.expectBaselineFailure = true;
     const adapter = new FakeAdapter();
 
     const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-expected", { baselineVerifier: verifyBaseline }));
 
     expect(result.status).toBe("verified-candidate");
     expect(adapter.probeCalls).toBe(1);
-    expect(result.evidence).toMatchObject({ baseline: { commands: [{ ok: false }] } });
+    expect(result.evidence).toMatchObject({ baseline: { commands: [{ ok: true }] } });
+  });
+
+  it("does not let one expected baseline failure suppress an unrelated failure", async () => {
+    const repoRoot = await initRepo();
+    const spec = validSpec();
+    spec.verification = [
+      { ...spec.verification[0]!, id: "expected", expectedExitCodes: [1], expectBaselineFailure: true },
+      { ...spec.verification[0]!, id: "unexpected", expectedExitCodes: [1] },
+    ];
+    const adapter = new FakeAdapter();
+
+    const result = await runAttempt(repoRoot, spec, dependencies(
+      adapter,
+      "run-baseline-mixed",
+      { baselineVerifier: verifyBaseline },
+    ));
+
+    expect(result.failure).toBe("environment-defect");
+    expect(adapter.probeCalls).toBe(0);
+    expect(result.evidence).toMatchObject({
+      baseline: { commands: [{ id: "expected", ok: true }, { id: "unexpected", ok: false }] },
+    });
   });
 
   it("skips the baseline for a read-only spec", async () => {
     const repoRoot = await initRepo();
-    const spec = validSpec() as DelegationSpec & { executionMode: string };
-    spec.executionMode = "read-only";
+    const spec = validSpec();
+    (spec as unknown as { executionMode: string }).executionMode = "read-only";
     const adapter = new FakeAdapter();
 
     const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-skipped", { baselineVerifier: verifyBaseline }));
@@ -533,7 +560,9 @@ describe("runAttempt", () => {
       validSpec(),
       dependencies(new FakeAdapter(), "run-dirty-precondition", {
         ps: Object.assign(Object.create(platformServices), {
-          acquireCheckoutLock: async checkout => {
+          acquireCheckoutLock: async (
+            checkout: Parameters<PlatformServices["acquireCheckoutLock"]>[0],
+          ) => {
             const lock = await platformServices.acquireCheckoutLock(checkout);
             return {
               key: lock.key,

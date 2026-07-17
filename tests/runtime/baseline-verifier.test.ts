@@ -63,6 +63,21 @@ describe("verifyBaseline", () => {
     expect(report.commands).toEqual([{ id: "exit-1", exitCode: 1, ok: false }]);
   });
 
+  it("tolerates only commands individually marked as expected baseline failures", async () => {
+    const repo = await fixture();
+    const report = await verifyBaseline({
+      ...repo,
+      commands: [
+        { ...command(1), id: "expected", expectBaselineFailure: true },
+        { ...command(1), id: "unexpected" },
+      ],
+    });
+    expect(report.commands).toEqual([
+      { id: "expected", exitCode: 1, ok: true },
+      { id: "unexpected", exitCode: 1, ok: false },
+    ]);
+  });
+
   it("does not run commands when already cancelled", async () => {
     const repo = await fixture();
     const marker = join(repo.repoRoot, "must-not-run.txt");

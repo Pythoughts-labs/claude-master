@@ -21927,7 +21927,7 @@ var StdioServerTransport = class {
 };
 
 // src/protocol/versions.ts
-var PROTOCOL_VERSION = "1.0.0";
+var PROTOCOL_VERSION = "1.1.0";
 var DELEGATION_SPEC_VERSION = "1";
 var ATTEMPT_RESULT_VERSION = "1";
 var RUNTIME_VERSION = "0.17.0";
@@ -24304,6 +24304,7 @@ var import__ = __toESM(require__(), 1);
 var delegation_spec_v1_default = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   type: "object",
+  additionalProperties: false,
   required: [
     "specVersion",
     "objective",
@@ -24353,6 +24354,7 @@ var delegation_spec_v1_default = {
       type: "array",
       items: {
         type: "object",
+        additionalProperties: false,
         required: [
           "id",
           "executable",
@@ -24401,8 +24403,12 @@ var delegation_spec_v1_default = {
               type: "integer"
             }
           },
+          expectBaselineFailure: {
+            type: "boolean"
+          },
           platform: {
             type: "object",
+            additionalProperties: false,
             properties: {
               os: {
                 type: "array",
@@ -24432,9 +24438,6 @@ var delegation_spec_v1_default = {
       },
       minItems: 1
     },
-    expectBaselineFailure: {
-      type: "boolean"
-    },
     executionMode: {
       const: "edit"
     },
@@ -24451,6 +24454,7 @@ var delegation_spec_v1_default = {
     },
     producerOverrides: {
       type: "object",
+      additionalProperties: false,
       properties: {
         model: {
           type: "string"
@@ -24488,7 +24492,22 @@ var delegation_spec_v1_default = {
         }
       }
     }
-  }
+  },
+  allOf: [
+    {
+      if: {
+        properties: {
+          executionMode: { const: "edit" }
+        },
+        required: ["executionMode"]
+      },
+      then: {
+        properties: {
+          timeoutMs: { minimum: 6e5 }
+        }
+      }
+    }
+  ]
 };
 
 // runtime/schemas/attempt-result.v1.json
@@ -24625,9 +24644,9 @@ var attempt_result_v1_default = {
         "patch"
       ],
       properties: {
-        baseCommitOid: { type: "string" },
-        candidateTreeOid: { type: "string" },
-        candidateCommitOid: { type: "string" },
+        baseCommitOid: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+        candidateTreeOid: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+        candidateCommitOid: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
         anchorRef: { type: "string" },
         manifestHash: { type: "string" },
         changedPaths: {
@@ -24645,7 +24664,10 @@ var attempt_result_v1_default = {
         path: { type: "string" },
         changeType: { enum: ["added", "modified", "deleted"] },
         mode: { type: "string" },
-        contentHash: { type: ["string", "null"] }
+        contentHash: {
+          type: ["string", "null"],
+          pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
       }
     },
     verificationCommand: {
@@ -24676,6 +24698,7 @@ var attempt_result_v1_default = {
           type: "array",
           items: { type: "integer" }
         },
+        expectBaselineFailure: { type: "boolean" },
         platform: {
           type: "object",
           additionalProperties: false,
@@ -24754,7 +24777,7 @@ var fix_report_v1_default = {
   required: ["reportVersion", "candidateCommit", "dispositions"],
   properties: {
     reportVersion: { const: "1" },
-    candidateCommit: { type: "string", pattern: "^[0-9a-f]{40}$" },
+    candidateCommit: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
     dispositions: {
       type: "array",
       items: {
@@ -24765,7 +24788,7 @@ var fix_report_v1_default = {
           findingId: { type: "string", pattern: "^F-\\d{3,}$" },
           disposition: { enum: ["fixed", "already_satisfied", "rejected_with_evidence", "blocked", "requires_human_decision"] },
           evidence: { type: "string", minLength: 1 },
-          commit: { type: "string", pattern: "^[0-9a-f]{40}$" }
+          commit: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" }
         }
       }
     }
@@ -25117,6 +25140,14 @@ function buildReadOnlySeatbeltPolicy(args) {
     allowNetwork: true
   };
 }
+function buildWriteSeatbeltPolicy(args) {
+  return {
+    worktreePath: args.worktreePath,
+    tempHome: args.tempHome,
+    allowNetwork: true,
+    extraWritableRoots: [...args.extraWritableRoots]
+  };
+}
 function sbPath(path14) {
   for (const character of path14) {
     const codePoint = character.codePointAt(0);
@@ -25161,6 +25192,7 @@ function buildProfile(policy, additionalWritable) {
     process.env.TMPDIR ?? "/private/tmp",
     "/private/tmp",
     "/dev",
+    ...policy.extraWritableRoots ?? [],
     ...additionalWritable
   ].filter((path14) => typeof path14 === "string" && path14.length > 0).flatMap((path14) => {
     try {
@@ -25543,8 +25575,8 @@ function appliesToPlatform(command, os, arch) {
   }
   return { applies: true };
 }
-function logName(index, stream) {
-  return `verification-${index}-${stream}`;
+function logName(index, stream, prefix = "verification") {
+  return `${prefix}-${index}-${stream}`;
 }
 function logRef(name) {
   return `logs/${name}.log`;
@@ -25562,8 +25594,8 @@ function boundText(text) {
 async function executeCommand(args) {
   const { command, index, cwd, ps, now } = args;
   const registration = registerSensitiveEnvironment(command.environment ?? {});
-  const stdoutName = logName(index, "stdout");
-  const stderrName = logName(index, "stderr");
+  const stdoutName = logName(index, "stdout", args.logNamePrefix);
+  const stderrName = logName(index, "stderr", args.logNamePrefix);
   const startedAt = now();
   let executable = null;
   let exit = null;
@@ -25710,7 +25742,14 @@ async function projectVerify(args) {
         }
         continue;
       }
-      const executed = await executeCommand({ command, index, cwd, ps, now });
+      const executed = await executeCommand({
+        command,
+        index,
+        cwd,
+        ps,
+        now,
+        ...args.logNamePrefix === void 0 ? {} : { logNamePrefix: args.logNamePrefix }
+      });
       commandOutcomes.push(executed.outcome);
       commandEvidence.push(executed.evidence);
       outputLogs.push(...executed.outputLogs);
@@ -25800,7 +25839,7 @@ async function verifyBaseline(args) {
       commands.push({
         id: executed.outcome.id,
         exitCode: executed.outcome.exitCode,
-        ok: !executed.failed && !mutation.mutated,
+        ok: (!executed.failed || command.expectBaselineFailure === true) && !mutation.mutated,
         ...mutation.mutated ? { mutation: { records: mutation.records, headChanged: mutation.headChanged } } : {}
       });
       throwIfAborted(args.abortSignal);
@@ -25913,22 +25952,57 @@ function withManifestHash(body) {
     manifestHash: sha256(stableJson(sanitized))
   };
 }
-function sanitizeRunManifest(manifest) {
-  const { manifestHash: _manifestHash, ...body } = manifest;
-  return withManifestHash(body);
-}
 function isRecord2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function verifyRunManifest(value, expectedRunId) {
-  if (!isRecord2(value) || typeof value.manifestHash !== "string") {
+function hasExactKeys(value, expected) {
+  if (!isRecord2(value)) return false;
+  const actual = Object.keys(value);
+  return actual.length === expected.length && expected.every((key) => actual.includes(key));
+}
+function isNullableString(value) {
+  return value === null || typeof value === "string";
+}
+function isSha256(value) {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+function isObjectId(value) {
+  return typeof value === "string" && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+}
+function assertManifestShape(value) {
+  if (!hasExactKeys(value, [
+    "manifestVersion",
+    "runId",
+    "repoRoot",
+    "baseCommitOid",
+    "candidateManifestHash",
+    "producer",
+    "effectivePolicy",
+    "repositoryInstructions",
+    "promptHash",
+    "executionPolicy",
+    "environment",
+    "runtimeVersion",
+    "protocolVersion",
+    "schemaVersions",
+    "packagedVerifier",
+    "manifestHash"
+  ]) || value.manifestVersion !== "1" || typeof value.runId !== "string" || typeof value.repoRoot !== "string" || !isObjectId(value.baseCommitOid) || value.candidateManifestHash !== null && !isSha256(value.candidateManifestHash) || !hasExactKeys(value.producer, ["id", "version", "model"]) || !isNullableString(value.producer.id) || !isNullableString(value.producer.version) || !isNullableString(value.producer.model) || !isRecord2(value.effectivePolicy) || !Array.isArray(value.repositoryInstructions) || !value.repositoryInstructions.every((instruction) => hasExactKeys(instruction, ["path", "hash"]) && typeof instruction.path === "string" && isSha256(instruction.hash)) || !isSha256(value.promptHash) || !isRecord2(value.executionPolicy) || !Array.isArray(value.environment) || !value.environment.every((entry) => hasExactKeys(entry, ["name", "source"]) && typeof entry.name === "string" && typeof entry.source === "string") || typeof value.runtimeVersion !== "string" || typeof value.protocolVersion !== "string" || !hasExactKeys(value.schemaVersions, ["delegationSpec", "attemptResult"]) || typeof value.schemaVersions.delegationSpec !== "string" || typeof value.schemaVersions.attemptResult !== "string" || !hasExactKeys(value.packagedVerifier, ["version", "hash"]) || typeof value.packagedVerifier.version !== "string" || !isSha256(value.packagedVerifier.hash) || !isSha256(value.manifestHash)) {
     throw new RuntimeError("archived run manifest is malformed");
   }
+}
+function sanitizeRunManifest(manifest) {
+  assertManifestShape(manifest);
+  const { manifestHash: _manifestHash, ...body } = manifest;
+  return withManifestHash(body);
+}
+function verifyRunManifest(value, expectedRunId) {
+  assertManifestShape(value);
   const { manifestHash, ...body } = value;
-  if (!/^[0-9a-f]{64}$/.test(manifestHash) || sha256(stableJson(body)) !== manifestHash) {
+  if (sha256(stableJson(body)) !== manifestHash) {
     throw new RuntimeError("archived run manifest integrity check failed");
   }
-  if (body.manifestVersion !== "1" || typeof body.runId !== "string" || typeof body.repoRoot !== "string" || typeof body.baseCommitOid !== "string" || body.candidateManifestHash !== null && typeof body.candidateManifestHash !== "string" || body.runtimeVersion !== RUNTIME_VERSION || body.protocolVersion !== PROTOCOL_VERSION || !isRecord2(body.schemaVersions) || body.schemaVersions.delegationSpec !== DELEGATION_SPEC_VERSION || body.schemaVersions.attemptResult !== ATTEMPT_RESULT_VERSION) {
+  if (body.protocolVersion !== PROTOCOL_VERSION || body.schemaVersions.delegationSpec !== DELEGATION_SPEC_VERSION || body.schemaVersions.attemptResult !== ATTEMPT_RESULT_VERSION) {
     throw new RuntimeError("archived run manifest contract is invalid");
   }
   if (expectedRunId !== void 0 && body.runId !== expectedRunId) {
@@ -26221,6 +26295,9 @@ function sanitizeVerificationCommand(command) {
     network: command.network,
     expectedExitCodes: [...command.expectedExitCodes]
   };
+  if (command.expectBaselineFailure !== void 0) {
+    sanitized.expectBaselineFailure = command.expectBaselineFailure;
+  }
   if (command.allowedMutations !== void 0) {
     sanitized.allowedMutations = command.allowedMutations;
   }
@@ -26489,7 +26566,9 @@ var ArtifactStore = class {
     if (manifest.runId !== this.runId) {
       throw new RuntimeError("run manifest id does not match artifact store");
     }
-    await this.writeJson("manifest.json", sanitizeRunManifest(manifest));
+    const sanitized = sanitizeRunManifest(manifest);
+    verifyRunManifest(sanitized, this.runId);
+    await this.writeJson("manifest.json", sanitized);
   }
   async promoteTerminalArtifacts(args) {
     if (args.result.runId !== this.runId) {
@@ -26504,6 +26583,7 @@ var ArtifactStore = class {
     const result = sanitizeAttemptResult(args.result);
     verifyAttemptResult(result, this.runId);
     const manifest = sanitizeRunManifest(args.manifest);
+    verifyRunManifest(manifest, this.runId);
     await this.replaceJson("result.json", result);
     await this.replaceJson("manifest.json", manifest);
   }
@@ -26627,7 +26707,7 @@ var ArtifactStore = class {
     if (candidate.anchorRef !== expectedRef) {
       throw new RuntimeError("archived candidate anchor does not match run id");
     }
-    if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(candidate.candidateCommitOid)) {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(candidate.candidateCommitOid)) {
       throw new RuntimeError("archived candidate commit oid is invalid");
     }
     const manifest = await this.readManifest(runId);
@@ -27280,7 +27360,7 @@ async function runAttempt(checkoutPath, spec, deps) {
       }
       baselineEvidence = { baseline };
       const baselineFailed = baseline.commands.some((command) => !command.ok);
-      if (baselineFailed && spec.expectBaselineFailure !== true) {
+      if (baselineFailed) {
         return archiveTerminal({
           store,
           spec,
@@ -27559,6 +27639,127 @@ async function runAttempt(checkoutPath, spec, deps) {
     if (primaryError === void 0 && cleanupError !== null) throw cleanupError;
   }
 }
+
+// src/verify/acceptance-verifier.ts
+function expectedLogRefs(project) {
+  const refs = project.commandOutcomes.flatMap((outcome) => [outcome.stdoutRef, outcome.stderrRef]);
+  const unique = new Set(refs);
+  if (unique.size !== refs.length) {
+    throw new RuntimeError("project verification returned duplicate command log references");
+  }
+  return unique;
+}
+async function archiveProjectLogs(project, store) {
+  const expected = expectedLogRefs(project);
+  const predicted = project.outputLogs.map((log) => `logs/${log.name}.log`);
+  if (new Set(predicted).size !== predicted.length || predicted.length !== expected.size || predicted.some((ref) => !expected.has(ref))) {
+    throw new RuntimeError("project verification log references do not match command outcomes");
+  }
+  for (let index = 0; index < project.outputLogs.length; index += 1) {
+    const log = project.outputLogs[index];
+    const archivedRef = await store.writeLog(log.name, log.text);
+    if (archivedRef !== predicted[index]) {
+      throw new RuntimeError("artifact store returned an unexpected verification log reference");
+    }
+  }
+}
+function cloneCommandEvidence(command) {
+  return {
+    ...command,
+    ...command.truncated === void 0 ? {} : { truncated: { ...command.truncated } }
+  };
+}
+function outcomesMatchHostCommands(commands, outcomes, evidence, os, arch) {
+  const byId = new Map(commands.map((command) => [command.id, command]));
+  if (byId.size !== commands.length) return false;
+  const byOutcomeId = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
+  const byEvidenceId = new Map(evidence.map((command) => [command.id, command]));
+  if (byOutcomeId.size !== outcomes.length || byEvidenceId.size !== evidence.length || evidence.length !== commands.length || outcomes.some((outcome) => !byId.has(outcome.id)) || evidence.some((command) => !byId.has(command.id))) return false;
+  return commands.every((command) => {
+    const commandEvidence = byEvidenceId.get(command.id);
+    if (commandEvidence === void 0) return false;
+    const skipReason = command.platform?.os !== void 0 && !command.platform.os.includes(os) ? "platform-os" : command.platform?.arch !== void 0 && !command.platform.arch.includes(arch) ? "platform-arch" : null;
+    const outcome = byOutcomeId.get(command.id);
+    if (skipReason !== null) {
+      return commandEvidence.skipped && commandEvidence.skipReason === skipReason && outcome === void 0;
+    }
+    return !commandEvidence.skipped && outcome !== void 0 && outcome.exitCode !== null && !outcome.timedOut && command.expectedExitCodes.includes(outcome.exitCode);
+  });
+}
+var AcceptanceVerifier = class {
+  structural;
+  project;
+  constructor(dependencies = {}) {
+    this.structural = dependencies.structural ?? structuralVerify;
+    this.project = dependencies.project ?? projectVerify;
+  }
+  async verify(args) {
+    const structural = await this.structural({
+      repoRoot: args.repoRoot,
+      worktreePath: args.worktreePath,
+      baseCommitOid: args.baseCommitOid,
+      artifact: args.artifact,
+      writeAllowlist: args.spec.writeAllowlist,
+      forbiddenScope: args.spec.forbiddenScope
+    });
+    const structuralEvidence = {
+      manifestHash: structural.manifestHash,
+      failures: [...structural.failures]
+    };
+    if (!structural.ok) {
+      return {
+        ok: false,
+        failures: [...structural.failures],
+        evidence: { structural: structuralEvidence },
+        commandOutcomes: []
+      };
+    }
+    const project = await this.project({
+      repoRoot: args.repoRoot,
+      artifact: args.artifact,
+      commands: args.spec.verification,
+      ps: args.ps,
+      ...args.verificationId === void 0 ? {} : { verificationId: args.verificationId },
+      ...args.logNamePrefix === void 0 ? {} : { logNamePrefix: args.logNamePrefix }
+    });
+    await archiveProjectLogs(project, args.artifactStore);
+    const failures = [...project.failures];
+    if (project.mutated && !failures.includes("verification-mutated")) {
+      failures.push("verification-mutated");
+    }
+    if (project.commandOutcomes.length === 0 && failures.length === 0) {
+      failures.push("empty-verification");
+    }
+    if (!outcomesMatchHostCommands(
+      args.spec.verification,
+      project.commandOutcomes,
+      project.evidence.commands,
+      args.ps.os,
+      process.arch
+    ) && !failures.includes("command-outcome-mismatch")) {
+      failures.push("command-outcome-mismatch");
+    }
+    const verificationPolicy = project.evidence.commands.map(cloneCommandEvidence);
+    return {
+      ok: failures.length === 0,
+      failures,
+      evidence: {
+        structural: structuralEvidence,
+        project: {
+          mutated: project.mutated,
+          failures: [...project.failures],
+          commands: verificationPolicy.map(cloneCommandEvidence),
+          dependencyLink: project.evidence.dependencyLink
+        },
+        verificationPolicy
+      },
+      commandOutcomes: project.commandOutcomes.map((outcome) => ({
+        ...outcome,
+        args: [...outcome.args]
+      }))
+    };
+  }
+};
 
 // src/pipeline/consolidator.ts
 var SEVERITY_ORDER = { blocker: 0, major: 1, minor: 2, nit: 3 };
@@ -27964,8 +28165,9 @@ async function runRole(args) {
     };
   }
   const readOnly = READ_ONLY_ROLES.has(args.role);
+  const fixer = args.role === "fixer";
   let extraWritableRoots = [];
-  if (args.role === "fixer") {
+  if (fixer) {
     try {
       extraWritableRoots = await resolveLinkedWorktreeWritableRoots(args.worktreePath);
     } catch {
@@ -27978,6 +28180,16 @@ async function runRole(args) {
     }
   }
   const nativeReadOnly = readOnly && selectSandboxBackend(report).backend?.kind === "producer-native";
+  const fixerBackend = fixer ? selectSandboxBackend(report).backend : null;
+  const seatbeltFixer = fixerBackend?.kind === "os" && fixerBackend.id === "macos-seatbelt";
+  if (fixer && (fixerBackend === null || fixerBackend.kind === "os" && !seatbeltFixer)) {
+    return {
+      ok: false,
+      rawOutput: "",
+      failure: "sandbox-violation",
+      producerId
+    };
+  }
   if (readOnly && !nativeReadOnly) {
     const osBackend = selectOsWriteConfinementBackend({
       ps: args.ps,
@@ -28013,6 +28225,15 @@ async function runRole(args) {
         invocation = wrapInvocationWithSeatbelt(
           invocation,
           buildReadOnlySeatbeltPolicy({ tempHome })
+        );
+      } else if (seatbeltFixer) {
+        invocation = wrapInvocationWithSeatbelt(
+          invocation,
+          buildWriteSeatbeltPolicy({
+            worktreePath: args.worktreePath,
+            tempHome,
+            extraWritableRoots
+          })
         );
       }
       builtEnvironment = buildEnvironment({
@@ -28129,7 +28350,7 @@ async function runArchivedRole(runner, args, store, logName2) {
   const logRef2 = await store.writeLog(logName2, output);
   return { result, logRef: logRef2 };
 }
-function failedResult(attempt, rounds, finalCandidateCommit, reason) {
+function failedResult(attempt, rounds, finalCandidateCommit, reason, failure2 = "producer-failure") {
   return {
     runId: attempt.runId,
     status: "failed",
@@ -28141,7 +28362,8 @@ function failedResult(attempt, rounds, finalCandidateCommit, reason) {
       requiresHumanDecision: false,
       reasons: [reason]
     },
-    finalCandidateCommit
+    finalCandidateCommit,
+    failure: failure2
   };
 }
 function testEvidence(attempt) {
@@ -28278,7 +28500,12 @@ async function runFix(args) {
   const initial = await runArchivedRole(runner, callArgs, args.store, logName2);
   const roleLogRefs = [initial.logRef];
   if (!initial.result.ok) {
-    return { ok: false, failedRoleLogRef: initial.logRef, roleLogRefs };
+    return {
+      ok: false,
+      failure: initial.result.failure ?? "producer-failure",
+      failedRoleLogRef: initial.logRef,
+      roleLogRefs
+    };
   }
   const outcome = await parseStructuredReport(
     initial.result.rawOutput,
@@ -28294,7 +28521,79 @@ async function runFix(args) {
       return repair.result.ok ? repair.result.rawOutput : "";
     }
   );
-  return outcome.ok ? { ok: true, fix: outcome.value, roleLogRefs } : { ok: false, failedRoleLogRef: initial.logRef, roleLogRefs };
+  return outcome.ok ? { ok: true, fix: outcome.value, roleLogRefs } : {
+    ok: false,
+    failure: "invalid-output",
+    failedRoleLogRef: initial.logRef,
+    roleLogRefs
+  };
+}
+async function validateFixProvenance(args) {
+  const candidateObject = await git(args.worktreePath, [
+    "cat-file",
+    "-e",
+    `${args.fix.candidateCommit}^{commit}`
+  ]);
+  if (candidateObject.exitCode !== 0) {
+    return {
+      failure: "producer-failure",
+      reason: "fix phase reported a missing candidate commit"
+    };
+  }
+  const head = await git(args.worktreePath, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  if (head.exitCode !== 0 || head.stdout.trim() !== args.fix.candidateCommit) {
+    return {
+      failure: "producer-failure",
+      reason: "fix phase reported a candidate commit that does not match its worktree HEAD"
+    };
+  }
+  const candidateAncestry = await git(args.worktreePath, [
+    "merge-base",
+    "--is-ancestor",
+    args.previousCandidateCommit,
+    args.fix.candidateCommit
+  ]);
+  if (candidateAncestry.exitCode !== 0) {
+    return {
+      failure: "sandbox-violation",
+      reason: "fix phase candidate commit is not descended from the reviewed candidate"
+    };
+  }
+  const dispositionCommits = new Set(args.fix.dispositions.flatMap((disposition) => disposition.commit === void 0 ? [] : [disposition.commit]));
+  for (const dispositionCommit of dispositionCommits) {
+    const object3 = await git(args.worktreePath, [
+      "cat-file",
+      "-e",
+      `${dispositionCommit}^{commit}`
+    ]);
+    if (object3.exitCode !== 0) {
+      return {
+        failure: "producer-failure",
+        reason: "fix phase disposition reported a missing commit object"
+      };
+    }
+    const [afterPrevious, beforeCandidate] = await Promise.all([
+      git(args.worktreePath, [
+        "merge-base",
+        "--is-ancestor",
+        args.previousCandidateCommit,
+        dispositionCommit
+      ]),
+      git(args.worktreePath, [
+        "merge-base",
+        "--is-ancestor",
+        dispositionCommit,
+        args.fix.candidateCommit
+      ])
+    ]);
+    if (afterPrevious.exitCode !== 0 || beforeCandidate.exitCode !== 0) {
+      return {
+        failure: "producer-failure",
+        reason: "fix phase disposition commit is outside the produced candidate lineage"
+      };
+    }
+  }
+  return null;
 }
 async function verifyCandidate(args) {
   const ps = args.deps.ps ?? getPlatformServices();
@@ -28328,43 +28627,56 @@ async function verifyCandidate(args) {
       anchorRef: args.attempt.candidate?.anchorRef ?? "",
       diffText
     });
-    const [structural, project] = await Promise.all([
-      structuralVerify({
-        repoRoot: args.checkoutPath,
-        worktreePath: fresh.path,
-        baseCommitOid: args.baselineCommit,
-        artifact,
-        writeAllowlist: args.spec.writeAllowlist,
-        forbiddenScope: args.spec.forbiddenScope
-      }),
-      projectVerify({
-        repoRoot: args.checkoutPath,
-        artifact,
-        commands: args.spec.verification,
-        ps,
-        verificationId: () => `${args.attempt.runId}-pipeline`
-      })
-    ]);
+    const verifier = new AcceptanceVerifier({
+      structural: async (structuralArgs) => {
+        const result = await structuralVerify(structuralArgs);
+        const failures = result.failures.filter(
+          (failure2) => !IGNORED_STRUCTURAL_FAILURES.has(failure2)
+        );
+        return { ...result, ok: failures.length === 0, failures };
+      }
+    });
+    const acceptance = await verifier.verify({
+      repoRoot: args.checkoutPath,
+      worktreePath: fresh.path,
+      baseCommitOid: args.baselineCommit,
+      artifact,
+      spec: args.spec,
+      ps,
+      artifactStore: args.store,
+      verificationId: () => `${args.attempt.runId}-pipeline`,
+      logNamePrefix: "pipeline-verification"
+    });
     const changedPaths = nameOnly.split("\n").map((line) => line.trim()).filter(Boolean);
     const scopeViolations = changedPaths.filter((pathname) => !args.spec.writeAllowlist.some((pattern) => globMatches3(pattern, pathname)) || args.spec.forbiddenScope.some((pattern) => globMatches3(pattern, pathname)));
     const weakened = detectWeakenedTests(diffText);
     const workspaceClean = status === "";
-    const structuralFailures = structural.failures.filter(
-      (failure2) => !IGNORED_STRUCTURAL_FAILURES.has(failure2)
+    const verificationCommands = new Map(
+      args.spec.verification.map((command) => [command.id, command])
     );
     return {
       verification: {
         reportVersion: "1",
-        pass: structuralFailures.length === 0 && project.failures.length === 0 && workspaceClean && scopeViolations.length === 0,
-        commandResults: project.commandOutcomes.map((command) => ({
+        pass: acceptance.ok && workspaceClean && scopeViolations.length === 0,
+        commandResults: acceptance.commandOutcomes.map((command) => ({
           id: command.id,
           exitCode: command.exitCode ?? -1,
-          ok: command.exitCode !== null && command.exitCode === 0
+          ok: command.exitCode !== null && !command.timedOut && (verificationCommands.get(command.id)?.expectedExitCodes.includes(
+            command.exitCode
+          ) ?? false)
         })),
         workspaceClean,
         testsDeleted: weakened.testsDeleted,
         testsSkipped: weakened.testsSkipped,
-        scopeViolations
+        scopeViolations,
+        evidence: {
+          failures: [...acceptance.failures],
+          acceptance: acceptance.evidence,
+          commandOutcomes: acceptance.commandOutcomes.map((outcome) => ({
+            ...outcome,
+            args: [...outcome.args]
+          }))
+        }
       },
       baselineDrift: ancestry.exitCode !== 0
     };
@@ -28469,22 +28781,24 @@ async function runPipeline(checkoutPath, spec, deps) {
           attempt,
           rounds,
           currentCandidateCommit,
-          `fix phase did not produce valid structured output (see ${fixRun.failedRoleLogRef})`
+          `fix phase did not produce valid structured output (see ${fixRun.failedRoleLogRef})`,
+          fixRun.failure
         );
       }
       const { fix } = fixRun;
       await store.writePipelineArtifact(`round-${round}-fix`, fix);
-      const commit = await git(candidateWorktree.path, [
-        "cat-file",
-        "-e",
-        `${fix.candidateCommit}^{commit}`
-      ]);
-      if (commit.exitCode !== 0) {
+      const provenanceFailure = await validateFixProvenance({
+        worktreePath: candidateWorktree.path,
+        previousCandidateCommit: currentCandidateCommit,
+        fix
+      });
+      if (provenanceFailure !== null) {
         return failedResult(
           attempt,
           rounds,
           currentCandidateCommit,
-          "fix phase reported a missing candidate commit"
+          provenanceFailure.reason,
+          provenanceFailure.failure
         );
       }
       currentCandidateCommit = fix.candidateCommit;
@@ -28555,7 +28869,8 @@ async function runPipeline(checkoutPath, spec, deps) {
     deps,
     attempt: finalAttempt,
     baselineCommit,
-    candidateCommit: currentCandidateCommit
+    candidateCommit: currentCandidateCommit,
+    store
   });
   await store.writePipelineArtifact("verification", verified.verification);
   const lastRound = rounds.at(-1);
@@ -28576,7 +28891,8 @@ async function runPipeline(checkoutPath, spec, deps) {
     rounds,
     verification: verified.verification,
     gate,
-    finalCandidateCommit: currentCandidateCommit
+    finalCandidateCommit: currentCandidateCommit,
+    failure: null
   };
   await store.writePipelineArtifact("pipeline-result", result);
   return result;
@@ -28587,9 +28903,9 @@ import path12 from "node:path";
 var schemas2 = loadSchemas();
 function resolveMinEditTimeoutMs() {
   const raw = process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS;
-  if (raw !== void 0) {
+  if (process.env.NODE_ENV === "test" && raw !== void 0) {
     const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed >= 1) return parsed;
+    if (Number.isInteger(parsed) && parsed >= 1) return parsed;
   }
   return RUNTIME_MIN_EDIT_TIMEOUT_MS;
 }
@@ -28604,8 +28920,10 @@ function validateSpec(input) {
       }]
     };
   }
-  const ok = schemas2.delegationSpec(input);
-  if (ok) {
+  const allowsTestFloor = minEditTimeoutMs < RUNTIME_MIN_EDIT_TIMEOUT_MS && typeof input === "object" && input !== null && "executionMode" in input && input.executionMode === "edit" && "timeoutMs" in input && typeof input.timeoutMs === "number" && Number.isInteger(input.timeoutMs) && input.timeoutMs >= minEditTimeoutMs && input.timeoutMs < RUNTIME_MIN_EDIT_TIMEOUT_MS;
+  const schemaInput = allowsTestFloor ? { ...input, timeoutMs: RUNTIME_MIN_EDIT_TIMEOUT_MS } : input;
+  const schemaValid = schemas2.delegationSpec(schemaInput);
+  if (schemaValid) {
     const spec = input;
     for (const [index, command] of spec.verification.entries()) {
       const normalizedCwd = path12.posix.normalize(command.cwd);
@@ -28621,7 +28939,7 @@ function validateSpec(input) {
     }
     return { ok: true, spec };
   }
-  const errors = (schemas2.delegationSpec.errors ?? []).map((e) => {
+  const validationErrors = (schemas2.delegationSpec.errors ?? []).map((e) => {
     let message = e.message ?? "invalid";
     const allowed = e.params?.allowedValues;
     if (Array.isArray(allowed)) {
@@ -28629,127 +28947,8 @@ function validateSpec(input) {
     }
     return { path: e.instancePath || e.schemaPath, message };
   });
-  return { ok: false, errors };
+  return { ok: false, errors: validationErrors };
 }
-
-// src/verify/acceptance-verifier.ts
-function expectedLogRefs(project) {
-  const refs = project.commandOutcomes.flatMap((outcome) => [outcome.stdoutRef, outcome.stderrRef]);
-  const unique = new Set(refs);
-  if (unique.size !== refs.length) {
-    throw new RuntimeError("project verification returned duplicate command log references");
-  }
-  return unique;
-}
-async function archiveProjectLogs(project, store) {
-  const expected = expectedLogRefs(project);
-  const predicted = project.outputLogs.map((log) => `logs/${log.name}.log`);
-  if (new Set(predicted).size !== predicted.length || predicted.length !== expected.size || predicted.some((ref) => !expected.has(ref))) {
-    throw new RuntimeError("project verification log references do not match command outcomes");
-  }
-  for (let index = 0; index < project.outputLogs.length; index += 1) {
-    const log = project.outputLogs[index];
-    const archivedRef = await store.writeLog(log.name, log.text);
-    if (archivedRef !== predicted[index]) {
-      throw new RuntimeError("artifact store returned an unexpected verification log reference");
-    }
-  }
-}
-function cloneCommandEvidence(command) {
-  return {
-    ...command,
-    ...command.truncated === void 0 ? {} : { truncated: { ...command.truncated } }
-  };
-}
-function outcomesMatchHostCommands(commands, outcomes, evidence, os, arch) {
-  const byId = new Map(commands.map((command) => [command.id, command]));
-  if (byId.size !== commands.length) return false;
-  const byOutcomeId = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
-  const byEvidenceId = new Map(evidence.map((command) => [command.id, command]));
-  if (byOutcomeId.size !== outcomes.length || byEvidenceId.size !== evidence.length || evidence.length !== commands.length || outcomes.some((outcome) => !byId.has(outcome.id)) || evidence.some((command) => !byId.has(command.id))) return false;
-  return commands.every((command) => {
-    const commandEvidence = byEvidenceId.get(command.id);
-    if (commandEvidence === void 0) return false;
-    const skipReason = command.platform?.os !== void 0 && !command.platform.os.includes(os) ? "platform-os" : command.platform?.arch !== void 0 && !command.platform.arch.includes(arch) ? "platform-arch" : null;
-    const outcome = byOutcomeId.get(command.id);
-    if (skipReason !== null) {
-      return commandEvidence.skipped && commandEvidence.skipReason === skipReason && outcome === void 0;
-    }
-    return !commandEvidence.skipped && outcome !== void 0 && outcome.exitCode !== null && !outcome.timedOut && command.expectedExitCodes.includes(outcome.exitCode);
-  });
-}
-var AcceptanceVerifier = class {
-  structural;
-  project;
-  constructor(dependencies = {}) {
-    this.structural = dependencies.structural ?? structuralVerify;
-    this.project = dependencies.project ?? projectVerify;
-  }
-  async verify(args) {
-    const structural = await this.structural({
-      repoRoot: args.repoRoot,
-      worktreePath: args.worktreePath,
-      baseCommitOid: args.baseCommitOid,
-      artifact: args.artifact,
-      writeAllowlist: args.spec.writeAllowlist,
-      forbiddenScope: args.spec.forbiddenScope
-    });
-    const structuralEvidence = {
-      manifestHash: structural.manifestHash,
-      failures: [...structural.failures]
-    };
-    if (!structural.ok) {
-      return {
-        ok: false,
-        failures: [...structural.failures],
-        evidence: { structural: structuralEvidence },
-        commandOutcomes: []
-      };
-    }
-    const project = await this.project({
-      repoRoot: args.repoRoot,
-      artifact: args.artifact,
-      commands: args.spec.verification,
-      ps: args.ps
-    });
-    await archiveProjectLogs(project, args.artifactStore);
-    const failures = [...project.failures];
-    if (project.mutated && !failures.includes("verification-mutated")) {
-      failures.push("verification-mutated");
-    }
-    if (project.commandOutcomes.length === 0 && failures.length === 0) {
-      failures.push("empty-verification");
-    }
-    if (!outcomesMatchHostCommands(
-      args.spec.verification,
-      project.commandOutcomes,
-      project.evidence.commands,
-      args.ps.os,
-      process.arch
-    ) && !failures.includes("command-outcome-mismatch")) {
-      failures.push("command-outcome-mismatch");
-    }
-    const verificationPolicy = project.evidence.commands.map(cloneCommandEvidence);
-    return {
-      ok: failures.length === 0,
-      failures,
-      evidence: {
-        structural: structuralEvidence,
-        project: {
-          mutated: project.mutated,
-          failures: [...project.failures],
-          commands: verificationPolicy.map(cloneCommandEvidence),
-          dependencyLink: project.evidence.dependencyLink
-        },
-        verificationPolicy
-      },
-      commandOutcomes: project.commandOutcomes.map((outcome) => ({
-        ...outcome,
-        args: [...outcome.args]
-      }))
-    };
-  }
-};
 
 // src/mcp/serialize.ts
 var mutexes = /* @__PURE__ */ new Map();
@@ -29656,6 +29855,21 @@ var gitReadOutput = external_exports.object({
   error: external_exports.literal("git-read-failed").optional(),
   diagnostic: external_exports.string().optional()
 });
+var protocolVersionInput = external_exports.literal(PROTOCOL_VERSION, {
+  errorMap: (issue2) => ({
+    message: "protocol version mismatch: received " + (issue2.code === external_exports.ZodIssueCode.invalid_literal && issue2.received !== void 0 ? String(issue2.received) : "(missing)") + `, expected ${PROTOCOL_VERSION}`
+  })
+});
+var delegateInputSchema = external_exports.object({
+  checkoutPath: external_exports.string(),
+  spec: external_exports.unknown(),
+  protocolVersion: protocolVersionInput
+}).strict();
+var delegatePipelineInputSchema = external_exports.object({
+  checkoutPath: external_exports.string(),
+  spec: external_exports.unknown(),
+  protocolVersion: protocolVersionInput
+}).strict();
 function toolOutput(value) {
   const structuredContent = value;
   return {
@@ -29676,11 +29890,7 @@ async function start(dependencies = {}) {
     {
       title: "Delegate an implementation subtask",
       description: "Validate a Delegation Spec and run one verified attempt.",
-      inputSchema: {
-        checkoutPath: external_exports.string(),
-        spec: external_exports.unknown(),
-        protocolVersion: external_exports.string().optional()
-      },
+      inputSchema: delegateInputSchema,
       outputSchema: delegateOutput
     },
     async ({ checkoutPath, spec, protocolVersion }, extra) => {
@@ -29709,7 +29919,7 @@ async function start(dependencies = {}) {
           spec,
           {
             ...dependencies,
-            skillProtocolVersion: protocolVersion ?? dependencies.skillProtocolVersion ?? PROTOCOL_VERSION,
+            skillProtocolVersion: protocolVersion,
             ...onProgress === void 0 ? {} : { onProgress }
           }
         ));
@@ -29723,11 +29933,7 @@ async function start(dependencies = {}) {
     {
       title: "Run the fresh-context review pipeline",
       description: "Validate a Delegation Spec and run the full implement/review/fix pipeline.",
-      inputSchema: {
-        checkoutPath: external_exports.string(),
-        spec: external_exports.unknown(),
-        protocolVersion: external_exports.string().optional()
-      },
+      inputSchema: delegatePipelineInputSchema,
       outputSchema: delegatePipelineOutput
     },
     async ({ checkoutPath, spec, protocolVersion }, extra) => {
@@ -29756,7 +29962,7 @@ async function start(dependencies = {}) {
           spec,
           {
             ...dependencies,
-            skillProtocolVersion: protocolVersion ?? dependencies.skillProtocolVersion ?? PROTOCOL_VERSION,
+            skillProtocolVersion: protocolVersion,
             ...onProgress === void 0 ? {} : { onProgress }
           }
         ));

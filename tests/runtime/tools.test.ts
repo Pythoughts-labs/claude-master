@@ -91,7 +91,7 @@ const manifest = {
   executionPolicy: {},
   environment: [],
   runtimeVersion: "0.8.0",
-  protocolVersion: "1.0.0",
+  protocolVersion: PROTOCOL_VERSION,
   schemaVersions: { delegationSpec: "1", attemptResult: "1" },
   packagedVerifier: { version: "test", hash: "7".repeat(64) },
   manifestHash: "8".repeat(64),

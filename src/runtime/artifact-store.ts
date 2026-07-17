@@ -407,6 +407,9 @@ function sanitizeVerificationCommand(command: VerificationCommand): Verification
     network: command.network,
     expectedExitCodes: [...command.expectedExitCodes],
   };
+  if (command.expectBaselineFailure !== undefined) {
+    sanitized.expectBaselineFailure = command.expectBaselineFailure;
+  }
   if (command.allowedMutations !== undefined) {
     sanitized.allowedMutations = command.allowedMutations;
   }
@@ -702,7 +705,9 @@ export class ArtifactStore {
     if (manifest.runId !== this.runId) {
       throw new RuntimeError("run manifest id does not match artifact store");
     }
-    await this.writeJson("manifest.json", sanitizeRunManifest(manifest));
+    const sanitized = sanitizeRunManifest(manifest);
+    verifyRunManifest(sanitized, this.runId);
+    await this.writeJson("manifest.json", sanitized);
   }
 
   async promoteTerminalArtifacts(args: {
@@ -721,6 +726,7 @@ export class ArtifactStore {
     const result = sanitizeAttemptResult(args.result);
     verifyAttemptResult(result, this.runId);
     const manifest = sanitizeRunManifest(args.manifest);
+    verifyRunManifest(manifest, this.runId);
     await this.replaceJson("result.json", result);
     await this.replaceJson("manifest.json", manifest);
   }
@@ -863,7 +869,7 @@ export class ArtifactStore {
     if (candidate.anchorRef !== expectedRef) {
       throw new RuntimeError("archived candidate anchor does not match run id");
     }
-    if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(candidate.candidateCommitOid)) {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(candidate.candidateCommitOid)) {
       throw new RuntimeError("archived candidate commit oid is invalid");
     }
     const manifest = await this.readManifest(runId);

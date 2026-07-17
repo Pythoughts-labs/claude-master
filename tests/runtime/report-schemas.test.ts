@@ -45,17 +45,28 @@ describe("pipeline report schemas", () => {
     expect(s.verificationReport(validVerification)).toBe(true);
   });
 
+  it("accepts SHA-1 and SHA-256 commit object ids", () => {
+    const s = loadSchemas();
+    expect(s.fixReport(validFix)).toBe(true);
+    expect(s.fixReport({
+      ...validFix,
+      candidateCommit: "a".repeat(64),
+      dispositions: [{ ...validFix.dispositions[0], commit: "b".repeat(64) }],
+    })).toBe(true);
+    expect(s.fixReport({ ...validFix, candidateCommit: "a".repeat(41) })).toBe(false);
+  });
+
   it("rejects unknown severity", () => {
     const s = loadSchemas();
     const bad = structuredClone(validReview);
-    bad.findings[0].severity = "catastrophic";
+    bad.findings[0]!.severity = "catastrophic";
     expect(s.reviewReport(bad)).toBe(false);
   });
 
   it("rejects unknown disposition and missing evidence", () => {
     const s = loadSchemas();
     const bad = structuredClone(validFix);
-    bad.dispositions[0].disposition = "wontfix";
+    bad.dispositions[0]!.disposition = "wontfix";
     expect(s.fixReport(bad)).toBe(false);
     const bad2 = structuredClone(validFix);
     delete (bad2.dispositions[0] as Record<string, unknown>).evidence;
@@ -64,7 +75,20 @@ describe("pipeline report schemas", () => {
 
   it("rejects additional properties (fail closed)", () => {
     const s = loadSchemas();
-    const bad = { ...validVerification, extra: true };
-    expect(s.verificationReport(bad)).toBe(false);
+    expect(s.verificationReport({ ...validVerification, extra: true })).toBe(false);
+    expect(s.verificationReport({
+      ...validVerification,
+      commandResults: [{ ...validVerification.commandResults[0], extra: true }],
+    })).toBe(false);
+    expect(s.reviewReport({ ...validReview, extra: true })).toBe(false);
+    expect(s.reviewReport({
+      ...validReview,
+      findings: [{ ...validReview.findings[0], extra: true }],
+    })).toBe(false);
+    expect(s.fixReport({ ...validFix, extra: true })).toBe(false);
+    expect(s.fixReport({
+      ...validFix,
+      dispositions: [{ ...validFix.dispositions[0], extra: true }],
+    })).toBe(false);
   });
 });

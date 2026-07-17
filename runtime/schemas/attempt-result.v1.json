@@ -131,9 +131,9 @@
         "patch"
       ],
       "properties": {
-        "baseCommitOid": { "type": "string" },
-        "candidateTreeOid": { "type": "string" },
-        "candidateCommitOid": { "type": "string" },
+        "baseCommitOid": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+        "candidateTreeOid": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+        "candidateCommitOid": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
         "anchorRef": { "type": "string" },
         "manifestHash": { "type": "string" },
         "changedPaths": {
@@ -151,7 +151,10 @@
         "path": { "type": "string" },
         "changeType": { "enum": ["added", "modified", "deleted"] },
         "mode": { "type": "string" },
-        "contentHash": { "type": ["string", "null"] }
+        "contentHash": {
+          "type": ["string", "null"],
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
       }
     },
     "verificationCommand": {
@@ -182,6 +185,7 @@
           "type": "array",
           "items": { "type": "integer" }
         },
+        "expectBaselineFailure": { "type": "boolean" },
         "platform": {
           "type": "object",
           "additionalProperties": false,

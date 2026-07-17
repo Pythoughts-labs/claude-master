@@ -537,7 +537,7 @@ export async function runAttempt(
     // throwing is honored by the existing pre-producer-spawn abort check, which
     // archives run-start first; no separate early return is needed here.
     const baselineFailed = baseline.commands.some(command => !command.ok);
-    if (baselineFailed && spec.expectBaselineFailure !== true) {
+    if (baselineFailed) {
       return archiveTerminal({
         store, spec, runId, startedAtMs, now,
         repoRoot: canonical.canonical, baseCommitOid: preconditions.baseCommitOid,

@@ -221,7 +221,7 @@ describe("ArtifactStore", () => {
     ))).resolves.toBeDefined();
   });
 
-  it("preserves allowedMutations on archived verification commands", async () => {
+  it("preserves baseline and mutation policy on archived verification commands", async () => {
     const store = new ArtifactStore("run-allowed-mutations");
     const result = sampleResult("run-allowed-mutations");
     result.requestedVerification = [{
@@ -232,6 +232,7 @@ describe("ArtifactStore", () => {
       timeoutMs: 60_000,
       network: "allowed",
       allowedMutations: "ignored-paths",
+      expectBaselineFailure: true,
       expectedExitCodes: [0],
     }];
 
@@ -239,6 +240,7 @@ describe("ArtifactStore", () => {
 
     const archived = await store.readResult("run-allowed-mutations");
     expect(archived?.requestedVerification[0]?.allowedMutations).toBe("ignored-paths");
+    expect(archived?.requestedVerification[0]?.expectBaselineFailure).toBe(true);
   });
 
   it("round-trips an AttemptResult under plugin data", async () => {
@@ -296,6 +298,50 @@ describe("ArtifactStore", () => {
     const store = new ArtifactStore("run-manifest-id-check");
 
     await expect(store.readManifest("../outside")).rejects.toThrow(/invalid run id/i);
+  });
+
+  it("treats an archived runtime version as provenance", async () => {
+    const runId = "run-older-runtime";
+    const store = new ArtifactStore(runId);
+    const manifest = {
+      ...buildRunManifest(manifestArgs(runId, "/repo")),
+      runtimeVersion: "0.16.0",
+    };
+
+    await store.writeManifest(manifest);
+
+    await expect(store.readManifest(runId)).resolves.toMatchObject({
+      runId,
+      runtimeVersion: "0.16.0",
+    });
+  });
+
+  it("rejects incompatible manifest schema versions before writing", async () => {
+    const runId = "run-incompatible-manifest-schema";
+    const store = new ArtifactStore(runId);
+    const manifest = buildRunManifest(manifestArgs(runId, "/repo"));
+
+    await expect(store.writeManifest({
+      ...manifest,
+      schemaVersions: { ...manifest.schemaVersions, delegationSpec: "2" },
+    } as never)).rejects.toThrow(/manifest contract/i);
+    await expect(access(join(store.runDirectory, "manifest.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects an invalid manifest shape before writing", async () => {
+    const runId = "run-invalid-manifest-shape";
+    const store = new ArtifactStore(runId);
+    const manifest = buildRunManifest(manifestArgs(runId, "/repo"));
+
+    await expect(store.writeManifest({
+      ...manifest,
+      producer: { ...manifest.producer, unexpected: true },
+    } as never)).rejects.toThrow(/manifest.*malformed|manifest contract/i);
+    await expect(access(join(store.runDirectory, "manifest.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("rejects an oversized archive entry before reading it into memory", async () => {
@@ -1245,7 +1291,7 @@ describe("buildRunManifest", () => {
       args.environment[0]!.name = "identity-secret";
     }],
     ["environment source", (args: BuildRunManifestArgs) => {
-      args.environment[0]!.source = "identity-secret";
+      args.environment[0]!.source = "identity-secret" as never;
     }],
     ["packaged verifier version", (args: BuildRunManifestArgs) => {
       args.packagedVerifier.version = "identity-secret";

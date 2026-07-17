@@ -54,6 +54,7 @@ describe("P0-A plugin wiring", () => {
     const runtimeProtocol = /PROTOCOL_VERSION\s*=\s*"([^"]+)"/u.exec(versions)?.[1];
     const skill = read("skills/delegate/SKILL.md");
     const skillProtocol = /^PROTOCOL_VERSION:\s*([^\s]+)$/mu.exec(skill)?.[1];
+    assert.equal(runtimeProtocol, "1.1.0", "runtime must expose the current wire protocol");
     assert.equal(skillProtocol, runtimeProtocol, "delegate skill protocol marker must match runtime");
     assert.doesNotMatch(skill, /(^|[^:])\/delegate\b/mu, "delegate skill must use the fully qualified command");
     for (const lifecycleTool of ["delegate", "reviewCandidate", "decideCandidate", "integrateCandidate"]) {

@@ -41,7 +41,7 @@ export interface Disposition {
 
 export interface FixReport {
   reportVersion: "1";
-  candidateCommit: string; // 40-hex commit oid
+  candidateCommit: string; // 40- or 64-hex commit oid
   dispositions: Disposition[];
 }
 

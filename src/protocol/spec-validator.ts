@@ -12,9 +12,9 @@ export type ValidateResult =
 // without waiting out the production 10-minute edit floor.
 function resolveMinEditTimeoutMs(): number {
   const raw = process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS;
-  if (raw !== undefined) {
+  if (process.env.NODE_ENV === "test" && raw !== undefined) {
     const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed >= 1) return parsed;
+    if (Number.isInteger(parsed) && parsed >= 1) return parsed;
   }
   return RUNTIME_MIN_EDIT_TIMEOUT_MS;
 }
@@ -37,8 +37,21 @@ export function validateSpec(input: unknown): ValidateResult {
       }],
     };
   }
-  const ok = schemas.delegationSpec(input);
-  if (ok) {
+  const allowsTestFloor = minEditTimeoutMs < RUNTIME_MIN_EDIT_TIMEOUT_MS
+    && typeof input === "object"
+    && input !== null
+    && "executionMode" in input
+    && input.executionMode === "edit"
+    && "timeoutMs" in input
+    && typeof input.timeoutMs === "number"
+    && Number.isInteger(input.timeoutMs)
+    && input.timeoutMs >= minEditTimeoutMs
+    && input.timeoutMs < RUNTIME_MIN_EDIT_TIMEOUT_MS;
+  const schemaInput = allowsTestFloor
+    ? { ...input, timeoutMs: RUNTIME_MIN_EDIT_TIMEOUT_MS }
+    : input;
+  const schemaValid = schemas.delegationSpec(schemaInput);
+  if (schemaValid) {
     const spec = input as DelegationSpec;
     for (const [index, command] of spec.verification.entries()) {
       const normalizedCwd = path.posix.normalize(command.cwd);
@@ -58,7 +71,7 @@ export function validateSpec(input: unknown): ValidateResult {
     }
     return { ok: true, spec };
   }
-  const errors = (schemas.delegationSpec.errors ?? []).map(e => {
+  const validationErrors = (schemas.delegationSpec.errors ?? []).map(e => {
     let message = e.message ?? "invalid";
     const allowed = (e.params as Record<string, unknown> | undefined)?.allowedValues;
     if (Array.isArray(allowed)) {
@@ -66,5 +79,5 @@ export function validateSpec(input: unknown): ValidateResult {
     }
     return { path: e.instancePath || e.schemaPath, message };
   });
-  return { ok: false, errors };
+  return { ok: false, errors: validationErrors };
 }

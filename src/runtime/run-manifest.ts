@@ -42,7 +42,7 @@ export interface RunManifest {
   promptHash: string;
   executionPolicy: Record<string, unknown>;
   environment: Array<{ name: string; source: string }>;
-  runtimeVersion: typeof RUNTIME_VERSION;
+  runtimeVersion: string;
   protocolVersion: typeof PROTOCOL_VERSION;
   schemaVersions: {
     delegationSpec: typeof DELEGATION_SPEC_VERSION;
@@ -157,32 +157,95 @@ function withManifestHash(body: ManifestBody): RunManifest {
   };
 }
 
-export function sanitizeRunManifest(manifest: RunManifest): RunManifest {
-  const { manifestHash: _manifestHash, ...body } = manifest;
-  return withManifestHash(body);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function verifyRunManifest(value: unknown, expectedRunId?: string): RunManifest {
-  if (!isRecord(value) || typeof value.manifestHash !== "string") {
+function hasExactKeys(value: unknown, expected: readonly string[]): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const actual = Object.keys(value);
+  return actual.length === expected.length && expected.every(key => actual.includes(key));
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+
+function isObjectId(value: unknown): value is string {
+  return typeof value === "string" && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+}
+
+function assertManifestShape(value: unknown): asserts value is RunManifest {
+  if (!hasExactKeys(value, [
+    "manifestVersion",
+    "runId",
+    "repoRoot",
+    "baseCommitOid",
+    "candidateManifestHash",
+    "producer",
+    "effectivePolicy",
+    "repositoryInstructions",
+    "promptHash",
+    "executionPolicy",
+    "environment",
+    "runtimeVersion",
+    "protocolVersion",
+    "schemaVersions",
+    "packagedVerifier",
+    "manifestHash",
+  ])
+    || value.manifestVersion !== "1"
+    || typeof value.runId !== "string"
+    || typeof value.repoRoot !== "string"
+    || !isObjectId(value.baseCommitOid)
+    || (value.candidateManifestHash !== null && !isSha256(value.candidateManifestHash))
+    || !hasExactKeys(value.producer, ["id", "version", "model"])
+    || !isNullableString(value.producer.id)
+    || !isNullableString(value.producer.version)
+    || !isNullableString(value.producer.model)
+    || !isRecord(value.effectivePolicy)
+    || !Array.isArray(value.repositoryInstructions)
+    || !value.repositoryInstructions.every(instruction =>
+      hasExactKeys(instruction, ["path", "hash"])
+      && typeof instruction.path === "string"
+      && isSha256(instruction.hash))
+    || !isSha256(value.promptHash)
+    || !isRecord(value.executionPolicy)
+    || !Array.isArray(value.environment)
+    || !value.environment.every(entry =>
+      hasExactKeys(entry, ["name", "source"])
+      && typeof entry.name === "string"
+      && typeof entry.source === "string")
+    || typeof value.runtimeVersion !== "string"
+    || typeof value.protocolVersion !== "string"
+    || !hasExactKeys(value.schemaVersions, ["delegationSpec", "attemptResult"])
+    || typeof value.schemaVersions.delegationSpec !== "string"
+    || typeof value.schemaVersions.attemptResult !== "string"
+    || !hasExactKeys(value.packagedVerifier, ["version", "hash"])
+    || typeof value.packagedVerifier.version !== "string"
+    || !isSha256(value.packagedVerifier.hash)
+    || !isSha256(value.manifestHash)) {
     throw new RuntimeError("archived run manifest is malformed");
   }
+}
+
+export function sanitizeRunManifest(manifest: RunManifest): RunManifest {
+  assertManifestShape(manifest);
+  const { manifestHash: _manifestHash, ...body } = manifest;
+  return withManifestHash(body);
+}
+
+export function verifyRunManifest(value: unknown, expectedRunId?: string): RunManifest {
+  assertManifestShape(value);
   const { manifestHash, ...body } = value;
-  if (!/^[0-9a-f]{64}$/.test(manifestHash)
-    || sha256(stableJson(body)) !== manifestHash) {
+  if (sha256(stableJson(body)) !== manifestHash) {
     throw new RuntimeError("archived run manifest integrity check failed");
   }
-  if (body.manifestVersion !== "1"
-    || typeof body.runId !== "string"
-    || typeof body.repoRoot !== "string"
-    || typeof body.baseCommitOid !== "string"
-    || (body.candidateManifestHash !== null && typeof body.candidateManifestHash !== "string")
-    || body.runtimeVersion !== RUNTIME_VERSION
-    || body.protocolVersion !== PROTOCOL_VERSION
-    || !isRecord(body.schemaVersions)
+  if (body.protocolVersion !== PROTOCOL_VERSION
     || body.schemaVersions.delegationSpec !== DELEGATION_SPEC_VERSION
     || body.schemaVersions.attemptResult !== ATTEMPT_RESULT_VERSION) {
     throw new RuntimeError("archived run manifest contract is invalid");

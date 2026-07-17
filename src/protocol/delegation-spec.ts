@@ -7,6 +7,7 @@ export interface VerificationCommand {
   timeoutMs: number;                // bounded by RUNTIME_MAX_TIMEOUT_MS — schema enforces maximum
   network: "denied" | "allowed";
   expectedExitCodes: number[];
+  expectBaselineFailure?: boolean;    // tolerate this command failing only on clean HEAD
   /** "ignored-paths" permits Git-ignored byproducts (e.g. dependency installs); default "none". */
   allowedMutations?: "none" | "ignored-paths";
   platform?: { os?: Array<"darwin" | "linux" | "win32">; arch?: string[] };
@@ -32,7 +33,6 @@ export interface DelegationSpec {
   forbiddenScope: string[];                  // path globs never to touch
   successCriteria: string[];
   verification: VerificationCommand[];       // Host-authorized checks only
-  expectBaselineFailure?: boolean;           // intentional bug-reproducer specs only
   executionMode: "edit";                     // P0: implementation Lane only
   timeoutMs: number;                         // wall-clock; bounded by RUNTIME_MAX_TIMEOUT_MS
   producerPreferences: string[];             // ordered producer ids, e.g. ["codex"]

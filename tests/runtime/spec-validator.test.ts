@@ -38,10 +38,24 @@ describe("validateSpec", () => {
       });
     }
   });
-  it("accepts the intentional baseline-failure opt-out", () =>
-    expect(validateSpec({ ...base, expectBaselineFailure: true }).ok).toBe(true));
-  it("rejects a non-boolean baseline-failure opt-out", () =>
-    expect(validateSpec({ ...base, expectBaselineFailure: "yes" }).ok).toBe(false));
+  it("accepts a per-command baseline-failure opt-out and rejects the removed top-level field", () => {
+    expect(validateSpec({
+      ...base,
+      verification: [{ ...base.verification[0], expectBaselineFailure: true }],
+    }).ok).toBe(true);
+    expect(validateSpec({ ...base, expectBaselineFailure: true }).ok).toBe(false);
+  });
+  it("rejects unknown properties at every delegation object boundary", () => {
+    expect(validateSpec({ ...base, unexpected: true }).ok).toBe(false);
+    expect(validateSpec({
+      ...base,
+      verification: [{ ...base.verification[0], unexpected: true }],
+    }).ok).toBe(false);
+    expect(validateSpec({
+      ...base,
+      producerOverrides: { model: "test", unexpected: true },
+    }).ok).toBe(false);
+  });
   it("rejects a spec missing forbiddenScope", () => {
     const { forbiddenScope, ...noScope } = base;
     expect(validateSpec(noScope).ok).toBe(false);
@@ -62,6 +76,56 @@ describe("validateSpec", () => {
       }],
     });
     expect(validateSpec({ ...base, timeoutMs: RUNTIME_MIN_EDIT_TIMEOUT_MS }).ok).toBe(true);
+  });
+  it("ignores the timeout-floor override outside tests", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousVitest = process.env.VITEST;
+    const previousOverride = process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS;
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS = "1";
+      for (const vitestValue of ["false", "", "1", "unrelated"]) {
+        process.env.VITEST = vitestValue;
+        expect(validateSpec({ ...base, timeoutMs: 1 }).ok).toBe(false);
+      }
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousVitest === undefined) delete process.env.VITEST;
+      else process.env.VITEST = previousVitest;
+      if (previousOverride === undefined) delete process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS;
+      else process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS = previousOverride;
+    }
+  });
+  it("honors the timeout-floor override during tests", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousOverride = process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS;
+    try {
+      process.env.NODE_ENV = "test";
+      process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS = "1";
+      expect(validateSpec({ ...base, timeoutMs: 1 }).ok).toBe(true);
+      expect(validateSpec({ ...base, timeoutMs: 1.5 }).ok).toBe(false);
+      expect(validateSpec({ ...base, timeoutMs: 1, unexpected: true }).ok).toBe(false);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousOverride === undefined) delete process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS;
+      else process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS = previousOverride;
+    }
+  });
+  it("rejects a non-integer test timeout-floor override", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousOverride = process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS;
+    try {
+      process.env.NODE_ENV = "test";
+      process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS = "1.5";
+      expect(validateSpec({ ...base, timeoutMs: 1 }).ok).toBe(false);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousOverride === undefined) delete process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS;
+      else process.env.CLAUDE_ARCHITECT_MIN_EDIT_TIMEOUT_MS = previousOverride;
+    }
   });
   it("rejects non-positive attempt and verification timeouts", () => {
     expect(validateSpec({ ...base, timeoutMs: 0 }).ok).toBe(false);

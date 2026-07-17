@@ -82,7 +82,7 @@ export async function verifyBaseline(args: BaselineVerifyArgs): Promise<Baseline
       commands.push({
         id: executed.outcome.id,
         exitCode: executed.outcome.exitCode,
-        ok: !executed.failed && !mutation.mutated,
+        ok: (!executed.failed || command.expectBaselineFailure === true) && !mutation.mutated,
         ...(mutation.mutated
           ? { mutation: { records: mutation.records, headChanged: mutation.headChanged } }
           : {}),
