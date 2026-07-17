@@ -277,7 +277,7 @@ export async function scanCommandMutations(args: {
   ]);
   const records = status.split("\0").filter(record =>
     record.length > 0
-    && !(args.dependencyLink === "inherited" && /^[?!] node_modules$/.test(record)));
+    && !(args.dependencyLink === "inherited" && /^[?!] node_modules\/?$/.test(record)));
   const disallowedRecords = args.allowedMutations === "ignored-paths"
     ? records.filter(record => !record.startsWith("! "))
     : records;

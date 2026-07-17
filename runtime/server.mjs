@@ -25638,7 +25638,7 @@ async function scanCommandMutations(args) {
     ]),
     checkedGit3(args.worktreePath, ["rev-parse", "--verify", "HEAD"])
   ]);
-  const records = status.split("\0").filter((record2) => record2.length > 0 && !(args.dependencyLink === "inherited" && /^[?!] node_modules$/.test(record2)));
+  const records = status.split("\0").filter((record2) => record2.length > 0 && !(args.dependencyLink === "inherited" && /^[?!] node_modules\/?$/.test(record2)));
   const disallowedRecords = args.allowedMutations === "ignored-paths" ? records.filter((record2) => !record2.startsWith("! ")) : records;
   const headChanged = currentHead.trim() !== args.expectedHeadCommitOid;
   return { mutated: disallowedRecords.length > 0 || headChanged, records: disallowedRecords, headChanged };
