@@ -27173,6 +27173,96 @@ var ArtifactStore = class {
   }
 };
 
+// src/runtime/reproducibility.ts
+import { readFile as readFile2 } from "node:fs/promises";
+var REPOSITORY_INSTRUCTION_PATHS = ["AGENTS.md", "CLAUDE.md"];
+function gitFailure4(action, result) {
+  const diagnostic = redact(result.stderr || result.stdout).trim().slice(0, 2e3);
+  return new RuntimeError(`${action} failed${diagnostic ? `: ${diagnostic}` : ""}`);
+}
+function assertCompleteGitOutput(action, result) {
+  if (result.exitCode !== 0) throw gitFailure4(action, result);
+  if (result.truncated?.stdout === true) {
+    throw new RuntimeError(`${action} output exceeded the runtime limit`);
+  }
+}
+async function collectRepositoryInstructions(repoRoot, baseCommitOid, runGit) {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseCommitOid)) {
+    throw new RuntimeError("reproducibility base commit oid is invalid");
+  }
+  const tree = await runGit(repoRoot, [
+    "ls-tree",
+    "--full-tree",
+    "-z",
+    baseCommitOid,
+    "--",
+    ...REPOSITORY_INSTRUCTION_PATHS
+  ]);
+  assertCompleteGitOutput("collect repository instruction paths", tree);
+  const presentPaths = [];
+  for (const record2 of tree.stdout.split("\0")) {
+    if (record2.length === 0) continue;
+    const separator = record2.indexOf("	");
+    const metadata = separator === -1 ? "" : record2.slice(0, separator);
+    const instructionPath = separator === -1 ? "" : record2.slice(separator + 1);
+    if (!/^\d{6} blob [0-9a-f]+$/.test(metadata) || !REPOSITORY_INSTRUCTION_PATHS.includes(
+      instructionPath
+    )) {
+      throw new RuntimeError("repository instruction tree entry is invalid");
+    }
+    presentPaths.push(instructionPath);
+  }
+  const instructions = [];
+  for (const instructionPath of presentPaths) {
+    const blob = await runGit(repoRoot, ["show", `${baseCommitOid}:${instructionPath}`]);
+    assertCompleteGitOutput(`collect repository instruction ${instructionPath}`, blob);
+    instructions.push({ path: instructionPath, content: blob.stdout });
+  }
+  return instructions;
+}
+function defaultVerifierModuleUrls() {
+  return [
+    new URL("../verify/acceptance-verifier.js", import.meta.url),
+    new URL("../verify/acceptance-verifier.ts", import.meta.url),
+    new URL(import.meta.url)
+  ];
+}
+function isMissingModule(error2) {
+  const code = error2.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+async function collectPackagedVerifier(dependencies) {
+  const readModule = dependencies.readModule ?? ((url) => readFile2(url));
+  const candidates = dependencies.verifierModuleUrls ?? defaultVerifierModuleUrls();
+  let lastMissingError;
+  for (const candidate of candidates) {
+    let bytes;
+    try {
+      bytes = await readModule(candidate);
+    } catch (error2) {
+      if (!isMissingModule(error2)) {
+        throw new RuntimeError("packaged verifier module could not be read");
+      }
+      lastMissingError = error2;
+      continue;
+    }
+    if (bytes.length === 0) {
+      throw new RuntimeError("packaged verifier module is empty");
+    }
+    return { version: RUNTIME_VERSION, content: bytes.toString("utf8") };
+  }
+  throw new RuntimeError("packaged verifier module could not be resolved", {
+    cause: lastMissingError instanceof Error ? lastMissingError.message : "no module candidates"
+  });
+}
+async function collectReproducibilityInputs(repoRoot, baseCommitOid, dependencies = {}) {
+  const [repositoryInstructions, packagedVerifier] = await Promise.all([
+    collectRepositoryInstructions(repoRoot, baseCommitOid, dependencies.git ?? git),
+    collectPackagedVerifier(dependencies)
+  ]);
+  return { repositoryInstructions, packagedVerifier };
+}
+
 // src/runtime/attempt-runtime.ts
 var MAX_PRODUCER_OUTPUT_BYTES = 1e6;
 var NO_FOLLOW2 = constants3.O_NOFOLLOW ?? 0;
@@ -27482,8 +27572,6 @@ async function runAttempt(checkoutPath, spec, deps) {
   const startedAtMs = now();
   const runId = (deps.runId ?? randomUUID3)();
   const store = new ArtifactStore(runId);
-  const repositoryInstructions = deps.repositoryInstructions ?? [];
-  const packagedVerifier = deps.packagedVerifier ?? { version: "pending", content: "" };
   const canonical = await ps.canonicalizePath(checkoutPath);
   let lock = null;
   let worktree = null;
@@ -27502,6 +27590,12 @@ async function runAttempt(checkoutPath, spec, deps) {
         { reason: preconditions.reason, detail: preconditions.detail ?? [] }
       );
     }
+    const collected = deps.repositoryInstructions !== void 0 && deps.packagedVerifier !== void 0 ? null : await (deps.reproducibilityCollector ?? collectReproducibilityInputs)(
+      canonical.canonical,
+      preconditions.baseCommitOid
+    );
+    const repositoryInstructions = deps.repositoryInstructions ?? collected.repositoryInstructions;
+    const packagedVerifier = deps.packagedVerifier ?? collected.packagedVerifier;
     const executionMode = spec.executionMode;
     let baselineEvidence = { baseline: "skipped \u2014 read-only spec" };
     if (executionMode === "edit") {
@@ -28192,7 +28286,7 @@ function buildRoleSpec(role, base, pkg) {
 }
 
 // src/pipeline/git-writable-roots.ts
-import { lstat as lstat5, readFile as readFile2, realpath as realpath5 } from "node:fs/promises";
+import { lstat as lstat5, readFile as readFile3, realpath as realpath5 } from "node:fs/promises";
 import path11 from "node:path";
 function invalidWritableRoots(message, cause) {
   return new RuntimeError(message, {
@@ -28222,7 +28316,7 @@ function sameFileIdentity(before, after) {
 }
 async function readStablePlainFile(filename, label) {
   const before = await requirePlainFile(filename, label);
-  const value = await readFile2(filename, "utf8");
+  const value = await readFile3(filename, "utf8");
   const after = await requirePlainFile(filename, label);
   if (!sameFileIdentity(before, after)) {
     throw invalidWritableRoots(`${label} changed while being read`);
@@ -28504,13 +28598,13 @@ var IGNORED_STRUCTURAL_FAILURES = /* @__PURE__ */ new Set([
   "artifact-divergence",
   "base-changed"
 ]);
-function gitFailure4(action, result) {
+function gitFailure5(action, result) {
   const diagnostic = (result.stderr || result.stdout).trim().slice(0, 2e3);
   return new RuntimeError(`${action} failed${diagnostic ? `: ${diagnostic}` : ""}`);
 }
 async function checkedGit4(cwd, args) {
   const result = await git(cwd, args);
-  if (result.exitCode !== 0) throw gitFailure4(`git ${args[0] ?? "command"}`, result);
+  if (result.exitCode !== 0) throw gitFailure5(`git ${args[0] ?? "command"}`, result);
   return result.stdout;
 }
 function roleArgs(args) {

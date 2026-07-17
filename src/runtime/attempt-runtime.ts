@@ -58,6 +58,10 @@ import {
 } from "./environment-policy.js";
 import { redact, redactValues } from "./redaction.js";
 import {
+  collectReproducibilityInputs,
+  type ReproducibilityInputs,
+} from "./reproducibility.js";
+import {
   buildRunManifest,
   type PackagedVerifierInput,
   type RepositoryInstructionInput,
@@ -98,6 +102,10 @@ export interface AttemptRuntimeDependencies {
   abortSignal?: AbortSignal;
   repositoryInstructions?: RepositoryInstructionInput[];
   packagedVerifier?: PackagedVerifierInput;
+  reproducibilityCollector?: (
+    repoRoot: string,
+    baseCommitOid: string,
+  ) => Promise<ReproducibilityInputs>;
   /** Host progress reporting only; never awaited and never affects the attempt. */
   onPhase?: (phase: string) => void;
 }
@@ -484,8 +492,6 @@ export async function runAttempt(
   const startedAtMs = now();
   const runId = (deps.runId ?? randomUUID)();
   const store = new ArtifactStore(runId);
-  const repositoryInstructions = deps.repositoryInstructions ?? [];
-  const packagedVerifier = deps.packagedVerifier ?? { version: "pending", content: "" };
   const canonical = await ps.canonicalizePath(checkoutPath);
   let lock: CheckoutLock | null = null;
   let worktree: { path: string; cleanup(): Promise<void> } | null = null;
@@ -506,6 +512,17 @@ export async function runAttempt(
         { reason: preconditions.reason, detail: preconditions.detail ?? [] },
       );
     }
+
+    const collected = deps.repositoryInstructions !== undefined
+      && deps.packagedVerifier !== undefined
+      ? null
+      : await (deps.reproducibilityCollector ?? collectReproducibilityInputs)(
+        canonical.canonical,
+        preconditions.baseCommitOid,
+      );
+    const repositoryInstructions = deps.repositoryInstructions
+      ?? collected!.repositoryInstructions;
+    const packagedVerifier = deps.packagedVerifier ?? collected!.packagedVerifier;
 
   const executionMode = (spec as { executionMode: string }).executionMode;
   let baselineEvidence: Record<string, unknown> = { baseline: "skipped — read-only spec" };

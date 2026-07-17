@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git } from "../../src/git/git-exec.js";
 import { verifyBaseline } from "../../src/verify/baseline-verifier.js";
@@ -11,6 +12,7 @@ import type {
 } from "../../src/platform/platform-services.js";
 import { getPlatformServices } from "../../src/platform/select-platform.js";
 import type { DelegationSpec } from "../../src/protocol/delegation-spec.js";
+import { RUNTIME_VERSION } from "../../src/protocol/versions.js";
 import { ProducerRegistry } from "../../src/producers/producer-registry.js";
 import type {
   CapabilityReport,
@@ -30,7 +32,8 @@ import {
   containsRegisteredSecret,
   redact,
 } from "../../src/runtime/redaction.js";
-import { NestedDelegationError } from "../../src/util/errors.js";
+import { collectReproducibilityInputs } from "../../src/runtime/reproducibility.js";
+import { NestedDelegationError, RuntimeError } from "../../src/util/errors.js";
 
 const fixturePath = fileURLToPath(new URL("fixtures/edit-file.mjs", import.meta.url));
 const sleepFixturePath = fileURLToPath(new URL("fixtures/echo-sleep.mjs", import.meta.url));
@@ -226,6 +229,7 @@ function dependencies(
     }),
     runId: () => runId,
     env: {},
+    repositoryInstructions: [],
     packagedVerifier: { version: "test", content: "trusted verifier" },
     ...overrides,
   };
@@ -475,6 +479,76 @@ describe("runAttempt", () => {
     expect(runStart.startedAt).toEqual(expect.any(String));
     expect(containsRegisteredSecret("attempt-secret-value")).toBe(false);
     await expectAttemptResourcesCleaned(runId);
+  });
+
+  it("collects repository instructions and packaged verifier provenance by default", async () => {
+    const repoRoot = await initRepo();
+    const instructionContent = "# Repository instructions\nUse the committed policy.\n";
+    await writeFile(join(repoRoot, "AGENTS.md"), instructionContent);
+    await runGit(repoRoot, ["add", "AGENTS.md"]);
+    await runGit(repoRoot, ["commit", "-q", "-m", "add instructions"]);
+    const runId = "run-reproducibility-defaults";
+    const attemptDependencies = dependencies(new FakeAdapter(), runId);
+    delete attemptDependencies.repositoryInstructions;
+    delete attemptDependencies.packagedVerifier;
+
+    const result = await runAttempt(repoRoot, validSpec(), attemptDependencies);
+
+    expect(result.status).toBe("verified-candidate");
+    const manifest = await archivedJson(runId, "manifest.json");
+    expect(manifest.repositoryInstructions).toEqual([{
+      path: "AGENTS.md",
+      hash: createHash("sha256").update(instructionContent).digest("hex"),
+    }]);
+    expect(manifest.packagedVerifier).toEqual({
+      version: RUNTIME_VERSION,
+      hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect((manifest.packagedVerifier as { hash: string }).hash).not.toBe(
+      createHash("sha256").update("").digest("hex"),
+    );
+  });
+
+  it("records no repository instructions when none exist at the base commit", async () => {
+    const repoRoot = await initRepo();
+    const runId = "run-reproducibility-empty-instructions";
+    const attemptDependencies = dependencies(new FakeAdapter(), runId);
+    delete attemptDependencies.repositoryInstructions;
+    delete attemptDependencies.packagedVerifier;
+
+    const result = await runAttempt(repoRoot, validSpec(), attemptDependencies);
+
+    expect(result.status).toBe("verified-candidate");
+    expect(await archivedJson(runId, "manifest.json")).toMatchObject({
+      repositoryInstructions: [],
+    });
+  });
+
+  it("fails closed when packaged verifier provenance cannot be resolved", async () => {
+    const repoRoot = await initRepo();
+    const runId = "run-reproducibility-failure";
+    const attemptDependencies = dependencies(new FakeAdapter(), runId);
+    delete attemptDependencies.repositoryInstructions;
+    delete attemptDependencies.packagedVerifier;
+    attemptDependencies.reproducibilityCollector = (canonicalRoot, baseCommitOid) =>
+      collectReproducibilityInputs(canonicalRoot, baseCommitOid, {
+        verifierModuleUrls: [pathToFileURL(join(repoRoot, "missing-verifier.mjs"))],
+      });
+
+    await expect(runAttempt(repoRoot, validSpec(), attemptDependencies))
+      .rejects.toBeInstanceOf(RuntimeError);
+    await expect(access(join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "runs",
+      runId,
+      "result.json",
+    ))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "runs",
+      runId,
+      "manifest.json",
+    ))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("persists honest verification policy evidence in the run manifest", async () => {
