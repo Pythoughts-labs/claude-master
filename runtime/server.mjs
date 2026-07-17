@@ -27189,7 +27189,7 @@ async function runAttempt(checkoutPath, spec, deps) {
     reportPhase(deps, "verifying baseline");
     let baseline;
     try {
-      baseline = await verifyBaseline({
+      baseline = await (deps.baselineVerifier ?? verifyBaseline)({
         repoRoot: canonical.canonical,
         headCommitOid: preconditions.baseCommitOid,
         commands: spec.verification,

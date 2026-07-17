@@ -89,6 +89,7 @@ export interface AcceptanceVerifierLike {
 
 export interface AttemptRuntimeDependencies {
   verifier: AcceptanceVerifierLike;
+  baselineVerifier?: typeof verifyBaseline;
   ps?: PlatformServices;
   producerRegistry?: ProducerRegistry;
   runId?: () => string;
@@ -505,7 +506,7 @@ export async function runAttempt(
     reportPhase(deps, "verifying baseline");
     let baseline;
     try {
-      baseline = await verifyBaseline({
+      baseline = await (deps.baselineVerifier ?? verifyBaseline)({
         repoRoot: canonical.canonical,
         headCommitOid: preconditions.baseCommitOid,
         commands: spec.verification,

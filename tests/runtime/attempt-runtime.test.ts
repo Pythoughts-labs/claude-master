@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git } from "../../src/git/git-exec.js";
+import { verifyBaseline } from "../../src/verify/baseline-verifier.js";
 import type { ResolvedExecutable } from "../../src/platform/platform-services.js";
 import { getPlatformServices } from "../../src/platform/select-platform.js";
 import type { DelegationSpec } from "../../src/protocol/delegation-spec.js";
@@ -212,6 +213,14 @@ function dependencies(
     ps: getPlatformServices(),
     producerRegistry: new ProducerRegistry([adapter]),
     verifier: passingVerifier,
+    // Hermetic stub: the real baseline verifier executes the spec's commands
+    // with the host PATH/HOME, which host-specific node shims can break.
+    // Tests that exercise real baseline behavior override this explicitly.
+    baselineVerifier: async args => ({
+      baselineCommitOid: args.headCommitOid,
+      commands: args.commands.map(command => ({ id: command.id, exitCode: 0, ok: true })),
+      dependencyLink: "none",
+    }),
     runId: () => runId,
     env: {},
     packagedVerifier: { version: "test", content: "trusted verifier" },
@@ -274,7 +283,7 @@ describe("runAttempt", () => {
     spec.verification[0]!.expectedExitCodes = [1];
     const adapter = new FakeAdapter();
 
-    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-fail"));
+    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-fail", { baselineVerifier: verifyBaseline }));
 
     expect(result.failure).toBe("environment-defect");
     expect(result.evidence).toMatchObject({
@@ -290,7 +299,7 @@ describe("runAttempt", () => {
     spec.expectBaselineFailure = true;
     const adapter = new FakeAdapter();
 
-    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-expected"));
+    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-expected", { baselineVerifier: verifyBaseline }));
 
     expect(result.status).toBe("verified-candidate");
     expect(adapter.probeCalls).toBe(1);
@@ -303,7 +312,7 @@ describe("runAttempt", () => {
     spec.executionMode = "read-only";
     const adapter = new FakeAdapter();
 
-    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-skipped"));
+    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-skipped", { baselineVerifier: verifyBaseline }));
 
     expect(adapter.probeCalls).toBe(1);
     expect(result.evidence).toMatchObject({ baseline: "skipped — read-only spec" });
