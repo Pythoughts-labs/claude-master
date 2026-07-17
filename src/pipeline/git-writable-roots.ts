@@ -1,21 +1,86 @@
-import { readFile } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { RuntimeError } from "../util/errors.js";
+
+function invalidWritableRoots(message: string, cause?: unknown): RuntimeError {
+  return new RuntimeError(message, {
+    classification: "sandbox-violation",
+    ...(cause === undefined ? {} : { cause }),
+  });
+}
+
+async function requirePlainFile(filename: string, label: string): Promise<Stats> {
+  const stats = await lstat(filename);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw invalidWritableRoots(`${label} must be a plain regular file`);
+  }
+  return stats;
+}
+
+async function requirePlainDirectory(directory: string, label: string): Promise<void> {
+  const stats = await lstat(directory);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw invalidWritableRoots(`${label} must be a plain directory`);
+  }
+}
+
+function isContainedBy(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relative);
+}
+
+function sameFileIdentity(before: Stats, after: Stats): boolean {
+  return before.dev === after.dev && before.ino === after.ino;
+}
+
+async function readStablePlainFile(filename: string, label: string): Promise<string> {
+  const before = await requirePlainFile(filename, label);
+  const value = await readFile(filename, "utf8");
+  const after = await requirePlainFile(filename, label);
+  if (!sameFileIdentity(before, after)) {
+    throw invalidWritableRoots(`${label} changed while being read`);
+  }
+  return value;
+}
 
 export async function resolveLinkedWorktreeWritableRoots(
   worktreePath: string,
 ): Promise<string[]> {
   const dotGit = path.join(worktreePath, ".git");
-  let pointer: string;
   try {
-    pointer = await readFile(dotGit, "utf8");
-  } catch {
-    return [];
-  }
-  const match = /^gitdir: (.+)\r?\n?$/.exec(pointer);
-  if (match === null) return [];
+    const pointer = await readStablePlainFile(dotGit, "linked worktree .git entry");
+    const match = /^gitdir: (.+)\r?\n?$/.exec(pointer);
+    if (match === null) {
+      throw invalidWritableRoots("linked worktree .git pointer is malformed");
+    }
 
-  const gitDir = path.resolve(worktreePath, match[1]!);
-  const commonDirValue = (await readFile(path.join(gitDir, "commondir"), "utf8")).trim();
-  const commonDir = path.resolve(gitDir, commonDirValue);
-  return [gitDir, path.join(commonDir, "objects")];
+    const gitDir = await realpath(path.resolve(worktreePath, match[1]!));
+    await requirePlainDirectory(gitDir, "linked worktree private git directory");
+
+    const commonDirPointer = path.join(gitDir, "commondir");
+    const commonDirValue = (await readStablePlainFile(
+      commonDirPointer,
+      "linked worktree commondir entry",
+    )).trim();
+    if (commonDirValue === "" || commonDirValue.includes("\0")) {
+      throw invalidWritableRoots("linked worktree commondir pointer is malformed");
+    }
+
+    const commonDir = await realpath(path.resolve(gitDir, commonDirValue));
+    await requirePlainDirectory(commonDir, "common git directory");
+    const worktreesDir = await realpath(path.join(commonDir, "worktrees"));
+    await requirePlainDirectory(worktreesDir, "common git worktrees directory");
+    if (!isContainedBy(worktreesDir, gitDir)) {
+      throw invalidWritableRoots("linked worktree private git directory escapes common git worktrees");
+    }
+
+    const objectsDir = path.join(commonDir, "objects");
+    await requirePlainDirectory(objectsDir, "common git objects directory");
+    return [gitDir, objectsDir];
+  } catch (error) {
+    if (error instanceof RuntimeError) throw error;
+    throw invalidWritableRoots("linked worktree writable roots are invalid", error);
+  }
 }

@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { git } from "../../src/git/git-exec.js";
 import { resolveLinkedWorktreeWritableRoots } from "../../src/pipeline/git-writable-roots.js";
+import { RuntimeError } from "../../src/util/errors.js";
 
 const temporaryPaths: string[] = [];
 
@@ -31,5 +32,52 @@ describe("resolveLinkedWorktreeWritableRoots", () => {
       privateGitDir,
       path.join(commonGitDir, "objects"),
     ]);
+  });
+
+  it("rejects a symlinked .git entry with a structured error", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ca-git-roots-"));
+    temporaryPaths.push(root);
+    const worktree = path.join(root, "worktree");
+    await mkdir(worktree);
+    const pointer = path.join(root, "pointer");
+    await writeFile(pointer, "gitdir: elsewhere\n");
+    await symlink(pointer, path.join(worktree, ".git"));
+
+    await expect(resolveLinkedWorktreeWritableRoots(worktree)).rejects.toMatchObject({
+      name: "RuntimeError",
+      detail: { classification: "sandbox-violation" },
+    });
+  });
+
+  it("rejects a malformed commondir with a structured error", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ca-git-roots-"));
+    temporaryPaths.push(root);
+    const worktree = path.join(root, "worktree");
+    const gitDir = path.join(root, "common", "worktrees", "fix");
+    await mkdir(worktree, { recursive: true });
+    await mkdir(gitDir, { recursive: true });
+    await writeFile(path.join(worktree, ".git"), `gitdir: ${gitDir}\n`);
+    await writeFile(path.join(gitDir, "commondir"), "\n");
+
+    await expect(resolveLinkedWorktreeWritableRoots(worktree)).rejects.toBeInstanceOf(RuntimeError);
+  });
+
+  it("rejects a private git directory outside common worktrees", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ca-git-roots-"));
+    temporaryPaths.push(root);
+    const worktree = path.join(root, "worktree");
+    const commonDir = path.join(root, "common");
+    const gitDir = path.join(root, "escaped");
+    await mkdir(worktree);
+    await mkdir(path.join(commonDir, "worktrees"), { recursive: true });
+    await mkdir(path.join(commonDir, "objects"));
+    await mkdir(gitDir);
+    await writeFile(path.join(worktree, ".git"), `gitdir: ${gitDir}\n`);
+    await writeFile(path.join(gitDir, "commondir"), `${commonDir}\n`);
+
+    await expect(resolveLinkedWorktreeWritableRoots(worktree)).rejects.toMatchObject({
+      name: "RuntimeError",
+      detail: { classification: "sandbox-violation" },
+    });
   });
 });

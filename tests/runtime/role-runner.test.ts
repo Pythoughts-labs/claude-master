@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -241,6 +241,15 @@ function argsWith(adapter: FakeAdapter, role: PipelineRole): RoleRunArgs {
   };
 }
 
+async function configureFixerGitRoots(): Promise<void> {
+  const gitDir = join(await temporaryDirectory("ca-role-git-"), "worktrees", "fix");
+  const commonDir = join(gitDir, "..", "..");
+  await mkdir(gitDir, { recursive: true });
+  await mkdir(join(commonDir, "objects"));
+  await writeFile(join(worktreePath, ".git"), `gitdir: ${gitDir}\n`);
+  await writeFile(join(gitDir, "commondir"), "../..\n");
+}
+
 beforeEach(async () => {
   previousNodeEnvironment = process.env.NODE_ENV;
   process.env.NODE_ENV = "test";
@@ -325,6 +334,7 @@ describe("runRole", () => {
 
   it("retries exactly once on process failure, then reports failure", async () => {
     const adapter = new FakeAdapter({ exitCode: 1 });
+    await configureFixerGitRoots();
 
     const result = await runRole(argsWith(adapter, "fixer"));
 
@@ -345,10 +355,26 @@ describe("runRole", () => {
 
     await runRole(argsWith(adapter, "fixer"));
 
+    // The resolver canonicalizes via realpath (e.g. macOS /var -> /private/var).
     expect(adapter.extraWritableRootRequests).toEqual([[
-      gitDir,
-      join(commonDir, "objects"),
+      await realpath(gitDir),
+      join(await realpath(commonDir), "objects"),
     ]]);
+  });
+
+  it("fails closed when fixer writable-root validation fails", async () => {
+    const adapter = new FakeAdapter();
+
+    const result = await runRole(argsWith(adapter, "fixer"));
+
+    expect(result).toMatchObject({
+      ok: false,
+      rawOutput: "",
+      failure: "sandbox-violation",
+      producerId: "fake",
+    });
+    expect(adapter.invocationCount).toBe(0);
+    expect(adapter.spawnCount).toBe(0);
   });
 
   it("recovers when the retry succeeds", async () => {

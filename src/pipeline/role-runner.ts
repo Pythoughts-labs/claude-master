@@ -146,9 +146,19 @@ export async function runRole(args: RoleRunArgs): Promise<RoleRunResult> {
   }
 
   const readOnly = READ_ONLY_ROLES.has(args.role);
-  const extraWritableRoots = args.role === "fixer"
-    ? await resolveLinkedWorktreeWritableRoots(args.worktreePath)
-    : [];
+  let extraWritableRoots: string[] = [];
+  if (args.role === "fixer") {
+    try {
+      extraWritableRoots = await resolveLinkedWorktreeWritableRoots(args.worktreePath);
+    } catch {
+      return {
+        ok: false,
+        rawOutput: "",
+        failure: "sandbox-violation",
+        producerId,
+      };
+    }
+  }
   // Producers with a native sandbox (Codex) must confine read-only roles
   // themselves: wrapping them in an outer Seatbelt profile EPERM-crashes their
   // internal sandbox init. Producers without one get the HOST's read-only
