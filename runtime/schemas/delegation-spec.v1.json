@@ -129,6 +129,9 @@
       },
       "minItems": 1
     },
+    "expectBaselineFailure": {
+      "type": "boolean"
+    },
     "executionMode": {
       "const": "edit"
     },

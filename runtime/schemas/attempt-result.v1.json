@@ -39,6 +39,7 @@
         "sandbox-violation",
         "invalid-output",
         "producer-failure",
+        "environment-defect",
         "verification-failure"
       ]
     },
@@ -102,7 +103,8 @@
             "timeout",
             "sandbox-violation",
             "invalid-output",
-            "producer-failure"
+            "producer-failure",
+            "environment-defect"
           ]
         },
         "candidate": { "type": "null" }

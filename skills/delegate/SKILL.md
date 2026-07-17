@@ -54,7 +54,13 @@ Construct a candidate spec with every required field:
 - Criteria that cannot be commanded, such as "code is clean", belong in the `review` block, not `successCriteria`.
 - Prefer explicit test file paths in verification args; directory args can resolve differently between the Producer sandbox and clean-room verification.
 
+**Verification preflight:** The runtime runs every verification command against clean HEAD in a disposable worktree before dispatch. Repair the spec if a command cannot start. A baseline failure unrelated to the task is an environment defect the architect repairs centrally before dispatching; set `expectBaselineFailure: true` only for intentional bug-reproducer specs.
+
 Resolve ambiguity before calling the runtime. Do not give the Producer credentials, hidden instructions, acceptance authority, or permission to expand scope.
+
+## Coordinator duties
+
+When running multiple delegations, normalize reported blockers by phase, command id, and root cause. The moment two independent lanes report the same blocker, pause affected lanes and treat it as an architect-owned shared-environment defect. Reproduce it once against the clean baseline, fix it centrally, rerun the preflight to green, then resume or redispatch the unchanged specs. Never wait for remaining lanes to rediscover it, and never push shared-tooling fixes into individual Producer lanes.
 
 ## Trusted MCP lifecycle
 

@@ -48,6 +48,7 @@ import {
 } from "../producers/producer-registry.js";
 import { route } from "../producers/routing-policy.js";
 import { NestedDelegationError, RuntimeError } from "../util/errors.js";
+import { verifyBaseline } from "../verify/baseline-verifier.js";
 import { ArtifactStore } from "./artifact-store.js";
 import {
   buildEnvironment,
@@ -173,6 +174,7 @@ function summaryForFailure(failure: FailureClassification | null): string {
     case "producer-failure": return "producer process reported failure";
     case "verification-failure": return "candidate did not pass independent verification";
     case "invalid-specification": return "delegation specification is invalid";
+    case "environment-defect": return "clean repository baseline did not pass verification";
   }
 }
 
@@ -497,6 +499,45 @@ export async function runAttempt(
     );
   }
 
+  const executionMode = (spec as { executionMode: string }).executionMode;
+  let baselineEvidence: Record<string, unknown> = { baseline: "skipped — read-only spec" };
+  if (executionMode === "edit") {
+    reportPhase(deps, "verifying baseline");
+    let baseline;
+    try {
+      baseline = await verifyBaseline({
+        repoRoot: canonical.canonical,
+        headCommitOid: preconditions.baseCommitOid,
+        commands: spec.verification,
+        ps,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return archiveTerminal({
+        store, spec, runId, startedAtMs, now,
+        repoRoot: canonical.canonical, baseCommitOid: preconditions.baseCommitOid,
+        signals: { "environment-defect": true }, report: null, profile: null, invocation: null,
+        environment: [], temporaryHomeApplied: false, producerSummary: null,
+        candidate: null, commandOutcomes: [], unresolvedIssues: ["baseline-verifier-error"],
+        evidence: { baseline: `error: ${redact(message)}` }, producerLog: producerLog(null),
+        repositoryInstructions, packagedVerifier,
+      });
+    }
+    baselineEvidence = { baseline };
+    const baselineFailed = baseline.commands.some(command => !command.ok);
+    if (baselineFailed && spec.expectBaselineFailure !== true) {
+      return archiveTerminal({
+        store, spec, runId, startedAtMs, now,
+        repoRoot: canonical.canonical, baseCommitOid: preconditions.baseCommitOid,
+        signals: { "environment-defect": true }, report: null, profile: null, invocation: null,
+        environment: [], temporaryHomeApplied: false, producerSummary: null,
+        candidate: null, commandOutcomes: [], unresolvedIssues: ["baseline-verification-failed"],
+        evidence: baselineEvidence, producerLog: producerLog(null),
+        repositoryInstructions, packagedVerifier,
+      });
+    }
+  }
+
   reportPhase(deps, "probing producers");
   const reports = await probeAll({
     ps,
@@ -531,7 +572,7 @@ export async function runAttempt(
         ...routing.considered.map(candidate =>
           `producer ${candidate.producerId}: ${candidate.outcome}${candidate.detail === null ? "" : ` (${candidate.detail})`}`),
       ],
-      evidence: { routing: routing.reason, considered: routing.considered, reports },
+      evidence: { ...baselineEvidence, routing: routing.reason, considered: routing.considered, reports },
       producerLog: producerLog(null),
       repositoryInstructions,
       packagedVerifier,
@@ -559,7 +600,7 @@ export async function runAttempt(
       candidate: null,
       commandOutcomes: [],
       unresolvedIssues: ["selected-producer-contract-invalid"],
-      evidence: { routing: "selected-producer-contract-invalid" },
+      evidence: { ...baselineEvidence, routing: "selected-producer-contract-invalid" },
       producerLog: producerLog(null),
       repositoryInstructions,
       packagedVerifier,
@@ -670,7 +711,9 @@ export async function runAttempt(
     let candidate: CandidateArtifact | null = null;
     let commandOutcomes: CommandOutcome[] = [];
     let unresolvedIssues: string[] = [];
-    let evidence: Record<string, unknown> = confinement === null ? {} : { confinement };
+    let evidence: Record<string, unknown> = confinement === null
+      ? baselineEvidence
+      : { ...baselineEvidence, confinement };
     if (exit.spawnError !== undefined) signals["spawn-failure"] = true;
     if (exit.cancelled) signals.cancelled = true;
     if (exit.timedOut) signals.timeout = true;

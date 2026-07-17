@@ -1,0 +1,60 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { git } from "../../src/git/git-exec.js";
+import type { VerificationCommand } from "../../src/protocol/delegation-spec.js";
+import { verifyBaseline } from "../../src/verify/baseline-verifier.js";
+
+const temporaryPaths: string[] = [];
+
+async function fixture(): Promise<{ repoRoot: string; headCommitOid: string }> {
+  const repoRoot = await mkdtemp(join(tmpdir(), "ca-baseline-verifier-"));
+  temporaryPaths.push(repoRoot);
+  for (const args of [
+    ["init", "-q"],
+    ["config", "user.name", "Test User"],
+    ["config", "user.email", "test@example.invalid"],
+  ]) {
+    expect((await git(repoRoot, args)).exitCode).toBe(0);
+  }
+  await writeFile(join(repoRoot, "a.txt"), "baseline\n");
+  expect((await git(repoRoot, ["add", "-A"])).exitCode).toBe(0);
+  expect((await git(repoRoot, ["commit", "-q", "-m", "initial"])).exitCode).toBe(0);
+  const head = await git(repoRoot, ["rev-parse", "HEAD"]);
+  expect(head.exitCode).toBe(0);
+  return { repoRoot, headCommitOid: head.stdout.trim() };
+}
+
+function command(exitCode: number): VerificationCommand {
+  return {
+    id: `exit-${exitCode}`,
+    executable: process.execPath,
+    args: ["-e", `process.exit(${exitCode})`],
+    cwd: ".",
+    timeoutMs: 5_000,
+    network: "denied",
+    expectedExitCodes: [0],
+  };
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryPaths.splice(0).map(path =>
+    rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })));
+});
+
+describe("verifyBaseline", () => {
+  it("passes a green command against clean HEAD", async () => {
+    const repo = await fixture();
+    await expect(verifyBaseline({ ...repo, commands: [command(0)] })).resolves.toEqual({
+      baselineCommitOid: repo.headCommitOid,
+      commands: [{ id: "exit-0", exitCode: 0, ok: true }],
+    });
+  });
+
+  it("marks a failing command as not ok", async () => {
+    const repo = await fixture();
+    const report = await verifyBaseline({ ...repo, commands: [command(1)] });
+    expect(report.commands).toEqual([{ id: "exit-1", exitCode: 1, ok: false }]);
+  });
+});

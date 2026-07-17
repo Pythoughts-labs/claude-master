@@ -32,6 +32,7 @@ export interface DelegationSpec {
   forbiddenScope: string[];                  // path globs never to touch
   successCriteria: string[];
   verification: VerificationCommand[];       // Host-authorized checks only
+  expectBaselineFailure?: boolean;           // intentional bug-reproducer specs only
   executionMode: "edit";                     // P0: implementation Lane only
   timeoutMs: number;                         // wall-clock; bounded by RUNTIME_MAX_TIMEOUT_MS
   producerPreferences: string[];             // ordered producer ids, e.g. ["codex"]

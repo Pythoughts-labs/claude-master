@@ -53,10 +53,12 @@ interface FakeAdapterOptions {
 
 class FakeAdapter implements ProducerAdapter {
   readonly producerId = "fake";
+  probeCalls = 0;
 
   constructor(private readonly options: FakeAdapterOptions = {}) {}
 
   async probe(ctx: ProbeContext): Promise<CapabilityReport> {
+    this.probeCalls += 1;
     const eligible = this.options.eligible ?? true;
     return {
       producerId: this.producerId,
@@ -266,6 +268,47 @@ afterEach(async () => {
 });
 
 describe("runAttempt", () => {
+  it("stops on a failing baseline before probing producers", async () => {
+    const repoRoot = await initRepo();
+    const spec = validSpec();
+    spec.verification[0]!.expectedExitCodes = [1];
+    const adapter = new FakeAdapter();
+
+    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-fail"));
+
+    expect(result.failure).toBe("environment-defect");
+    expect(result.evidence).toMatchObject({
+      baseline: { commands: [{ id: "check", exitCode: 0, ok: false }] },
+    });
+    expect(adapter.probeCalls).toBe(0);
+  });
+
+  it("proceeds when an intentional baseline failure is expected", async () => {
+    const repoRoot = await initRepo();
+    const spec = validSpec();
+    spec.verification[0]!.expectedExitCodes = [1];
+    spec.expectBaselineFailure = true;
+    const adapter = new FakeAdapter();
+
+    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-expected"));
+
+    expect(result.status).toBe("verified-candidate");
+    expect(adapter.probeCalls).toBe(1);
+    expect(result.evidence).toMatchObject({ baseline: { commands: [{ ok: false }] } });
+  });
+
+  it("skips the baseline for a read-only spec", async () => {
+    const repoRoot = await initRepo();
+    const spec = validSpec() as DelegationSpec & { executionMode: string };
+    spec.executionMode = "read-only";
+    const adapter = new FakeAdapter();
+
+    const result = await runAttempt(repoRoot, spec, dependencies(adapter, "run-baseline-skipped"));
+
+    expect(adapter.probeCalls).toBe(1);
+    expect(result.evidence).toMatchObject({ baseline: "skipped — read-only spec" });
+  });
+
   it.runIf(process.platform !== "win32")(
     "verifies a candidate from a POSIX checkout path containing spaces and Unicode",
     async () => {

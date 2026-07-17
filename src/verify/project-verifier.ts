@@ -64,7 +64,7 @@ export interface ProjectVerifyResult {
   outputLogs: ProjectOutputLog[];
 }
 
-interface ExecutedCommand {
+export interface ExecutedCommand {
   outcome: CommandOutcome;
   evidence: ProjectCommandEvidence;
   outputLogs: ProjectOutputLog[];
@@ -120,7 +120,7 @@ export function isWithinScope(
     || (!path.posix.isAbsolute(relative) && relative !== ".." && !relative.startsWith("../"));
 }
 
-async function resolveCommandCwd(
+export async function resolveCommandCwd(
   worktreePath: string,
   commandCwd: string,
   os: PlatformServices["os"],
@@ -139,7 +139,7 @@ async function resolveCommandCwd(
   }
 }
 
-function appliesToPlatform(
+export function appliesToPlatform(
   command: VerificationCommand,
   os: PlatformServices["os"],
   arch: string,
@@ -173,7 +173,7 @@ function boundText(text: string): { text: string; truncated: boolean } {
   return { text: bytes.subarray(0, end).toString("utf8"), truncated: true };
 }
 
-async function executeCommand(args: {
+export async function executeCommand(args: {
   command: VerificationCommand;
   index: number;
   cwd: string;

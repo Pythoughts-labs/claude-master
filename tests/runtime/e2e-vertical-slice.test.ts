@@ -354,6 +354,9 @@ describe("P0-A end-to-end vertical slice", () => {
         case "producer-failure":
           adapter = new FakeAdapter({ exitCode: 1 });
           break;
+        case "environment-defect":
+          spec.verification[0]!.expectedExitCodes = [1];
+          break;
         case "verification-failure":
           verifier = rejectingVerifier;
           break;

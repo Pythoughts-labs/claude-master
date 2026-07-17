@@ -6,6 +6,7 @@ export type AttemptStatus = "unavailable" | "failed" | "cancelled" | "verified-c
 // walks this list; the first applicable reason is the canonical FailureClassification.
 export const FAILURE_PRECEDENCE = [
   "invalid-specification",
+  "environment-defect",          // clean baseline verification failed
   "unavailable",                 // pre-launch unavailability
   "authentication-required",     // pre-launch; never triggers fallback
   "spawn-failure",

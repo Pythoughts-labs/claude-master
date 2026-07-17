@@ -19,6 +19,10 @@ const base = {
 };
 describe("validateSpec", () => {
   it("accepts a valid spec", () => expect(validateSpec(base).ok).toBe(true));
+  it("accepts the intentional baseline-failure opt-out", () =>
+    expect(validateSpec({ ...base, expectBaselineFailure: true }).ok).toBe(true));
+  it("rejects a non-boolean baseline-failure opt-out", () =>
+    expect(validateSpec({ ...base, expectBaselineFailure: "yes" }).ok).toBe(false));
   it("rejects a spec missing forbiddenScope", () => {
     const { forbiddenScope, ...noScope } = base;
     expect(validateSpec(noScope).ok).toBe(false);
