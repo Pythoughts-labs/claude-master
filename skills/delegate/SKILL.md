@@ -40,8 +40,8 @@ Construct a candidate spec with every required field:
 4. `writeAllowlist`: explicit repository-relative globs; use `["**"]` only for genuinely repository-wide work.
 5. `forbiddenScope`: explicit paths the Producer must never change.
 6. `successCriteria`: reviewable conditions.
-7. `verification`: Host-authorized commands with executable, argv, relative cwd, timeout, network policy, expected exit codes, and optional platform filters.
-8. `executionMode: "edit"`, a bounded `timeoutMs` of at least `600000`ms, ordered `producerPreferences`, optional supported overrides, and `expectedOutput: "candidate-patch"`.
+7. `verification`: Host-authorized command objects. Each verification command uses `args`, not `argv`; `network` is exactly `"denied"` or `"allowed"`; command `timeoutMs` must be 1..1800000; include a repository-relative `cwd`, expected exit codes, and optional platform filters.
+8. `executionMode: "edit"`; attempt `timeoutMs` must be 600000..1800000; `producerPreferences` is an ordered array of Producer id strings; use optional `producerOverrides: { model?, reasoningEffort? }`; and set `expectedOutput: "candidate-patch"`.
 
 **Acceptance criteria:**
 
@@ -51,7 +51,7 @@ Construct a candidate spec with every required field:
 - At least one verification command must mechanically cover each criterion.
 - Order verification commands exactly as the Host must execute them. When linting/formatting and type checking both apply, all lint and format gates must precede the final type-check gate, and verification formatters must use a non-mutating check mode (for example, `--check`); formatting rewrites belong in the Producer attempt before candidate freeze.
 - The final type-check must cover ALL touched typed files, including every added or modified test file; never scope it only to `src/` when tests or other typed paths may change.
-- Criteria that cannot be commanded, such as "code is clean", belong in the `review` block, not `successCriteria`.
+- Keep observable outcomes in `successCriteria`. Put reviewer-only, non-commandable concerns in `review.focus`; no undocumented review keys are accepted.
 - Prefer explicit test file paths in verification args; directory args can resolve differently between the Producer sandbox and clean-room verification.
 
 **Verification preflight:** The runtime runs every verification command against clean HEAD in a disposable worktree before dispatch. Repair the spec if a command cannot start. A baseline failure unrelated to the task is an environment defect the architect repairs centrally before dispatching; set `expectBaselineFailure: true` only on the individual verification command that intentionally reproduces the bug.
@@ -61,6 +61,8 @@ Resolve ambiguity before calling the runtime. Do not give the Producer credentia
 ## Coordinator duties
 
 When running multiple delegations, normalize reported blockers by phase, command id, and root cause. The moment two independent lanes report the same blocker, pause affected lanes and treat it as an architect-owned shared-environment defect. Reproduce it once against the clean baseline, fix it centrally, rerun the preflight to green, then resume or redispatch the unchanged specs. Never wait for remaining lanes to rediscover it, and never push shared-tooling fixes into individual Producer lanes.
+
+**Repository precondition:** delegation and controlled integration require an exact clean checkout; tracked or unignored changes must be committed before delegation, including tracked planning files such as `tasks/todo.md`. Git-ignored local planning files do not affect the clean check. Do not use skip-worktree or assume-unchanged flags as a workaround.
 
 ## Trusted MCP lifecycle
 
@@ -92,6 +94,8 @@ edits).
    review:
      reviewers: [correctness, systems]   # default
      maxRounds: 2                         # default
+     focus:
+       - Check platform-specific process cleanup.
    ```
 
 2. Call `mcp__plugin_claude-architect_runtime__delegatePipeline` with

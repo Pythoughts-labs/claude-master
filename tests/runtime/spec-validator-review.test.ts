@@ -30,6 +30,31 @@ describe("delegation spec review block", () => {
     const spec = { ...makeValidSpec(), review: { reviewers: ["correctness"], maxRounds: 1 } };
     expect(validateSpec(spec).ok).toBe(true);
   });
+  it("accepts non-empty reviewer focus guidance", () => {
+    const spec = {
+      ...makeValidSpec(),
+      review: {
+        reviewers: ["correctness"],
+        maxRounds: 1,
+        focus: ["Check cancellation cleanup on Windows."],
+      },
+    };
+    expect(validateSpec(spec).ok).toBe(true);
+  });
+  it("rejects empty or malformed reviewer focus guidance", () => {
+    expect(validateSpec({
+      ...makeValidSpec(),
+      review: { reviewers: ["systems"], maxRounds: 2, focus: [] },
+    }).ok).toBe(false);
+    expect(validateSpec({
+      ...makeValidSpec(),
+      review: { reviewers: ["systems"], maxRounds: 2, focus: [""] },
+    }).ok).toBe(false);
+    expect(validateSpec({
+      ...makeValidSpec(),
+      review: { reviewers: ["systems"], maxRounds: 2, notes: "unsupported" },
+    }).ok).toBe(false);
+  });
   it("rejects unknown reviewer kinds and non-positive rounds", () => {
     expect(validateSpec({ ...makeValidSpec(), review: { reviewers: ["vibes"], maxRounds: 2 } }).ok).toBe(false);
     expect(validateSpec({ ...makeValidSpec(), review: { reviewers: ["systems"], maxRounds: 0 } }).ok).toBe(false);

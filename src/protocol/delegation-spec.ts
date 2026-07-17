@@ -18,6 +18,7 @@ export type ReviewerKind = "correctness" | "systems";
 export interface ReviewConfig {
   reviewers: ReviewerKind[];
   maxRounds: number;
+  focus?: string[];
 }
 
 export const DEFAULT_REVIEW_CONFIG: ReviewConfig = {

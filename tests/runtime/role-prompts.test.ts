@@ -12,8 +12,13 @@ const spec: DelegationSpec = {
   specVersion: "1", objective: "Add rate limiting", context: "SECRET-IMPLEMENTER-REASONING must never appear",
   writeAllowlist: ["src/api/**"], forbiddenScope: ["src/auth/**"], successCriteria: ["429 after 10 req/s"],
   verification: [{ id: "unit", executable: "npm", args: ["test"], cwd: ".", timeoutMs: 60_000,
-    network: "deny", expectedExitCodes: [0] }],
+    network: "denied", expectedExitCodes: [0] }],
   executionMode: "edit", timeoutMs: 600_000, producerPreferences: ["codex"], expectedOutput: "candidate-patch",
+  review: {
+    reviewers: ["correctness", "systems"],
+    maxRounds: 2,
+    focus: ["Check token-bucket races under concurrent requests."],
+  },
 };
 const pkg: RolePackage = {
   spec, baselineCommit: "b".repeat(40), candidateCommit: "c".repeat(40),
@@ -52,6 +57,18 @@ describe("renderRolePrompt", () => {
     const prompt = renderRolePrompt("reviewer-systems", pkg);
     expect(prompt).toContain("cite the exact diff hunk or file:line");
     expect(prompt).toContain("could not verify");
+  });
+  it("includes host-authored focus only in reviewer prompts", () => {
+    for (const role of ["reviewer-correctness", "reviewer-systems"] as const) {
+      const prompt = renderRolePrompt(role, pkg);
+      expect(prompt).toContain("## Review focus");
+      expect(prompt).toContain("Check token-bucket races under concurrent requests.");
+    }
+    for (const role of ["fixer", "verifier"] as const) {
+      const prompt = renderRolePrompt(role, pkg);
+      expect(prompt).not.toContain("## Review focus");
+      expect(prompt).not.toContain("Check token-bucket races under concurrent requests.");
+    }
   });
 });
 

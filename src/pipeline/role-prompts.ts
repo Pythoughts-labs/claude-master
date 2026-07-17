@@ -101,12 +101,20 @@ function commonSections(pkg: RolePackage): string {
   ].join("\n\n");
 }
 
+function reviewerFocusSection(spec: DelegationSpec): string | null {
+  const focus = spec.review?.focus;
+  if (focus === undefined || focus.length === 0) return null;
+  return `## Review focus\n${focus.map(item => `- ${item}`).join("\n")}`;
+}
+
 function reviewerPrompt(rubric: string, pkg: RolePackage): string {
+  const focusSection = reviewerFocusSection(pkg.spec);
   return [
     "You are an untrusted, READ-ONLY code reviewer in a fresh session. You cannot edit files;",
     "the sandbox denies writes. Do not attempt to fix anything. Do not delegate to other agents.",
     "Judge ONLY the candidate diff against the delegation spec below.",
     commonSections(pkg),
+    ...(focusSection === null ? [] : [focusSection]),
     rubric,
     CRITERION_DISCIPLINE,
     SEVERITY_RUBRIC,
