@@ -1,0 +1,40 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      # Build the Job Object helper so the win32-gated suites exercise the
+      # real fail-closed spawn path; the committed binary ships separately.
+      - if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          mkdir native\bin
+          cl /O2 /W4 native\win32-job-kill.c /Fe:native\bin\win32-job-kill-x64.exe
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # validate-release runs `claude plugin validate`; the CLI is not on
+      # hosted runners, so install it for the POSIX legs.
+      - if: runner.os != 'Windows'
+        run: npm install -g @anthropic-ai/claude-code
+      - if: runner.os != 'Windows'
+        run: bash scripts/validate-release.sh
+      - if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: win32-job-kill-x64
+          path: native/bin/win32-job-kill-x64.exe
+          if-no-files-found: error

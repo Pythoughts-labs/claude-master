@@ -1,0 +1,42 @@
+{
+  "name": "claude-architect",
+  "description": "CLI coding-agent orchestration for Claude through Codex, OpenCode, Pi, and Pythinker Code, with a commitment-boundary advisor.",
+  "owner": {
+    "name": "elkaix"
+  },
+  "renames": {
+    "claude-master": "claude-architect"
+  },
+  "plugins": [
+    {
+      "name": "claude-architect",
+      "displayName": "Claude Architect",
+      "source": "./",
+      "version": "0.15.0",
+      "description": "Verified P0-A MCP delegation with macOS arm64 certified; Linux tested; native Windows pending. Codex edit eligibility requires its proven native sandbox.",
+      "author": {
+        "name": "elkaix",
+        "url": "https://github.com/elkaix"
+      },
+      "homepage": "https://github.com/Pythoughts-labs/claude-architect",
+      "repository": "https://github.com/Pythoughts-labs/claude-architect",
+      "license": "MIT",
+      "category": "workflow",
+      "strict": true,
+      "keywords": [
+        "claude-code",
+        "opencode",
+        "model-routing",
+        "delegation",
+        "orchestration",
+        "codex",
+        "pi",
+        "pythinker",
+        "advisor",
+        "macos-arm64-certified",
+        "linux-pending-p0-b",
+        "windows-pending-p0-b"
+      ]
+    }
+  ]
+}

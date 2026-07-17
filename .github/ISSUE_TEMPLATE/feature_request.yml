@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose a focused improvement to Claude Architect
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem first. Requests must preserve untrusted-Producer isolation, independent verification, and human acceptance.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What limitation are you encountering, and who does it affect?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest change that would solve the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe current workarounds or other designs you considered.
+    validations:
+      required: false
+  - type: dropdown
+    id: trust_boundary
+    attributes:
+      label: Trust-boundary impact
+      description: Could this affect execution, confinement, paths, secrets, verification, decisions, or integration?
+      options:
+        - No known trust-boundary impact
+        - Yes or unsure — details provided below
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and platform considerations
+      description: Explain trust-boundary effects and macOS, Linux, Windows, or Producer-specific behavior. Do not disclose vulnerabilities here.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues and discussions for this request.
+          required: true
+        - label: This request does not contain private vulnerability details.
+          required: true
+

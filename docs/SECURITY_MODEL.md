@@ -1,0 +1,64 @@
+# Security Model
+
+Claude Architect treats repository content, Producer output, model text, and command output as untrusted. The Host runtime and the human-controlled Claude session form the control plane. The main security objective is to prevent an implementation Producer from silently expanding its scope or causing unreviewed bytes to enter the user's checkout.
+
+## Components that execute code
+
+`runtime/bootstrap.mjs` executes Node.js and starts the MCP server. The Host runtime invokes `git`, the selected Producer CLI (`codex`, `opencode`, `pi`, or `pythinker`), OS confinement helpers such as `/usr/bin/sandbox-exec` on supported macOS systems, Linux sandbox tooling when selected, and the packaged Windows watchdog/helper. Verification executes only commands listed in the validated Delegation Spec. Legacy lane shell scripts also invoke standard shell utilities and the selected CLI.
+
+Producer commands are built by adapters in `src/producers/`; user-controlled values are passed as argv rather than interpolated shell programs. Executables are resolved through platform services. Verification commands include an executable, argv, relative cwd, timeout, network policy, expected exit codes, optional environment, platform filters, and mutation policy. There is no general MCP “run arbitrary shell” tool.
+
+## Authorization and write confinement
+
+The architect supplies explicit `writeAllowlist` and `forbiddenScope` entries. The Producer works in a detached worktree, not the user's checkout. After execution, `src/git/candidate-tree.ts` inventories tracked, untracked, and ignored changes and rejects unauthorized paths. This post-run check complements, but does not replace, OS sandboxing. Nested delegation is denied by the `CLAUDE_ARCHITECT_DELEGATED` marker and MCP startup refuses to run when that marker is present.
+
+Codex receives its native `workspace-write` or `read-only` sandbox. The supported backend table is fail-closed: macOS arm64 is certified, Linux is tested, and native Windows Codex editing is unsupported. Other Producers are legacy/migration paths and do not inherit the certified Codex claim.
+
+## Network access
+
+Codex edit and read-only invocations request no network (`sandbox_workspace_write.network_access=false`). Each verification command declares `network: denied` or an allowed policy; the verifier reports the requested and effective enforcement. A command is not evidence of network denial if the selected platform cannot enforce it. Legacy/provider CLIs may contact their configured cloud model service, and local providers may contact configured local endpoints. The plugin has no fixed hostname allowlist and does not proxy model traffic. Provider authentication, transport, and retention remain the provider/CLI operator's responsibility.
+
+## Files read and written
+
+The runtime reads the selected Git repository, Git metadata, applicable repository instructions such as worktree `AGENTS.md`, plugin schemas/runtime files, Producer configuration needed by the CLI, and verification inputs. The Producer can read files visible through its sandbox and worktree; repository secrets committed or present in readable paths may therefore reach the Producer model.
+
+Writes are limited to the isolated worktree, plugin data state, Git candidate refs, locks, logs, and—only after acceptance—the target checkout/index. Verification runs in a separate materialized worktree. Integration stages the candidate tree and modifies working-tree files but does not create a commit.
+
+## Workflow state and artifacts
+
+Outside tests, state resolves only from `$CLAUDE_PLUGIN_DATA`. Runs are archived at `$CLAUDE_PLUGIN_DATA/runs/<run-id>/`; managed worktrees are under `$CLAUDE_PLUGIN_DATA/worktrees/`; locks and recovery records are also beneath the plugin data root. A run contains a sanitized `manifest.json`, `result.json`, decision record when present, bounded redacted logs, and pipeline JSON. Candidate commits are anchored under `refs/claude-architect/candidates/` in the repository. The run manifest hashes its canonical body, prompt, repository instructions, packaged verifier, execution policy, environment provenance, and candidate manifest association. The candidate manifest hash is SHA-256 over the normalized changed-path records; content hashes and Git object identities provide additional anchoring.
+
+## Fresh-context isolation and reviewers
+
+Pipeline roles are separate one-shot Producer invocations. Reviewer prompts explicitly treat diff and evidence blocks as untrusted. Correctness reviewers, systems reviewers, and the final verifier are configured read-only with no allowed writes and all paths forbidden; the Codex adapter requests its native read-only sandbox. The fixer is the only pipeline role permitted to edit, using the original policy. “Fresh context” means a new invocation with a role-specific prompt; it does not guarantee provider-side statelessness.
+
+## Human decision authentication
+
+`decideCandidate` is an MCP tool available to the controlling Claude session. The runtime records a decision and refuses acceptance unless the result is a verified candidate. It does not implement a separate user login, signature, hardware confirmation, or cryptographic identity proof. Therefore “human-only” is a workflow and UI trust assumption: Claude must present evidence and act on the human's instruction. Anyone able to control the Claude session or call its MCP tools can record a decision.
+
+## Atomic candidate integration
+
+Integration requires a stored accepted decision and an exact `expectedArtifactHash`. It revalidates the archive, canonical repository identity, base commit, candidate ref/commit/tree, structural identity, and clean preconditions while holding repository locks. Git `read-tree -m -u` applies the complete candidate tree, followed by staged-tree, HEAD, worktree, and status checks. Archive writes use exclusive creation and atomic rename/link patterns. This is a guarded tree application, not a transaction across arbitrary external processes; filesystem or Git failures can return `conflicted` or `aborted` and require inspection.
+
+## Logging and redaction
+
+Output is bounded and archived through `ArtifactStore`. Environment variables with sensitive names are registered as secrets; common token formats, registered values, and sensitive record fields are redacted. Persistence fails when a registered secret cannot be safely removed. Logs use restrictive modes and reject symlink/path escapes. Redaction is pattern-based and cannot guarantee removal of every secret, especially secrets with unusual names, transformed/encoded values, or sensitive source text that is not recognized as a credential.
+
+## What data leaves the machine
+
+The Delegation Spec, selected repository context, Producer prompt, and any file/output the Producer reads and includes in requests may leave the machine for the configured model provider. Pipeline reviewers may receive the candidate diff and test evidence. Verification commands can send data only when their network policy is allowed and actually enforced as such. Git and local runtime operations do not inherently upload data. See `PRIVACY.md`.
+
+## Uninstall and data removal
+
+Disable/remove the plugin through Claude Code's plugin manager, then remove its installed/cache copy according to Claude Code documentation. Uninstalling code may not remove `$CLAUDE_PLUGIN_DATA`, Git candidate refs, provider CLI configuration, or provider-side records. After ensuring no run is active, users may remove the plugin data directory and inspect/delete `refs/claude-architect/candidates/*` with Git. Remove provider CLI credentials separately. Back up accepted evidence first if audit retention is required.
+
+## Known limitations
+
+- Only native macOS arm64 Codex is certified; Linux is tested, and native Windows Codex edit confinement is unsupported.
+- OpenCode, Pi, and Pythinker remain legacy migration lanes.
+- Prompt injection can influence a model despite role prompts; confinement limits consequences but does not prove semantic correctness.
+- Read access may expose repository secrets to a remote provider.
+- Redaction is best effort, not data-loss prevention.
+- A compromised Producer CLI, Node.js, Git binary, OS account, or Claude session can attack outside assumptions.
+- Allowlist validation occurs after execution as well as through sandbox policy; a missing/defective OS boundary is not repaired by post-run detection.
+- Human acceptance is not cryptographically authenticated, and integration does not commit or merge.

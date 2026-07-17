@@ -1,0 +1,40 @@
+name: Security question
+description: Ask a public, non-sensitive question about the documented security model
+title: "[Security question]: "
+labels:
+  - security
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form only for non-sensitive questions about the public security model. Report suspected vulnerabilities privately through the SECURITY.md process; never disclose exploit details here.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What public security behavior or documentation needs clarification?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Relevant version
+      description: Provide a plugin version or commit if the question is version-specific.
+      placeholder: "0.15.0"
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Public context
+      description: Link relevant public documentation or describe the non-sensitive use case.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: This is a non-sensitive question and does not disclose a suspected vulnerability, exploit, secret, or private data.
+          required: true
+

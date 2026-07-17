@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a reproducible problem with Claude Architect
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include secrets or vulnerability details. Report security issues privately using SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Claude Architect version
+      description: Provide the released version or commit SHA.
+      placeholder: "0.15.0"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS/architecture and Claude Code, Node.js, and Git versions.
+      placeholder: "macOS 15 arm64; Claude Code x.y.z; Node 22.x; Git 2.x"
+    validations:
+      required: true
+  - type: input
+    id: producer
+    attributes:
+      label: Producer CLI
+      description: Name and version of Codex, OpenCode, Pi, or Pythinker, or "not applicable."
+      placeholder: "Codex x.y.z"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reproducible sequence and relevant configuration.
+      placeholder: |
+        1. Run ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Paste relevant logs, stack traces, or doctor output after removing secrets and private data.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed credentials, tokens, personal data, and proprietary content.
+          required: true
+        - label: This report does not disclose a suspected security vulnerability.
+          required: true
+

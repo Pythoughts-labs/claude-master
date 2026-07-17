@@ -1,0 +1,35 @@
+{
+  "name": "claude-architect",
+  "displayName": "Claude Architect",
+  "version": "0.15.0",
+  "description": "Verified coding-agent delegation for Claude Code with isolated Producers, frozen candidate artifacts, independent review, and human-controlled integration.",
+  "author": {
+    "name": "Mohamed Elkholy",
+    "url": "https://github.com/elkaix"
+  },
+  "homepage": "https://github.com/Pythoughts-labs/claude-architect",
+  "repository": "https://github.com/Pythoughts-labs/claude-architect",
+  "license": "MIT",
+  "keywords": [
+    "claude-architect",
+    "claude-code",
+    "claude-code-plugin",
+    "mcp",
+    "coding-agents",
+    "code-review",
+    "sandbox",
+    "opencode",
+    "agents",
+    "subagents",
+    "model-routing",
+    "orchestration",
+    "delegation",
+    "architect",
+    "advisor",
+    "fable",
+    "codex",
+    "pi",
+    "pythinker",
+    "local-llm"
+  ]
+}
