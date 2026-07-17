@@ -6,6 +6,61 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-17
+
+Deferred-work remediation release: the confinement and reproducibility
+redesigns deferred from the 0.16.0 scout pass, plus the remaining
+robustness and hygiene items. Every fix was driven through the `delegate`
+MCP lifecycle (Codex GPT-5.6 Sol) and independently verified.
+
+### Security
+
+- The pipeline fixer no longer receives the shared Git object database as a
+  writable sandbox root. Fixer object writes go to a per-run private object
+  directory (with the shared store as a read-only alternate), and trusted
+  promotion imports exactly the promoted commit's objects via bounded
+  `pack-objects` plumbing, verifying shared-store reachability without
+  alternates before publishing the anchor; import failure fails closed.
+- Aux verification worktrees no longer receive a live writable
+  `node_modules` symlink/junction into the primary checkout. Matching
+  lockfile sets produce a copy-on-write clone (APFS clonefile on macOS,
+  reflink on Linux); platforms or filesystems without CoW fail closed to a
+  new `skipped-cow-unsupported` dependency-link state instead of a
+  writable link. Windows and non-reflink Linux therefore no longer inherit
+  dependencies into aux worktrees; dependent verification commands fail
+  visibly as environment defects.
+- Checkout-lock release now verifies the lock file still records the
+  releasing holder's pid and process token before deleting it, closing the
+  ABA race where a stale former holder could remove a legitimately
+  reclaimed and re-acquired lock.
+
+### Fixed
+
+- Run manifests written in production now record real reproducibility
+  provenance: repository instruction files (`AGENTS.md`, `CLAUDE.md`)
+  hashed from the committed base tree and the installed verifier bytes at
+  the current runtime version. The silent `pending`/empty defaults are
+  removed; unresolvable verifier bytes fail the attempt closed.
+- Candidate freezing rejects any truncated Git output instead of
+  publishing an incomplete review patch or changed-path listing.
+- `verifyRunManifest` treats the archived `protocolVersion` as provenance
+  with same-major compatibility, so protocol upgrades keep existing
+  archives reviewable; different-major or malformed values are rejected
+  with both versions named.
+
+### Changed
+
+- The `.opencode` lane mirrors now carry the full operating contract
+  (foreground-only execution, bounded stall relaunch, worktree isolation,
+  Git-state prohibitions, action-first preamble, failure-classification
+  vocabulary), and stall handling is normalized everywhere to at most one
+  relaunch — two producer invocations total — with the lane's outer
+  timeout authoritative.
+- Lane-contract tests reject negated normative text and permissive
+  background-wait mentions, and the failure-precedence end-to-end test
+  pins an explicit eleven-classification literal instead of comparing the
+  production constant against itself.
+
 ## [0.18.0] - 2026-07-17
 
 Second trust-hardening release from the same dogfood scouting pass, continuing
