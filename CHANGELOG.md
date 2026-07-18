@@ -6,6 +6,18 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The delegate skill now matches the closed Delegation Spec schema, documents
+  exact command/network/timeout and Producer override fields, supports
+  reviewer-only `review.focus`, and explains the clean-checkout precondition.
+- Repository preflight now accepts tracked symlinks to contained regular files
+  while continuing to reject directory, external, broken, untracked, and
+  Git-metadata links in write scope.
+- The legacy Codex wrapper now owns read-only versus edit sandbox selection and
+  physical cwd binding, so implementation lanes receive `workspace-write`
+  without permitting caller scope overrides.
+
 ## [0.19.0] - 2026-07-17
 
 Deferred-work remediation release: the confinement and reproducibility

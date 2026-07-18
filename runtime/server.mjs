@@ -23963,16 +23963,39 @@ function patternOverlapsRepository(pattern, repositoryRoot) {
   }
   return overlaps(0, 0);
 }
-function submodulePaths(output) {
+function indexPathsWithMode(output, mode) {
   const paths = /* @__PURE__ */ new Set();
   for (const record2 of output.split("\0")) {
-    if (!record2.startsWith("160000 ")) continue;
+    if (!record2.startsWith(`${mode} `)) continue;
     const separator = record2.indexOf("	");
-    if (separator !== -1) paths.add(record2.slice(separator + 1).replace(/\\/g, "/"));
+    if (separator !== -1) paths.add(record2.slice(separator + 1).split(path3.sep).join("/"));
   }
   return paths;
 }
-async function findNestedRepositories(repositoryRoot, registeredSubmodules, writeAllowlist) {
+function pathIsWithin(root, candidate) {
+  if (getPlatformServices().os === "win32") {
+    return canonicalizeForScope(candidate, root);
+  }
+  const relative = path3.relative(root, candidate);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${path3.sep}`) && !path3.isAbsolute(relative);
+}
+function hasCode(error2, codes) {
+  return typeof error2 === "object" && error2 !== null && "code" in error2 && codes.includes(String(error2.code));
+}
+async function isSafeTrackedFileSymlink(repositoryRoot, symlinkPath, relativePath, trackedSymlinks) {
+  if (!trackedSymlinks.has(relativePath)) return false;
+  let target;
+  try {
+    target = await realpath(symlinkPath);
+  } catch (error2) {
+    if (hasCode(error2, ["ENOENT", "ENOTDIR", "ELOOP"])) return false;
+    throw error2;
+  }
+  if (!pathIsWithin(repositoryRoot, target)) return false;
+  if (pathIsWithin(path3.join(repositoryRoot, ".git"), target)) return false;
+  return (await lstat(target)).isFile();
+}
+async function findNestedRepositories(repositoryRoot, registeredSubmodules, trackedSymlinks, writeAllowlist) {
   const nested = [...registeredSubmodules].filter((submodulePath) => writeAllowlist.some((pattern) => patternOverlapsRepository(pattern, submodulePath)));
   let scannedEntries = 0;
   const pendingDirectories = [{ path: repositoryRoot, relativePath: "" }];
@@ -24000,7 +24023,14 @@ async function findNestedRepositories(repositoryRoot, registeredSubmodules, writ
       if (registeredSubmodules.has(relativeChild)) continue;
       if (!writeAllowlist.some((pattern) => patternOverlapsRepository(pattern, relativeChild))) continue;
       if (entry.isSymbolicLink()) {
-        nested.push(relativeChild);
+        if (!await isSafeTrackedFileSymlink(
+          repositoryRoot,
+          child,
+          relativeChild,
+          trackedSymlinks
+        )) {
+          nested.push(relativeChild);
+        }
         continue;
       }
       if (!entry.isDirectory()) continue;
@@ -24064,11 +24094,14 @@ async function checkPreconditions(repoRoot, options = {}) {
   if (options.writeAllowlist !== void 0 && options.writeAllowlist.length > 0) {
     const stagedEntries = await git(canonical, ["ls-files", "--stage", "-z"]);
     if (!succeeded(stagedEntries)) return { ok: false, reason: "git-command-failed" };
+    const registeredSubmodules = indexPathsWithMode(stagedEntries.stdout, "160000");
+    const trackedSymlinks = indexPathsWithMode(stagedEntries.stdout, "120000");
     let nestedRepositories;
     try {
       nestedRepositories = await findNestedRepositories(
         canonical,
-        submodulePaths(stagedEntries.stdout),
+        registeredSubmodules,
+        trackedSymlinks,
         options.writeAllowlist
       );
     } catch {
@@ -24677,6 +24710,14 @@ var delegation_spec_v1_default = {
           type: "integer",
           minimum: 1,
           maximum: 2
+        },
+        focus: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "string",
+            minLength: 1
+          }
         }
       }
     }
@@ -28288,12 +28329,20 @@ ${pkg.candidateCommit}`,
     untrustedBlock("test-evidence", pkg.testEvidence)
   ].join("\n\n");
 }
+function reviewerFocusSection(spec) {
+  const focus = spec.review?.focus;
+  if (focus === void 0 || focus.length === 0) return null;
+  return `## Review focus
+${focus.map((item) => `- ${item}`).join("\n")}`;
+}
 function reviewerPrompt(rubric, pkg) {
+  const focusSection = reviewerFocusSection(pkg.spec);
   return [
     "You are an untrusted, READ-ONLY code reviewer in a fresh session. You cannot edit files;",
     "the sandbox denies writes. Do not attempt to fix anything. Do not delegate to other agents.",
     "Judge ONLY the candidate diff against the delegation spec below.",
     commonSections(pkg),
+    ...focusSection === null ? [] : [focusSection],
     rubric,
     CRITERION_DISCIPLINE,
     SEVERITY_RUBRIC,
