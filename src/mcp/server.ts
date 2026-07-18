@@ -106,6 +106,23 @@ export const delegatePipelineInputSchema = z.object({
   protocolVersion: protocolVersionInput,
 }).strict();
 
+export const reviewCandidateInputSchema = z.object({
+  checkoutPath: z.string(),
+  runId: z.string(),
+}).strict();
+
+export const decideCandidateInputSchema = z.object({
+  checkoutPath: z.string(),
+  runId: z.string(),
+  decision: z.enum(["accepted", "rejected", "revision-requested"]),
+}).strict();
+
+export const integrateCandidateInputSchema = z.object({
+  checkoutPath: z.string(),
+  runId: z.string(),
+  expectedArtifactHash: z.string(),
+}).strict();
+
 export type ServerDependencies = ToolDependencies & DoctorDependencies & GitReadDependencies & {
   recoverStaleRuns?: typeof recoverStaleRuns;
 };
@@ -221,23 +238,25 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
     {
       title: "Review a verified candidate",
       description: "Regenerate and return the exact candidate patch and verification evidence.",
-      inputSchema: { runId: z.string() },
+      inputSchema: reviewCandidateInputSchema,
       outputSchema: reviewOutput,
     },
-    async ({ runId }) => toolOutput(await handleReviewCandidate(runId, dependencies)),
+    async ({ checkoutPath, runId }) => toolOutput(await handleReviewCandidate(
+      checkoutPath,
+      runId,
+      dependencies,
+    )),
   );
   server.registerTool(
     "decideCandidate",
     {
       title: "Record a candidate decision",
       description: "Record acceptance, rejection, or a revision request for a candidate.",
-      inputSchema: {
-        runId: z.string(),
-        decision: z.enum(["accepted", "rejected", "revision-requested"]),
-      },
+      inputSchema: decideCandidateInputSchema,
       outputSchema: decisionOutput,
     },
-    async ({ runId, decision }) => toolOutput(await handleDecideCandidate(
+    async ({ checkoutPath, runId, decision }) => toolOutput(await handleDecideCandidate(
+      checkoutPath,
       runId,
       decision,
       dependencies,
@@ -248,13 +267,11 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
     {
       title: "Integrate an accepted candidate",
       description: "Apply an accepted candidate tree after revalidating its artifact hash.",
-      inputSchema: {
-        runId: z.string(),
-        expectedArtifactHash: z.string(),
-      },
+      inputSchema: integrateCandidateInputSchema,
       outputSchema: integrationOutput,
     },
-    async ({ runId, expectedArtifactHash }) => toolOutput(await handleIntegrateCandidate(
+    async ({ checkoutPath, runId, expectedArtifactHash }) => toolOutput(await handleIntegrateCandidate(
+      checkoutPath,
       runId,
       expectedArtifactHash,
       dependencies,

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  decideCandidateInputSchema,
   delegateInputSchema,
   delegatePipelineInputSchema,
+  integrateCandidateInputSchema,
+  reviewCandidateInputSchema,
 } from "../../src/mcp/server.js";
 import { PROTOCOL_VERSION } from "../../src/protocol/versions.js";
 
@@ -34,6 +37,29 @@ describe.each([
 
   it("rejects unknown input keys", () => {
     const result = schema.safeParse({ ...validInput, protocolVersions: PROTOCOL_VERSION });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.code).toBe("unrecognized_keys");
+  });
+});
+
+describe.each([
+  ["reviewCandidate", reviewCandidateInputSchema, { runId: "run-test" }],
+  ["decideCandidate", decideCandidateInputSchema, {
+    runId: "run-test",
+    decision: "accepted",
+  }],
+  ["integrateCandidate", integrateCandidateInputSchema, {
+    runId: "run-test",
+    expectedArtifactHash: "a".repeat(64),
+  }],
+])("%s MCP input", (_name, schema, input) => {
+  it("requires checkoutPath", () => {
+    expect(schema.safeParse({ checkoutPath: "/repo", ...input }).success).toBe(true);
+    expect(schema.safeParse(input).success).toBe(false);
+  });
+
+  it("rejects unknown input keys", () => {
+    const result = schema.safeParse({ checkoutPath: "/repo", ...input, checkoutPaths: ["/repo"] });
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error.issues[0]?.code).toBe("unrecognized_keys");
   });

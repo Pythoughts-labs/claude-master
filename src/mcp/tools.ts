@@ -143,6 +143,21 @@ function requireVerifiedCandidate(run: ArchivedRun): CandidateArtifact {
   return requireCandidate(run);
 }
 
+async function requireMatchingCheckout(
+  run: ArchivedRun,
+  checkoutPath: string,
+  deps: ToolDependencies,
+): Promise<void> {
+  const canonical = await services(deps).canonicalizePath(checkoutPath);
+  const callerKey = canonical.gitCommonDir ?? canonical.canonical;
+  if (callerKey !== run.lockKey) {
+    throw runtimeError(
+      "candidate run belongs to a different repository than the supplied checkoutPath",
+      "run-checkout-mismatch",
+    );
+  }
+}
+
 function schemaCompatibility(input: unknown): { ok: true } | { ok: false; diagnostic: string } {
   if (isRecord(input)
     && input.specVersion !== undefined
@@ -298,6 +313,7 @@ export async function handleDelegatePipeline(
 }
 
 export async function handleReviewCandidate(
+  checkoutPath: string,
   runId: string,
   deps: ToolDependencies = {},
 ): Promise<
@@ -311,6 +327,7 @@ export async function handleReviewCandidate(
 > {
   try {
     const run = await loadArchivedRun(runId, deps);
+    await requireMatchingCheckout(run, checkoutPath, deps);
     return await withRepoLock(run.lockKey, async () => {
       const candidate = requireCandidate(run);
       const git = deps.git ?? runGit;
@@ -360,33 +377,41 @@ export async function handleReviewCandidate(
 }
 
 export async function handleDecideCandidate(
+  checkoutPath: string,
   runId: string,
   decision: RunDecisionValue,
   deps: ToolDependencies = {},
 ): Promise<{ recorded: true } | ToolErrorResult> {
   try {
     const run = await loadArchivedRun(runId, deps);
+    await requireMatchingCheckout(run, checkoutPath, deps);
     return await withRepoLock(run.lockKey, async () => {
       if (decision === "accepted") requireVerifiedCandidate(run);
-      const record: RunDecision = {
-        decision,
-        recordedAt: (deps.now ?? (() => new Date()))().toISOString(),
-      };
-      await run.store.writeDecision(record);
-      if (decision === "rejected" && run.result.candidate !== null) {
-        const candidate = run.result.candidate;
-        const deleted = await (deps.git ?? runGit)(run.repoRoot, [
-          "update-ref",
-          "--no-deref",
-          "-d",
-          candidate.anchorRef,
-          candidate.candidateCommitOid,
-        ]);
-        if (deleted.exitCode !== 0) {
-          throw runtimeError("failed to delete rejected candidate anchor", "anchor-delete-failed");
+      const ps = services(deps);
+      const lock = await ps.acquireCheckoutLock(run.repoRoot);
+      try {
+        const record: RunDecision = {
+          decision,
+          recordedAt: (deps.now ?? (() => new Date()))().toISOString(),
+        };
+        await run.store.writeDecision(record);
+        if (decision === "rejected" && run.result.candidate !== null) {
+          const candidate = run.result.candidate;
+          const deleted = await (deps.git ?? runGit)(run.repoRoot, [
+            "update-ref",
+            "--no-deref",
+            "-d",
+            candidate.anchorRef,
+            candidate.candidateCommitOid,
+          ]);
+          if (deleted.exitCode !== 0) {
+            throw runtimeError("failed to delete rejected candidate anchor", "anchor-delete-failed");
+          }
         }
+        return { recorded: true };
+      } finally {
+        await lock.release();
       }
-      return { recorded: true };
     });
   } catch (error) {
     return errorResult(error);
@@ -394,12 +419,14 @@ export async function handleDecideCandidate(
 }
 
 export async function handleIntegrateCandidate(
+  checkoutPath: string,
   runId: string,
   expectedArtifactHash: string,
   deps: ToolDependencies = {},
 ): Promise<{ integration: "applied" | "conflicted" | "aborted"; detail: string } | ToolErrorResult> {
   try {
     const run = await loadArchivedRun(runId, deps);
+    await requireMatchingCheckout(run, checkoutPath, deps);
     return await withRepoLock(run.lockKey, async () => {
       const decision = await run.store.readDecision(runId);
       if (decision?.decision !== "accepted") {

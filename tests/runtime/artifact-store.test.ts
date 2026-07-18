@@ -33,6 +33,7 @@ import {
 
 const filesystemHooks = vi.hoisted(() => ({
   beforeOpen: undefined as undefined | ((filename: string) => Promise<void>),
+  beforeLink: undefined as undefined | ((source: string, destination: string) => Promise<void>),
   beforeLstat: undefined as undefined | ((filename: string) => Promise<void>),
   beforeDirectoryRead: undefined as undefined | ((filename: string) => Promise<void>),
   beforeRm: undefined as undefined | ((filename: string) => Promise<void>),
@@ -46,6 +47,11 @@ vi.mock("node:fs/promises", async importOriginal => {
       const hook = filesystemHooks.beforeOpen;
       if (hook !== undefined) await hook(String(args[0]));
       return actual.open(...args);
+    },
+    link: async (...args: Parameters<typeof actual.link>) => {
+      const hook = filesystemHooks.beforeLink;
+      if (hook !== undefined) await hook(String(args[0]), String(args[1]));
+      return actual.link(...args);
     },
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
       const hook = filesystemHooks.beforeLstat;
@@ -146,6 +152,7 @@ beforeEach(async () => {
   process.env.CLAUDE_PLUGIN_DATA = stateRoot;
   process.env.CLAUDE_PLUGIN_ROOT = join(stateRoot, "plugin-cache");
   filesystemHooks.beforeOpen = undefined;
+  filesystemHooks.beforeLink = undefined;
   filesystemHooks.beforeLstat = undefined;
   filesystemHooks.beforeDirectoryRead = undefined;
   filesystemHooks.beforeRm = undefined;
@@ -154,6 +161,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   filesystemHooks.beforeOpen = undefined;
+  filesystemHooks.beforeLink = undefined;
   filesystemHooks.beforeLstat = undefined;
   filesystemHooks.beforeDirectoryRead = undefined;
   filesystemHooks.beforeRm = undefined;
@@ -468,7 +476,7 @@ describe("ArtifactStore", () => {
     },
   );
 
-  it("persists and replaces the latest candidate decision", async () => {
+  it("persists the first decision, treats the same decision as idempotent, and rejects conflicts", async () => {
     const runId = "run-decision";
     const store = new ArtifactStore(runId);
     await store.writeResult(sampleResult(runId));
@@ -478,16 +486,67 @@ describe("ArtifactStore", () => {
       recordedAt: "2026-07-14T12:00:00.000Z",
     });
     await store.writeDecision({
-      decision: "accepted",
+      decision: "revision-requested",
       recordedAt: "2026-07-14T12:01:00.000Z",
+    });
+    await expect(store.writeDecision({
+      decision: "accepted",
+      recordedAt: "2026-07-14T12:02:00.000Z",
+    })).rejects.toMatchObject({
+      message: "candidate decision conflict: recorded revision-requested, attempted accepted",
+      detail: { toolError: "decision-conflict" },
     });
 
     await expect(store.readDecision(runId)).resolves.toEqual({
-      decision: "accepted",
-      recordedAt: "2026-07-14T12:01:00.000Z",
+      decision: "revision-requested",
+      recordedAt: "2026-07-14T12:00:00.000Z",
     });
     const stored = JSON.parse(await readFile(join(store.runDirectory, "decision.json"), "utf8"));
-    expect(stored).toMatchObject({ decision: "accepted" });
+    expect(stored).toEqual({
+      decision: "revision-requested",
+      recordedAt: "2026-07-14T12:00:00.000Z",
+    });
+  });
+
+  it("atomically preserves one decision when conflicting writers race", async () => {
+    const runId = "run-decision-race";
+    const firstStore = new ArtifactStore(runId);
+    const secondStore = new ArtifactStore(runId);
+    await firstStore.writeResult(sampleResult(runId));
+    const records = [{
+      decision: "accepted" as const,
+      recordedAt: "2026-07-14T12:00:00.000Z",
+    }, {
+      decision: "rejected" as const,
+      recordedAt: "2026-07-14T12:01:00.000Z",
+    }] as const;
+    let arrivals = 0;
+    let markReady!: () => void;
+    let releaseWriters!: () => void;
+    const ready = new Promise<void>(resolve => { markReady = resolve; });
+    const writersReleased = new Promise<void>(resolve => { releaseWriters = resolve; });
+    filesystemHooks.beforeLink = async (_source, destination) => {
+      if (!destination.endsWith(join(runId, "decision.json"))) return;
+      arrivals += 1;
+      if (arrivals === 2) markReady();
+      await writersReleased;
+    };
+
+    const pending = [
+      firstStore.writeDecision(records[0]),
+      secondStore.writeDecision(records[1]),
+    ];
+    await ready;
+    releaseWriters();
+    const outcomes = await Promise.allSettled(pending);
+
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+    const winnerIndex = outcomes.findIndex(outcome => outcome.status === "fulfilled");
+    const rejected = outcomes.find(outcome => outcome.status === "rejected");
+    expect(rejected).toMatchObject({
+      reason: { detail: { toolError: "decision-conflict" } },
+    });
+    await expect(firstStore.readDecision(runId)).resolves.toEqual(records[winnerIndex]);
   });
 
   it("does not accept a forged result after a validated run directory is swapped", async () => {

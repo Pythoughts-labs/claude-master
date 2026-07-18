@@ -364,13 +364,14 @@ describe.runIf(process.platform === "darwin")("end-to-end review pipeline", () =
     expect(result.result.rounds).toHaveLength(2);
     expect(adapter.calls).toEqual({ implement: 1, correctness: 2, systems: 2, fixer: 1 });
 
-    await expect(handleDecideCandidate(runId, "accepted", deps)).resolves.toEqual({
+    await expect(handleDecideCandidate(repo, runId, "accepted", deps)).resolves.toEqual({
       recorded: true,
     });
     const manifest = await new ArtifactStore(runId).readManifest(runId);
     expect(manifest).not.toBeNull();
     expect(manifest?.candidateManifestHash).not.toBeNull();
     await expect(handleIntegrateCandidate(
+      repo,
       runId,
       manifest!.candidateManifestHash!,
       deps,

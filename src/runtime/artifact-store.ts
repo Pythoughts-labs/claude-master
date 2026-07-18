@@ -797,7 +797,18 @@ export class ArtifactStore {
       || !Number.isFinite(Date.parse(record.recordedAt))) {
       throw new RuntimeError("run decision is invalid");
     }
-    await this.replaceJson("decision.json", record);
+    try {
+      await this.writeJson("decision.json", record);
+      return;
+    } catch (error) {
+      const existing = await this.readDecision(this.runId);
+      if (existing === null) throw error;
+      if (existing.decision === record.decision) return;
+      throw new RuntimeError(
+        `candidate decision conflict: recorded ${existing.decision}, attempted ${record.decision}`,
+        { toolError: "decision-conflict" },
+      );
+    }
   }
 
   async readDecision(runId: string): Promise<RunDecisionRecord | null> {

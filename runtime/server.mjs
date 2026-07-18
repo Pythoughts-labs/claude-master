@@ -21927,7 +21927,7 @@ var StdioServerTransport = class {
 };
 
 // src/protocol/versions.ts
-var PROTOCOL_VERSION = "1.1.0";
+var PROTOCOL_VERSION = "1.2.0";
 var DELEGATION_SPEC_VERSION = "1";
 var ATTEMPT_RESULT_VERSION = "1";
 var RUNTIME_VERSION = "0.19.0";
@@ -27026,7 +27026,18 @@ var ArtifactStore = class {
     if (!["accepted", "rejected", "revision-requested"].includes(record2.decision) || !Number.isFinite(Date.parse(record2.recordedAt))) {
       throw new RuntimeError("run decision is invalid");
     }
-    await this.replaceJson("decision.json", record2);
+    try {
+      await this.writeJson("decision.json", record2);
+      return;
+    } catch (error2) {
+      const existing = await this.readDecision(this.runId);
+      if (existing === null) throw error2;
+      if (existing.decision === record2.decision) return;
+      throw new RuntimeError(
+        `candidate decision conflict: recorded ${existing.decision}, attempted ${record2.decision}`,
+        { toolError: "decision-conflict" }
+      );
+    }
   }
   async readDecision(runId) {
     validateComponent(runId, "run id");
@@ -29900,6 +29911,16 @@ function requireVerifiedCandidate(run) {
   }
   return requireCandidate(run);
 }
+async function requireMatchingCheckout(run, checkoutPath, deps) {
+  const canonical = await services2(deps).canonicalizePath(checkoutPath);
+  const callerKey = canonical.gitCommonDir ?? canonical.canonical;
+  if (callerKey !== run.lockKey) {
+    throw runtimeError(
+      "candidate run belongs to a different repository than the supplied checkoutPath",
+      "run-checkout-mismatch"
+    );
+  }
+}
 function schemaCompatibility(input) {
   if (isRecord4(input) && input.specVersion !== void 0 && input.specVersion !== DELEGATION_SPEC_VERSION) {
     return {
@@ -30014,9 +30035,10 @@ async function handleDelegatePipeline(checkoutPath, input, deps = {}) {
     return errorResult(error2);
   }
 }
-async function handleReviewCandidate(runId, deps = {}) {
+async function handleReviewCandidate(checkoutPath, runId, deps = {}) {
   try {
     const run = await loadArchivedRun(runId, deps);
+    await requireMatchingCheckout(run, checkoutPath, deps);
     return await withRepoLock(run.lockKey, async () => {
       const candidate = requireCandidate(run);
       const git2 = deps.git ?? git;
@@ -30061,38 +30083,46 @@ async function handleReviewCandidate(runId, deps = {}) {
     return errorResult(error2);
   }
 }
-async function handleDecideCandidate(runId, decision, deps = {}) {
+async function handleDecideCandidate(checkoutPath, runId, decision, deps = {}) {
   try {
     const run = await loadArchivedRun(runId, deps);
+    await requireMatchingCheckout(run, checkoutPath, deps);
     return await withRepoLock(run.lockKey, async () => {
       if (decision === "accepted") requireVerifiedCandidate(run);
-      const record2 = {
-        decision,
-        recordedAt: (deps.now ?? (() => /* @__PURE__ */ new Date()))().toISOString()
-      };
-      await run.store.writeDecision(record2);
-      if (decision === "rejected" && run.result.candidate !== null) {
-        const candidate = run.result.candidate;
-        const deleted = await (deps.git ?? git)(run.repoRoot, [
-          "update-ref",
-          "--no-deref",
-          "-d",
-          candidate.anchorRef,
-          candidate.candidateCommitOid
-        ]);
-        if (deleted.exitCode !== 0) {
-          throw runtimeError("failed to delete rejected candidate anchor", "anchor-delete-failed");
+      const ps = services2(deps);
+      const lock = await ps.acquireCheckoutLock(run.repoRoot);
+      try {
+        const record2 = {
+          decision,
+          recordedAt: (deps.now ?? (() => /* @__PURE__ */ new Date()))().toISOString()
+        };
+        await run.store.writeDecision(record2);
+        if (decision === "rejected" && run.result.candidate !== null) {
+          const candidate = run.result.candidate;
+          const deleted = await (deps.git ?? git)(run.repoRoot, [
+            "update-ref",
+            "--no-deref",
+            "-d",
+            candidate.anchorRef,
+            candidate.candidateCommitOid
+          ]);
+          if (deleted.exitCode !== 0) {
+            throw runtimeError("failed to delete rejected candidate anchor", "anchor-delete-failed");
+          }
         }
+        return { recorded: true };
+      } finally {
+        await lock.release();
       }
-      return { recorded: true };
     });
   } catch (error2) {
     return errorResult(error2);
   }
 }
-async function handleIntegrateCandidate(runId, expectedArtifactHash, deps = {}) {
+async function handleIntegrateCandidate(checkoutPath, runId, expectedArtifactHash, deps = {}) {
   try {
     const run = await loadArchivedRun(runId, deps);
+    await requireMatchingCheckout(run, checkoutPath, deps);
     return await withRepoLock(run.lockKey, async () => {
       const decision = await run.store.readDecision(runId);
       if (decision?.decision !== "accepted") {
@@ -30729,6 +30759,20 @@ var delegatePipelineInputSchema = external_exports.object({
   spec: external_exports.unknown(),
   protocolVersion: protocolVersionInput
 }).strict();
+var reviewCandidateInputSchema = external_exports.object({
+  checkoutPath: external_exports.string(),
+  runId: external_exports.string()
+}).strict();
+var decideCandidateInputSchema = external_exports.object({
+  checkoutPath: external_exports.string(),
+  runId: external_exports.string(),
+  decision: external_exports.enum(["accepted", "rejected", "revision-requested"])
+}).strict();
+var integrateCandidateInputSchema = external_exports.object({
+  checkoutPath: external_exports.string(),
+  runId: external_exports.string(),
+  expectedArtifactHash: external_exports.string()
+}).strict();
 function toolOutput(value) {
   const structuredContent = value;
   return {
@@ -30835,23 +30879,25 @@ async function start(dependencies = {}) {
     {
       title: "Review a verified candidate",
       description: "Regenerate and return the exact candidate patch and verification evidence.",
-      inputSchema: { runId: external_exports.string() },
+      inputSchema: reviewCandidateInputSchema,
       outputSchema: reviewOutput
     },
-    async ({ runId }) => toolOutput(await handleReviewCandidate(runId, dependencies))
+    async ({ checkoutPath, runId }) => toolOutput(await handleReviewCandidate(
+      checkoutPath,
+      runId,
+      dependencies
+    ))
   );
   server.registerTool(
     "decideCandidate",
     {
       title: "Record a candidate decision",
       description: "Record acceptance, rejection, or a revision request for a candidate.",
-      inputSchema: {
-        runId: external_exports.string(),
-        decision: external_exports.enum(["accepted", "rejected", "revision-requested"])
-      },
+      inputSchema: decideCandidateInputSchema,
       outputSchema: decisionOutput
     },
-    async ({ runId, decision }) => toolOutput(await handleDecideCandidate(
+    async ({ checkoutPath, runId, decision }) => toolOutput(await handleDecideCandidate(
+      checkoutPath,
       runId,
       decision,
       dependencies
@@ -30862,13 +30908,11 @@ async function start(dependencies = {}) {
     {
       title: "Integrate an accepted candidate",
       description: "Apply an accepted candidate tree after revalidating its artifact hash.",
-      inputSchema: {
-        runId: external_exports.string(),
-        expectedArtifactHash: external_exports.string()
-      },
+      inputSchema: integrateCandidateInputSchema,
       outputSchema: integrationOutput
     },
-    async ({ runId, expectedArtifactHash }) => toolOutput(await handleIntegrateCandidate(
+    async ({ checkoutPath, runId, expectedArtifactHash }) => toolOutput(await handleIntegrateCandidate(
+      checkoutPath,
       runId,
       expectedArtifactHash,
       dependencies

@@ -270,20 +270,22 @@ describe("P0-A end-to-end vertical slice", () => {
     const candidate = delegated.result.candidate;
     expect(candidate).not.toBeNull();
 
-    const review = await handleReviewCandidate(runId, deps);
+    const review = await handleReviewCandidate(repoRoot, runId, deps);
     expect(review).toMatchObject({
       patch: expect.stringContaining("+integrated"),
       changedPaths: [{ path: "a.txt", changeType: "modified" }],
     });
     await expect(handleIntegrateCandidate(
+      repoRoot,
       runId,
       candidate!.manifestHash,
       deps,
     )).resolves.toEqual({ integration: "aborted", detail: "no-accepted-decision" });
-    await expect(handleDecideCandidate(runId, "accepted", deps)).resolves.toEqual({
+    await expect(handleDecideCandidate(repoRoot, runId, "accepted", deps)).resolves.toEqual({
       recorded: true,
     });
     await expect(handleIntegrateCandidate(
+      repoRoot,
       runId,
       candidate!.manifestHash,
       deps,
