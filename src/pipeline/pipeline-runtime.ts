@@ -422,22 +422,22 @@ async function runFix(args: {
     };
 }
 
-interface FixProvenanceFailure {
+interface CandidateProvenanceFailure {
   failure: FailureClassification;
   reason: string;
 }
 
-async function validateFixProvenance(args: {
+async function validateCandidateProvenance(args: {
   worktreePath: string;
   previousCandidateCommit: string;
-  fix: FixReport;
+  candidateCommit: string;
   gitObjectAccess: LinkedWorktreeGitAccess;
-}): Promise<FixProvenanceFailure | null> {
+}): Promise<CandidateProvenanceFailure | null> {
   const privateObjects = privateObjectReadOptions(args.gitObjectAccess);
   const candidateObject = await git(args.worktreePath, [
     "cat-file",
     "-e",
-    `${args.fix.candidateCommit}^{commit}`,
+    `${args.candidateCommit}^{commit}`,
   ], privateObjects);
   if (candidateObject.exitCode !== 0) {
     return {
@@ -451,7 +451,7 @@ async function validateFixProvenance(args: {
     ["rev-parse", "--verify", "HEAD^{commit}"],
     privateObjects,
   );
-  if (head.exitCode !== 0 || head.stdout.trim() !== args.fix.candidateCommit) {
+  if (head.exitCode !== 0 || head.stdout.trim() !== args.candidateCommit) {
     return {
       failure: "producer-failure",
       reason: "fix phase reported a candidate commit that does not match its worktree HEAD",
@@ -462,7 +462,7 @@ async function validateFixProvenance(args: {
     "merge-base",
     "--is-ancestor",
     args.previousCandidateCommit,
-    args.fix.candidateCommit,
+    args.candidateCommit,
   ], privateObjects);
   if (candidateAncestry.exitCode !== 0) {
     return {
@@ -471,6 +471,42 @@ async function validateFixProvenance(args: {
     };
   }
 
+  const worktreeStatus = await git(args.worktreePath, [
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+  ], privateObjects);
+  if (worktreeStatus.exitCode !== 0) {
+    return {
+      failure: "sandbox-violation",
+      reason: "fix phase candidate worktree cleanliness could not be verified",
+    };
+  }
+  if (worktreeStatus.stdout.length > 0) {
+    return {
+      failure: "sandbox-violation",
+      reason: "fix phase candidate worktree contains uncommitted state",
+    };
+  }
+
+  return null;
+}
+
+async function validateFixProvenance(args: {
+  worktreePath: string;
+  previousCandidateCommit: string;
+  fix: FixReport;
+  gitObjectAccess: LinkedWorktreeGitAccess;
+}): Promise<CandidateProvenanceFailure | null> {
+  const provenanceFailure = await validateCandidateProvenance({
+    worktreePath: args.worktreePath,
+    previousCandidateCommit: args.previousCandidateCommit,
+    candidateCommit: args.fix.candidateCommit,
+    gitObjectAccess: args.gitObjectAccess,
+  });
+  if (provenanceFailure !== null) return provenanceFailure;
+
+  const privateObjects = privateObjectReadOptions(args.gitObjectAccess);
   const dispositionCommits = new Set(args.fix.dispositions.flatMap(disposition =>
     disposition.commit === undefined ? [] : [disposition.commit]));
   for (const dispositionCommit of dispositionCommits) {

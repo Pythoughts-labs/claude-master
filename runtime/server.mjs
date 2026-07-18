@@ -29099,12 +29099,12 @@ async function runFix(args) {
     roleLogRefs
   };
 }
-async function validateFixProvenance(args) {
+async function validateCandidateProvenance(args) {
   const privateObjects = privateObjectReadOptions(args.gitObjectAccess);
   const candidateObject = await git(args.worktreePath, [
     "cat-file",
     "-e",
-    `${args.fix.candidateCommit}^{commit}`
+    `${args.candidateCommit}^{commit}`
   ], privateObjects);
   if (candidateObject.exitCode !== 0) {
     return {
@@ -29117,7 +29117,7 @@ async function validateFixProvenance(args) {
     ["rev-parse", "--verify", "HEAD^{commit}"],
     privateObjects
   );
-  if (head.exitCode !== 0 || head.stdout.trim() !== args.fix.candidateCommit) {
+  if (head.exitCode !== 0 || head.stdout.trim() !== args.candidateCommit) {
     return {
       failure: "producer-failure",
       reason: "fix phase reported a candidate commit that does not match its worktree HEAD"
@@ -29127,7 +29127,7 @@ async function validateFixProvenance(args) {
     "merge-base",
     "--is-ancestor",
     args.previousCandidateCommit,
-    args.fix.candidateCommit
+    args.candidateCommit
   ], privateObjects);
   if (candidateAncestry.exitCode !== 0) {
     return {
@@ -29135,6 +29135,34 @@ async function validateFixProvenance(args) {
       reason: "fix phase candidate commit is not descended from the reviewed candidate"
     };
   }
+  const worktreeStatus = await git(args.worktreePath, [
+    "status",
+    "--porcelain",
+    "--untracked-files=all"
+  ], privateObjects);
+  if (worktreeStatus.exitCode !== 0) {
+    return {
+      failure: "sandbox-violation",
+      reason: "fix phase candidate worktree cleanliness could not be verified"
+    };
+  }
+  if (worktreeStatus.stdout.length > 0) {
+    return {
+      failure: "sandbox-violation",
+      reason: "fix phase candidate worktree contains uncommitted state"
+    };
+  }
+  return null;
+}
+async function validateFixProvenance(args) {
+  const provenanceFailure = await validateCandidateProvenance({
+    worktreePath: args.worktreePath,
+    previousCandidateCommit: args.previousCandidateCommit,
+    candidateCommit: args.fix.candidateCommit,
+    gitObjectAccess: args.gitObjectAccess
+  });
+  if (provenanceFailure !== null) return provenanceFailure;
+  const privateObjects = privateObjectReadOptions(args.gitObjectAccess);
   const dispositionCommits = new Set(args.fix.dispositions.flatMap((disposition) => disposition.commit === void 0 ? [] : [disposition.commit]));
   for (const dispositionCommit of dispositionCommits) {
     const object3 = await git(args.worktreePath, [

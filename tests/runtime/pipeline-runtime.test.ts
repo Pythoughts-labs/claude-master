@@ -400,6 +400,150 @@ describe("runPipeline", () => {
     await expect(readFile(path.join(repo, "a.txt"), "utf8")).resolves.toBe("fixed\n");
   });
 
+  it.each([
+    {
+      state: "tracked-file modification",
+      dirtyWorktree: async (args: RoleRunArgs): Promise<void> => {
+        await writeFile(path.join(args.worktreePath, "a.txt"), "uncommitted\n");
+      },
+    },
+    {
+      state: "staged change",
+      dirtyWorktree: async (args: RoleRunArgs): Promise<void> => {
+        if (args.gitObjectAccess === undefined) {
+          throw new Error("fixer git object isolation is missing");
+        }
+        await writeFile(path.join(args.worktreePath, "a.txt"), "staged\n");
+        await runGit(args.worktreePath, ["add", "a.txt"], {
+          GIT_OBJECT_DIRECTORY: args.gitObjectAccess.privateObjectsDir,
+          GIT_ALTERNATE_OBJECT_DIRECTORIES: args.gitObjectAccess.sharedObjectsDir,
+        });
+      },
+    },
+    {
+      state: "untracked file",
+      dirtyWorktree: async (args: RoleRunArgs): Promise<void> => {
+        await writeFile(path.join(args.worktreePath, "untracked.txt"), "uncommitted\n");
+      },
+    },
+  ])("rejects fixer provenance with a $state", async ({ state, dirtyWorktree }) => {
+    const repo = await initRepo();
+    const roleRunner = roundReviews([
+      { correctness: blocker, systems: approve },
+    ], async args => {
+      const commit = await commitFix(args, "fixed\n");
+      await dirtyWorktree(args);
+      return success(fenced({
+        reportVersion: "1",
+        candidateCommit: commit,
+        dispositions: [{
+          findingId: "F-001",
+          disposition: "fixed",
+          evidence: "Committed the requested correction.",
+          commit,
+        }],
+      }));
+    });
+
+    const result = await runPipeline(
+      repo,
+      validSpec(),
+      dependencies({ runId: `pipeline-fix-dirty-${state.replaceAll(" ", "-")}`, roleRunner }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.failure).toBe("sandbox-violation");
+    expect(result.gate.reasons).toContain(
+      "fix phase candidate worktree contains uncommitted state",
+    );
+  });
+
+  it("fails closed when fixer worktree cleanliness cannot be read", async () => {
+    const repo = await initRepo();
+    const roleRunner = roundReviews([
+      { correctness: blocker, systems: approve },
+    ], async args => {
+      if (args.gitObjectAccess === undefined) {
+        throw new Error("fixer git object isolation is missing");
+      }
+      const commit = await commitFix(args, "fixed\n");
+      const env = {
+        GIT_OBJECT_DIRECTORY: args.gitObjectAccess.privateObjectsDir,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: args.gitObjectAccess.sharedObjectsDir,
+      };
+      const indexPath = path.resolve(
+        args.worktreePath,
+        await runGit(args.worktreePath, ["rev-parse", "--git-path", "index"], env),
+      );
+      await rm(indexPath);
+      await mkdir(indexPath);
+      return success(fenced({
+        reportVersion: "1",
+        candidateCommit: commit,
+        dispositions: [{
+          findingId: "F-001",
+          disposition: "fixed",
+          evidence: "Committed the requested correction.",
+          commit,
+        }],
+      }));
+    });
+
+    const result = await runPipeline(
+      repo,
+      validSpec(),
+      dependencies({ runId: "pipeline-fix-status-failure", roleRunner }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.failure).toBe("sandbox-violation");
+    expect(result.gate.reasons).toContain(
+      "fix phase candidate worktree cleanliness could not be verified",
+    );
+  });
+
+  it("validates fixer provenance through private objects before promotion", async () => {
+    const repo = await initRepo();
+    let privateCommit = "";
+    const roleRunner = roundReviews([
+      { correctness: blocker, systems: approve },
+      { correctness: approve, systems: approve },
+    ], async args => {
+      privateCommit = await commitFix(args, "private-fixed\n");
+      expect((await git(repo, [
+        "cat-file",
+        "-e",
+        `${privateCommit}^{commit}`,
+      ])).exitCode).not.toBe(0);
+      return success(fenced({
+        reportVersion: "1",
+        candidateCommit: privateCommit,
+        dispositions: [{
+          findingId: "F-001",
+          disposition: "fixed",
+          evidence: "Committed the requested correction.",
+          commit: privateCommit,
+        }],
+      }));
+    });
+
+    const result = await runPipeline(
+      repo,
+      validSpec(),
+      dependencies({ runId: "pipeline-fix-private-provenance", roleRunner }),
+    );
+
+    expect(privateCommit).not.toBe("");
+    expect(result.status).toBe("decision-ready");
+    expect((await git(repo, [
+      "cat-file",
+      "-e",
+      `${result.finalCandidateCommit}^{commit}`,
+    ])).exitCode).toBe(0);
+    expect(await runGit(repo, ["show", `${result.finalCandidateCommit}:a.txt`]))
+      .toBe("private-fixed");
+  });
+
   it("rejects a fixer report whose candidate does not match worktree HEAD", async () => {
     const repo = await initRepo();
     const roleRunner = roundReviews([
