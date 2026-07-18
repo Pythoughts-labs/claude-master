@@ -26,6 +26,14 @@ Spec: `docs/superpowers/specs/2026-07-18-ralph-loop-integration-design.md`
 - Every task: failing-first regression test, full `npx vitest run` green, mandatory
   separate `npx tsc --noEmit` gate, `runtime/server.mjs` regenerated in the same commit
   when src changes; never gate on piped vitest output.
+- Bundle rule (scratchpad finding 12): keep `runtime/server.mjs` OUT of producer
+  writeAllowlists — a producer rebuild inside its linked worktree embeds
+  worktree-relative node_modules paths and breaks byte-stable release validation. The
+  architect rebuilds the canonical bundle at integration time and folds it into the
+  same commit.
+- Until the installed marketplace plugin advertises the current delegation-spec schema,
+  fold reviewer focus text into spec `context` (installed 0.19.x rejects `review.focus`;
+  scratchpad finding 13).
 - Trust invariants and recorded decisions are fixed by the spec; a task that cannot satisfy
   one stops and reports rather than weakening it.
 - `commonSections()` in role-prompts.ts is a prompt-isolation firewall and is never
