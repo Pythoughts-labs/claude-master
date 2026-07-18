@@ -1,5 +1,10 @@
 # Delegation Contract Repair Implementation Plan
 
+**Status: executed and merged to `main` at `eb98d16` (2026-07-17).** All four tasks
+landed: Task 1 `9f73354`, Task 2 `f167b24` (hardened by `c711599`, `f24cdf6`), Task 3
+`2652ddf` (hardened by `d466f8e`), Task 4 `5583a40`/`cae0ec2` (deviation: `5d015fe`
+moved `scratchpad.md` out of version control; dogfood record kept locally).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Repair the Delegation Spec guidance, tracked-file symlink precondition, and legacy Codex edit wrapper without weakening clean-checkout, repository-escape, or caller-override defenses.
@@ -58,7 +63,7 @@
 - Consumes: `validateSpec(input)`, `renderRolePrompt(role, pkg)`, and the closed `review` schema.
 - Produces: `ReviewConfig.focus?: string[]`; reviewer prompts containing a `## Review focus` section; exact public skill guidance.
 
-- [ ] **Step 1: Add failing schema tests for reviewer focus**
+- [x] **Step 1: Add failing schema tests for reviewer focus**
 
 Add these cases inside `describe("delegation spec review block", ...)`:
 
@@ -91,7 +96,7 @@ it("rejects empty or malformed reviewer focus guidance", () => {
 });
 ```
 
-- [ ] **Step 2: Add failing reviewer-prompt tests and correct the invalid fixture token**
+- [x] **Step 2: Add failing reviewer-prompt tests and correct the invalid fixture token**
 
 Change the typed fixture's network value from `"deny"` to `"denied"`, then add a focus block:
 
@@ -127,7 +132,7 @@ it("includes host-authored focus only in reviewer prompts", () => {
 });
 ```
 
-- [ ] **Step 3: Add failing skill-contract assertions**
+- [x] **Step 3: Add failing skill-contract assertions**
 
 Append these checks before the final `console.log` in `tests/delegate-routing.test.mjs`:
 
@@ -142,7 +147,7 @@ assert.match(skill, /`review\.focus`/u);
 assert.match(skill, /tracked or unignored changes must be committed before delegation/u);
 ```
 
-- [ ] **Step 4: Run the focused tests to prove the new behavior fails**
+- [x] **Step 4: Run the focused tests to prove the new behavior fails**
 
 Run:
 
@@ -153,7 +158,7 @@ node tests/delegate-routing.test.mjs
 
 Expected: Vitest rejects `review.focus` or the role-prompt assertion fails; the Node contract test also fails because the skill lacks the exact guidance.
 
-- [ ] **Step 5: Add `review.focus` to the canonical schema and TypeScript type**
+- [x] **Step 5: Add `review.focus` to the canonical schema and TypeScript type**
 
 Add `focus` beside `maxRounds` in `runtime/schemas/delegation-spec.v1.json`:
 
@@ -178,7 +183,7 @@ export interface ReviewConfig {
 }
 ```
 
-- [ ] **Step 6: Render focus only in reviewer prompts**
+- [x] **Step 6: Render focus only in reviewer prompts**
 
 Add this helper before `reviewerPrompt`:
 
@@ -213,7 +218,7 @@ function reviewerPrompt(rubric: string, pkg: RolePackage): string {
 
 Do not add focus to `commonSections`; that function is also used by fixer and verifier roles.
 
-- [ ] **Step 7: Rewrite the skill's schema guidance with exact accepted syntax**
+- [x] **Step 7: Rewrite the skill's schema guidance with exact accepted syntax**
 
 Replace the ambiguous verification and execution bullets with text containing these exact contracts:
 
@@ -244,7 +249,7 @@ Add this precondition guidance before the trusted lifecycle:
 **Repository precondition:** delegation and controlled integration require an exact clean checkout. Tracked or unignored changes must be committed before delegation, including tracked planning files such as `tasks/todo.md`. Git-ignored local planning files do not affect the clean check. Do not use skip-worktree or assume-unchanged flags as a workaround.
 ```
 
-- [ ] **Step 8: Re-run Task 1 tests**
+- [x] **Step 8: Re-run Task 1 tests**
 
 Run:
 
@@ -255,7 +260,7 @@ node tests/delegate-routing.test.mjs
 
 Expected: all focused Vitest tests pass and the Node script prints `PASS: unspecified delegations require an explicit CLI selection.`
 
-- [ ] **Step 9: Review the Task 1 diff checkpoint**
+- [x] **Step 9: Review the Task 1 diff checkpoint**
 
 Run:
 
@@ -277,7 +282,7 @@ Expected: exit 0. Do not commit without explicit user authorization.
 - Consumes: `git ls-files --stage -z`, canonical checkout root, write allowlist, existing `checkPreconditions()` result vocabulary.
 - Produces: tracked-mode sets and a target qualification predicate used only by nested-repository discovery.
 
-- [ ] **Step 1: Add the failing contained-file regression for primary and linked worktrees**
+- [x] **Step 1: Add the failing contained-file regression for primary and linked worktrees**
 
 Add this POSIX real-Git test:
 
@@ -308,7 +313,7 @@ it.skipIf(process.platform === "win32")("accepts a tracked symlink to a containe
 });
 ```
 
-- [ ] **Step 2: Add fail-closed tests for internal directories, external files, broken links, ignored links, and Git metadata**
+- [x] **Step 2: Add fail-closed tests for internal directories, external files, broken links, ignored links, and Git metadata**
 
 Add separate POSIX tests using the existing `initRepo`, `temporaryDirectory`, and `runGit` helpers. Each test must commit any tracked symlink before calling `checkPreconditions`.
 
@@ -359,7 +364,7 @@ await expect(checkPreconditions(linked, { writeAllowlist: ["git-link"] }))
 
 Give every construction its own repository so one unsafe entry cannot mask another. Wrap linked-worktree creation in `try/finally` and remove it through the primary repository.
 
-- [ ] **Step 3: Run the symlink tests to prove the contained-file case fails**
+- [x] **Step 3: Run the symlink tests to prove the contained-file case fails**
 
 Run:
 
@@ -369,7 +374,7 @@ npx vitest run tests/runtime/repo-preconditions.test.ts
 
 Expected: the new contained regular-file test fails with `{ ok: false, reason: "nested-repository", detail: ["src/package/CHANGELOG.md"] }`; existing and new unsafe-link cases remain rejected.
 
-- [ ] **Step 4: Parse tracked paths by Git index mode**
+- [x] **Step 4: Parse tracked paths by Git index mode**
 
 Replace `submodulePaths` with a generic helper:
 
@@ -394,7 +399,7 @@ const trackedSymlinks = indexPathsWithMode(stagedEntries.stdout, "120000");
 
 Pass both sets to `findNestedRepositories`.
 
-- [ ] **Step 5: Add canonical containment and safe-target qualification**
+- [x] **Step 5: Add canonical containment and safe-target qualification**
 
 Import `canonicalizeForScope` from `src/platform/windows-platform-services.ts`, then add:
 
@@ -440,7 +445,7 @@ async function isSafeTrackedFileSymlink(
 
 `repositoryRoot` is already canonical when `findNestedRepositories` is called. Any unexpected realpath or lstat error must escape to the existing `nested-repository-scan-failed` catch.
 
-- [ ] **Step 6: Qualify symlinks without traversing them**
+- [x] **Step 6: Qualify symlinks without traversing them**
 
 Add `trackedSymlinks: Set<string>` to `findNestedRepositories`. Replace the unconditional symlink branch with:
 
@@ -460,7 +465,7 @@ if (entry.isSymbolicLink()) {
 
 Do not enqueue a safe file target in `pendingDirectories`; this is the no-follow guarantee.
 
-- [ ] **Step 7: Re-run repository precondition tests**
+- [x] **Step 7: Re-run repository precondition tests**
 
 Run:
 
@@ -470,7 +475,7 @@ npx vitest run tests/runtime/repo-preconditions.test.ts
 
 Expected: all tests pass. On Windows, POSIX symlink creation cases are skipped while existing ordinary-file behavior remains covered by the platform suite.
 
-- [ ] **Step 8: Run cross-layer precondition consumers**
+- [x] **Step 8: Run cross-layer precondition consumers**
 
 Run:
 
@@ -480,7 +485,7 @@ npx vitest run tests/runtime/attempt-runtime.test.ts tests/runtime/controlled-in
 
 Expected: all tests pass; clean checkout, integration, and immutable-candidate symlink defenses remain unchanged.
 
-- [ ] **Step 9: Review the Task 2 diff checkpoint**
+- [x] **Step 9: Review the Task 2 diff checkpoint**
 
 Run:
 
@@ -506,7 +511,7 @@ Expected: exit 0. Do not commit without explicit user authorization.
 - Consumes: wrapper argv and physical current directory.
 - Produces: private `--lane-mode edit|read-only`; authoritative Codex `--sandbox` and `--cd` argv.
 
-- [ ] **Step 1: Extend the test runner with an explicit cwd seam**
+- [x] **Step 1: Extend the test runner with an explicit cwd seam**
 
 Import `realpath` from `node:fs/promises`, then change the helper in `tests/runtime/isolated-scripts.test.ts`:
 
@@ -528,7 +533,7 @@ function run(
 }
 ```
 
-- [ ] **Step 2: Make default read-only and explicit edit argv tests fail first**
+- [x] **Step 2: Make default read-only and explicit edit argv tests fail first**
 
 Rename the safe-forwarding test to `"injects a read-only sandbox and physical cwd by default"`, run it with `fixture.root` as cwd, and compare against its physical path:
 
@@ -566,7 +571,7 @@ expect(forwarded).toEqual([
 expect(forwarded).not.toContain("--lane-mode");
 ```
 
-- [ ] **Step 3: Add malformed and repeated private-mode rejection tests**
+- [x] **Step 3: Add malformed and repeated private-mode rejection tests**
 
 Use a fake Codex marker and assert each invocation exits 64 without creating it:
 
@@ -587,7 +592,7 @@ await expect(access(marker)).rejects.toBeDefined();
 
 Keep the existing unsafe-argument table unchanged so raw `--sandbox`, `--cd`, and unsafe config remain exit 65.
 
-- [ ] **Step 4: Add failing lane-prose and release-shell assertions**
+- [x] **Step 4: Add failing lane-prose and release-shell assertions**
 
 Inside the `codexLaneFiles` loop in `tests/lane-contract.test.mjs`, identify the shell command that invokes `$RUNTIME` and assert:
 
@@ -605,7 +610,7 @@ assert_adjacent_args "$state/args" --sandbox read-only "$mode default sandbox"
 assert_adjacent_args "$state/args" --cd "$(pwd -P)" "$mode physical cwd"
 ```
 
-- [ ] **Step 5: Run the wrapper and lane tests to prove they fail**
+- [x] **Step 5: Run the wrapper and lane tests to prove they fail**
 
 Run:
 
@@ -617,7 +622,7 @@ bash tests/codex-lifecycle.test.sh
 
 Expected: argv assertions fail because no wrapper-owned sandbox/cwd is present, and lane contract assertions fail because both agent definitions still pass raw Codex flags.
 
-- [ ] **Step 6: Parse and validate the private lane mode before caller arguments**
+- [x] **Step 6: Parse and validate the private lane mode before caller arguments**
 
 Insert this block before `reject_unsafe_args "$@"` in `scripts/run-codex-isolated.sh`:
 
@@ -644,7 +649,7 @@ esac
 
 Add a `--lane-mode|--lane-mode=*` branch to `reject_unsafe_args` that prints `ERROR: --lane-mode must appear once at the start` and returns 64. This rejects repeated or misplaced selectors after the leading selector is consumed.
 
-- [ ] **Step 7: Bind Codex to the wrapper-owned physical workspace**
+- [x] **Step 7: Bind Codex to the wrapper-owned physical workspace**
 
 After argument validation, resolve the current directory:
 
@@ -666,7 +671,7 @@ codex exec --ignore-user-config --ephemeral \
 
 Keep `--sandbox` and `--cd` in the raw caller denylist. The wrapper injection occurs only after caller arguments have passed that denylist.
 
-- [ ] **Step 8: Reconcile both legacy implementer definitions**
+- [x] **Step 8: Reconcile both legacy implementer definitions**
 
 Change the Claude invocation to:
 
@@ -689,7 +694,7 @@ Change the OpenCode invocation to:
 
 Update each nearby explanation to state that `--lane-mode edit` makes the wrapper inject `--sandbox workspace-write` and `--cd` for the physical current worktree. Do not claim that callers pass `--ignore-user-config`, `--ephemeral`, sandbox, or cwd directly.
 
-- [ ] **Step 9: Re-run wrapper, lane, and release-shell tests**
+- [x] **Step 9: Re-run wrapper, lane, and release-shell tests**
 
 Run:
 
@@ -701,7 +706,7 @@ bash tests/codex-lifecycle.test.sh
 
 Expected: Vitest passes, lane contracts print `PASS: implementation lane contracts are guarded across both hosts.`, and both lifecycle branches plus timeout/logging cases pass.
 
-- [ ] **Step 10: Review the Task 3 diff checkpoint**
+- [x] **Step 10: Review the Task 3 diff checkpoint**
 
 Run:
 
@@ -726,7 +731,7 @@ Expected: both commands exit 0. Do not commit without explicit user authorizatio
 - Consumes: all completed source/schema/script changes.
 - Produces: reproducible packaged runtime, release-visible notes, durable regressions, and final evidence.
 
-- [ ] **Step 1: Record the user-visible fixes under Unreleased**
+- [x] **Step 1: Record the user-visible fixes under Unreleased**
 
 Add concise entries under `## [Unreleased]`:
 
@@ -738,7 +743,7 @@ Add concise entries under `## [Unreleased]`:
 - The legacy Codex wrapper now owns read-only versus edit sandbox selection and physical cwd binding, so implementation lanes receive `workspace-write` without permitting caller scope overrides.
 ```
 
-- [ ] **Step 2: Append dogfood regression descriptions**
+- [x] **Step 2: Append dogfood regression descriptions**
 
 Append a new heading and these regression requirements to `scratchpad.md`:
 
@@ -751,7 +756,7 @@ Append a new heading and these regression requirements to `scratchpad.md`:
 - The legacy Codex implementer command must execute through a wrapper-owned `workspace-write` mode; fake argv tests must fail if the wrapper reverts to an implicit read-only sandbox or accepts raw sandbox/cwd overrides.
 ```
 
-- [ ] **Step 3: Regenerate the packaged runtime**
+- [x] **Step 3: Regenerate the packaged runtime**
 
 Run:
 
@@ -761,7 +766,7 @@ bash scripts/build-runtime.sh
 
 Expected stderr: `built runtime/server.mjs`. Do not edit the generated file manually.
 
-- [ ] **Step 4: Run focused regression gates together**
+- [x] **Step 4: Run focused regression gates together**
 
 Run:
 
@@ -774,7 +779,7 @@ bash tests/codex-lifecycle.test.sh
 
 Expected: every command exits 0.
 
-- [ ] **Step 5: Run TypeScript and the full Vitest suite**
+- [x] **Step 5: Run TypeScript and the full Vitest suite**
 
 Run:
 
@@ -785,7 +790,7 @@ npx vitest run
 
 Expected: TypeScript exits 0 and every Vitest file passes with no unhandled errors.
 
-- [ ] **Step 6: Attempt the canonical release validator**
+- [x] **Step 6: Attempt the canonical release validator**
 
 Run:
 
@@ -795,7 +800,7 @@ bash scripts/validate-release.sh
 
 Expected in an uncommitted implementation worktree: the deterministic rebuild succeeds, then the script reports `runtime artifacts differ from the committed release state.` because the regenerated bundle is intentionally uncommitted. If the user has explicitly authorized and requested a commit before this step, expected result is full exit 0 instead.
 
-- [ ] **Step 7: Run the release-only gates that follow the committed-artifact guard**
+- [x] **Step 7: Run the release-only gates that follow the committed-artifact guard**
 
 When Step 6 stops at the intentional uncommitted-bundle guard, run the remaining commands directly:
 
@@ -817,7 +822,7 @@ node tests/lane-roster.test.mjs
 
 Expected: every command exits 0. Report the canonical validator's committed-artifact limitation separately rather than claiming it passed.
 
-- [ ] **Step 8: Verify generated-byte stability without changing source**
+- [x] **Step 8: Verify generated-byte stability without changing source**
 
 Run:
 
@@ -831,7 +836,7 @@ rm "$SNAPSHOT"
 
 Expected: `cmp` exits 0, proving the checked working-tree bundle is reproducible. The temporary file is outside the repository.
 
-- [ ] **Step 9: Inspect final status and complete diff**
+- [x] **Step 9: Inspect final status and complete diff**
 
 Run:
 
@@ -844,7 +849,7 @@ git diff -- runtime/schemas/delegation-spec.v1.json src/protocol/delegation-spec
 
 Expected: only planned files are changed, `git diff --check` exits 0, and no unrelated user changes are altered.
 
-- [ ] **Step 10: Perform final trust-boundary review**
+- [x] **Step 10: Perform final trust-boundary review**
 
 Confirm each statement against the final bytes and test output:
 
