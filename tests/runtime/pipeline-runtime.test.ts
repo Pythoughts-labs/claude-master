@@ -53,7 +53,6 @@ import { buildRunManifest } from "../../src/runtime/run-manifest.js";
 import type {
   AcceptanceVerifierLike,
   AttemptRuntimeDependencies,
-  BorrowedCheckoutLease,
 } from "../../src/runtime/attempt-runtime.js";
 import {
   clearRegisteredSecrets,
@@ -271,14 +270,12 @@ async function checkoutLeaseHarness(
   } = {},
 ): Promise<{
   ps: PlatformServices;
-  expectedRepositoryIdentity: string;
   lock(): CheckoutLock;
   held(): boolean;
   acquireCalls(): number;
   releaseCalls(): number;
 }> {
   const platformServices = getPlatformServices();
-  const canonical = await platformServices.canonicalizePath(repo);
   let lock: CheckoutLock | undefined;
   let held = false;
   let acquireCalls = 0;
@@ -290,6 +287,7 @@ async function checkoutLeaseHarness(
       held = true;
       lock = {
         key: ownedLock.key,
+        repositoryIdentity: ownedLock.repositoryIdentity,
         async release() {
           releaseCalls += 1;
           try {
@@ -306,7 +304,6 @@ async function checkoutLeaseHarness(
   }) as PlatformServices;
   return {
     ps,
-    expectedRepositoryIdentity: canonical.gitCommonDir ?? canonical.canonical,
     lock: () => {
       if (lock === undefined) throw new Error("checkout lock was not acquired");
       return lock;
@@ -786,6 +783,55 @@ describe("pipeline runtime namespaces", () => {
 });
 
 describe("runPipeline", () => {
+  it("passes the acquisition-bound identity when canonicalization changes before lock acquisition", async () => {
+    const repo = await initRepo();
+    const platformServices = getPlatformServices();
+    const canonical = await platformServices.canonicalizePath(repo);
+    const preAcquireIdentity = `${canonical.gitCommonDir ?? canonical.canonical}-before-acquire`;
+    const acquisitionIdentity = `${canonical.gitCommonDir ?? canonical.canonical}-at-acquire`;
+    const observations: string[] = [];
+    let acquiredLock: CheckoutLock | undefined;
+    let releaseCalls = 0;
+    let ps: PlatformServices;
+    ps = Object.assign(Object.create(platformServices), {
+      async canonicalizePath(input: string) {
+        const repositoryIdentity = observations.length === 0
+          ? preAcquireIdentity
+          : acquisitionIdentity;
+        observations.push(repositoryIdentity);
+        return { input, canonical: canonical.canonical, gitCommonDir: repositoryIdentity };
+      },
+      async acquireCheckoutLock(checkout: string) {
+        const acquired = await ps.canonicalizePath(checkout);
+        const repositoryIdentity = acquired.gitCommonDir ?? acquired.canonical;
+        acquiredLock = {
+          key: createHash("sha256").update(repositoryIdentity).digest("hex"),
+          repositoryIdentity,
+          async release() { releaseCalls += 1; },
+        };
+        return acquiredLock;
+      },
+    }) as PlatformServices;
+    let receivedLease: AttemptRuntimeDependencies["borrowedCheckoutLease"];
+
+    const result = await runPipeline(repo, validSpec(), {
+      verifier: passingVerifier,
+      ps,
+      registry: new ProducerRegistry([]),
+      roleRunner: async () => { throw new Error("role runner must not run"); },
+      runAttempt: async (_checkoutPath, _spec, attemptDeps) => {
+        receivedLease = attemptDeps.borrowedCheckoutLease;
+        return failedAttemptResult("pipeline-acquisition-bound-identity");
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(observations).toEqual([preAcquireIdentity, acquisitionIdentity]);
+    expect(receivedLease).toBe(acquiredLock);
+    expect(receivedLease?.repositoryIdentity).toBe(acquisitionIdentity);
+    expect(releaseCalls).toBe(1);
+  });
+
   it("holds one checkout lease through attempt, review, fix, verification, and marker cleanup", async () => {
     const repo = await initRepo();
     const runId = "pipeline-continuous-checkout-lease";
@@ -836,7 +882,7 @@ describe("runPipeline", () => {
     const deps = dependencies({ runId, roleRunner });
     deps.ps = lease.ps;
     const initialRun = deps.runAttempt!;
-    let receivedLease: BorrowedCheckoutLease | undefined;
+    let receivedLease: CheckoutLock | undefined;
     deps.runAttempt = async (checkoutPath, receivedSpec, attemptDeps) => {
       expect(lease.held()).toBe(true);
       receivedLease = attemptDeps.borrowedCheckoutLease;
@@ -859,10 +905,7 @@ describe("runPipeline", () => {
 
     expect(result.status).toBe("decision-ready");
     expect(result.increments).toHaveLength(1);
-    expect(receivedLease).toEqual({
-      lock: lease.lock(),
-      repositoryIdentity: lease.expectedRepositoryIdentity,
-    });
+    expect(receivedLease).toBe(lease.lock());
     expect(verifySpy).toHaveBeenCalled();
     expect(clearMarkerSpy).toHaveBeenCalledOnce();
     expect(lease.acquireCalls()).toBe(1);
@@ -922,7 +965,7 @@ describe("runPipeline", () => {
     });
     deps.ps = lease.ps;
     const initialRun = deps.runAttempt!;
-    let receivedLease: BorrowedCheckoutLease | undefined;
+    let receivedLease: CheckoutLock | undefined;
     deps.runAttempt = async (checkoutPath, receivedSpec, attemptDeps) => {
       expect(lease.held()).toBe(true);
       receivedLease = attemptDeps.borrowedCheckoutLease;
@@ -937,10 +980,7 @@ describe("runPipeline", () => {
     const result = await runPipeline(repo, slicedSpec(), deps);
 
     expect(result.status).toBe("decision-ready");
-    expect(receivedLease).toEqual({
-      lock: lease.lock(),
-      repositoryIdentity: lease.expectedRepositoryIdentity,
-    });
+    expect(receivedLease).toBe(lease.lock());
     expect(lease.acquireCalls()).toBe(1);
     expect(lease.releaseCalls()).toBe(1);
     expect(lease.held()).toBe(false);
@@ -951,7 +991,7 @@ describe("runPipeline", () => {
     const repo = await initRepo();
     const lease = await checkoutLeaseHarness(repo);
     const failing = failedAttemptResult("pipeline-attempt-lock-release");
-    let receivedLease: BorrowedCheckoutLease | undefined;
+    let receivedLease: CheckoutLock | undefined;
 
     const result = await runPipeline(repo, validSpec(), {
       verifier: passingVerifier,
@@ -966,7 +1006,7 @@ describe("runPipeline", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(receivedLease?.lock).toBe(lease.lock());
+    expect(receivedLease).toBe(lease.lock());
     expect(lease.acquireCalls()).toBe(1);
     expect(lease.releaseCalls()).toBe(1);
     expect(lease.held()).toBe(false);

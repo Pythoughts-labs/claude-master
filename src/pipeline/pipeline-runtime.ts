@@ -1,7 +1,7 @@
 import path from "node:path";
 import { git, type GitExecOptions, type GitResult } from "../git/git-exec.js";
 import { WorktreeManager } from "../git/worktree-manager.js";
-import type { PlatformServices } from "../platform/platform-services.js";
+import type { CheckoutLock, PlatformServices } from "../platform/platform-services.js";
 import { getPlatformServices } from "../platform/select-platform.js";
 import type {
   CandidateArtifact,
@@ -22,7 +22,6 @@ import type { ProducerRegistry } from "../producers/producer-registry.js";
 import {
   runAttempt as defaultRunAttempt,
   type AttemptRuntimeDependencies,
-  type BorrowedCheckoutLease,
 } from "../runtime/attempt-runtime.js";
 import {
   ArtifactStore,
@@ -1128,10 +1127,6 @@ export async function runPipeline(
   const ps = deps.ps ?? getPlatformServices();
   const canonical = await ps.canonicalizePath(checkoutPath);
   const lock = await ps.acquireCheckoutLock(canonical.canonical);
-  const borrowedCheckoutLease: BorrowedCheckoutLease = {
-    lock,
-    repositoryIdentity: canonical.gitCommonDir ?? canonical.canonical,
-  };
   let primaryError: unknown;
   let hasPrimaryError = false;
   try {
@@ -1140,7 +1135,7 @@ export async function runPipeline(
       spec,
       deps,
       ps,
-      borrowedCheckoutLease,
+      lock,
     );
   } catch (error) {
     primaryError = error;
@@ -1164,7 +1159,7 @@ async function runPipelineWithLease(
   spec: DelegationSpec,
   deps: PipelineDependencies,
   ps: PlatformServices,
-  borrowedCheckoutLease: BorrowedCheckoutLease,
+  borrowedCheckoutLease: CheckoutLock,
 ): Promise<PipelineResult> {
   const runAttemptFn = deps.runAttempt ?? defaultRunAttempt;
   const slices = resolveSlices(spec);

@@ -22186,9 +22186,11 @@ var PosixPlatformServices = class {
   }
   async acquireCheckoutLock(checkout) {
     const { canonical, gitCommonDir: commonDir } = await this.canonicalizePath(checkout);
-    const key = createHash("sha256").update(commonDir ?? canonical).digest("hex");
+    const repositoryIdentity = commonDir ?? canonical;
+    const key = createHash("sha256").update(repositoryIdentity).digest("hex");
     const ownerToken = await this.getProcessStartToken(nodeProcess2.pid);
-    return acquireWxFileLock(key, `checkout is locked: ${checkout}`, ownerToken);
+    const lock = await acquireWxFileLock(key, `checkout is locked: ${checkout}`, ownerToken);
+    return { ...lock, repositoryIdentity };
   }
   async createSecureTempDirectory() {
     return fs.mkdtemp(path.join(tmpdir2(), "claude-architect-"));
@@ -22510,9 +22512,11 @@ var WindowsPlatformServices = class {
   }
   async acquireCheckoutLock(checkout) {
     const { canonical, gitCommonDir: commonDir } = await this.canonicalizePath(checkout);
-    const key = createHash2("sha256").update(commonDir ?? canonical).digest("hex");
+    const repositoryIdentity = commonDir ?? canonical;
+    const key = createHash2("sha256").update(repositoryIdentity).digest("hex");
     const ownerToken = await this.getProcessStartToken(nodeProcess3.pid);
-    return acquireWxFileLock(key, `checkout is locked: ${checkout}`, ownerToken);
+    const lock = await acquireWxFileLock(key, `checkout is locked: ${checkout}`, ownerToken);
+    return { ...lock, repositoryIdentity };
   }
   async createSecureTempDirectory() {
     return fs2.mkdtemp(path2.join(tmpdir3(), "claude-architect-"));
@@ -27871,10 +27875,7 @@ async function runAttempt(checkoutPath, spec, deps) {
   const store = new ArtifactStore(runId);
   const canonical = await ps.canonicalizePath(checkoutPath);
   const repositoryIdentity = canonical.gitCommonDir ?? canonical.canonical;
-  if (deps.borrowedCheckoutLease !== void 0 && deps.borrowedCheckoutLease.repositoryIdentity !== repositoryIdentity) {
-    throw new RuntimeError("borrowed checkout lease repository identity mismatch");
-  }
-  let lock = deps.borrowedCheckoutLease?.lock ?? null;
+  let lock = deps.borrowedCheckoutLease ?? null;
   let ownedLock = null;
   let worktree = null;
   let tempHome = null;
@@ -27884,6 +27885,9 @@ async function runAttempt(checkoutPath, spec, deps) {
     if (lock === null) {
       ownedLock = await ps.acquireCheckoutLock(canonical.canonical);
       lock = ownedLock;
+    }
+    if (lock.repositoryIdentity !== repositoryIdentity) {
+      throw new RuntimeError("borrowed checkout lease repository identity mismatch");
     }
     const preconditions = await checkPreconditions(canonical.canonical, {
       writeAllowlist: spec.writeAllowlist
@@ -29862,10 +29866,6 @@ async function runPipeline(checkoutPath, spec, deps) {
   const ps = deps.ps ?? getPlatformServices();
   const canonical = await ps.canonicalizePath(checkoutPath);
   const lock = await ps.acquireCheckoutLock(canonical.canonical);
-  const borrowedCheckoutLease = {
-    lock,
-    repositoryIdentity: canonical.gitCommonDir ?? canonical.canonical
-  };
   let primaryError;
   let hasPrimaryError = false;
   try {
@@ -29874,7 +29874,7 @@ async function runPipeline(checkoutPath, spec, deps) {
       spec,
       deps,
       ps,
-      borrowedCheckoutLease
+      lock
     );
   } catch (error2) {
     primaryError = error2;

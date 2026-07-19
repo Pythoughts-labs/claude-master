@@ -244,16 +244,18 @@ function dependencies(
 
 async function borrowedLeaseFixture(repoRoot: string): Promise<{
   ps: PlatformServices;
-  borrowedCheckoutLease: { lock: CheckoutLock; repositoryIdentity: string };
+  borrowedCheckoutLease: CheckoutLock;
   acquireCalls(): number;
   releaseCalls(): number;
 }> {
   const platformServices = getPlatformServices();
   const canonical = await platformServices.canonicalizePath(repoRoot);
+  const repositoryIdentity = canonical.gitCommonDir ?? canonical.canonical;
   let acquireCalls = 0;
   let releaseCalls = 0;
   const lock: CheckoutLock = {
     key: "borrowed-checkout-lock-key",
+    repositoryIdentity,
     async release() {
       releaseCalls += 1;
     },
@@ -266,10 +268,7 @@ async function borrowedLeaseFixture(repoRoot: string): Promise<{
   }) as PlatformServices;
   return {
     ps,
-    borrowedCheckoutLease: {
-      lock,
-      repositoryIdentity: canonical.gitCommonDir ?? canonical.canonical,
-    },
+    borrowedCheckoutLease: lock,
     acquireCalls: () => acquireCalls,
     releaseCalls: () => releaseCalls,
   };
@@ -354,6 +353,7 @@ describe("runAttempt", () => {
             lockHeld = true;
             return {
               key: lock.key,
+              repositoryIdentity: lock.repositoryIdentity,
               release: async () => {
                 releaseCalls += 1;
                 await lock.release();
@@ -399,7 +399,7 @@ describe("runAttempt", () => {
     expect(fixture.acquireCalls()).toBe(0);
     expect(fixture.releaseCalls()).toBe(0);
     expect(await archivedJson(runId, "run-start.json")).toMatchObject({
-      lockKey: fixture.borrowedCheckoutLease.lock.key,
+      lockKey: fixture.borrowedCheckoutLease.key,
     });
   });
 
@@ -473,17 +473,24 @@ describe("runAttempt", () => {
     expect(fixture.releaseCalls()).toBe(0);
   });
 
-  it("rejects a borrowed lease for another repository before Producer execution", async () => {
+  it("rejects a borrowed lock bound to another repository before Producer execution", async () => {
     const repoRoot = await initRepo();
     const fixture = await borrowedLeaseFixture(repoRoot);
-    fixture.borrowedCheckoutLease.repositoryIdentity += "-different-repository";
+    fixture.borrowedCheckoutLease = {
+      ...fixture.borrowedCheckoutLease,
+      repositoryIdentity: `${fixture.borrowedCheckoutLease.repositoryIdentity}-forged-lock-binding`,
+    };
     const adapter = new FakeAdapter();
-    const runId = "run-borrowed-lock-mismatch";
+    const runId = "run-borrowed-lock-binding-mismatch";
 
     await expect(runAttempt(
       repoRoot,
       validSpec(),
-      withBorrowedLease(dependencies(adapter, runId, { ps: fixture.ps }), fixture),
+      withBorrowedLease(dependencies(
+        adapter,
+        runId,
+        { ps: fixture.ps },
+      ), fixture),
     )).rejects.toMatchObject({
       message: "borrowed checkout lease repository identity mismatch",
     });
@@ -874,6 +881,7 @@ describe("runAttempt", () => {
             const lock = await platformServices.acquireCheckoutLock(checkout);
             return {
               key: lock.key,
+              repositoryIdentity: lock.repositoryIdentity,
               release: async () => {
                 await lock.release();
                 lockReleased = true;

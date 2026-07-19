@@ -193,6 +193,7 @@ function fakePlatform(): PlatformServices {
     }),
     acquireCheckoutLock: async checkout => ({
       key: checkout,
+      repositoryIdentity: "/canonical/repo/.git",
       release: async () => {},
     }),
   } as PlatformServices;
