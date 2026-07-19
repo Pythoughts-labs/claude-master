@@ -173,8 +173,18 @@ async function readCleanupJournal(filename: string): Promise<CleanupJournalRead>
     if (!metadata.isFile() || metadata.size > MAX_STATE_FILE_BYTES) {
       throw new RuntimeError("cleanup journal is not a bounded regular file");
     }
-    const text = await handle.readFile({ encoding: "utf8" });
-    if (text === "" || text.endsWith("\n")) return { text, tornTail: false };
+    const bytes = await readHandleBytes(handle, metadata.size);
+    const settledMetadata = await handle.stat();
+    if (bytes.byteLength > MAX_STATE_FILE_BYTES
+      || settledMetadata.size > MAX_STATE_FILE_BYTES) {
+      throw new RuntimeError("cleanup journal exceeds its size limit during read");
+    }
+    const text = bytes.toString("utf8");
+    const changedDuringRead = bytes.byteLength !== metadata.size
+      || settledMetadata.size !== metadata.size;
+    if (!changedDuringRead && (text === "" || text.endsWith("\n"))) {
+      return { text, tornTail: false };
+    }
     const finalNewline = text.lastIndexOf("\n");
     const completePrefix = finalNewline === -1 ? "" : text.slice(0, finalNewline + 1);
     return { text: completePrefix, tornTail: true };
@@ -197,17 +207,6 @@ async function plainDirectoryIdentity(directory: string): Promise<DirectoryIdent
     if (isMissing(error)) return null;
     throw error;
   }
-}
-
-async function removePlainDirectory(
-  directory: string,
-  expected: DirectoryIdentity,
-): Promise<void> {
-  const metadata = await lstat(directory);
-  if (!isPlainDirectory(metadata) || !sameIdentity(metadata, expected)) {
-    throw new RuntimeError("recovery directory identity changed before removal");
-  }
-  await rm(directory, { recursive: true, force: false });
 }
 
 function parseRunStart(text: string, expectedRunId: string): RunStartRecord {
@@ -281,22 +280,6 @@ async function validateGitCommonDir(commonDir: string): Promise<string> {
   return canonical;
 }
 
-async function validateRepositoryRoot(repoRoot: string): Promise<string> {
-  if (!path.isAbsolute(repoRoot)) {
-    throw new RuntimeError("cleanup journal repository root is not absolute");
-  }
-  const canonical = await realpath(repoRoot);
-  if (canonical !== repoRoot) {
-    throw new RuntimeError("cleanup journal repository root is no longer canonical");
-  }
-  const result = await git(canonical, ["rev-parse", "--show-toplevel"]);
-  if (result.exitCode !== 0) throw runGitError("validate cleanup repository", result);
-  if (await realpath(result.stdout.trim()) !== canonical) {
-    throw new RuntimeError("cleanup journal repository root is not the repository top level");
-  }
-  return canonical;
-}
-
 async function readDirectRef(repoRoot: string, ref: string): Promise<string | null> {
   const symbolic = await git(repoRoot, ["symbolic-ref", "--quiet", ref]);
   if (symbolic.exitCode === 0) {
@@ -314,17 +297,6 @@ async function readDirectRef(repoRoot: string, ref: string): Promise<string | nu
 async function deleteExactRef(repoRoot: string, ref: string, oid: string): Promise<void> {
   const result = await git(repoRoot, ["update-ref", "--no-deref", "-d", ref, oid]);
   if (result.exitCode !== 0) throw runGitError("delete recovery Git ref", result);
-}
-
-async function createExactRef(repoRoot: string, ref: string, oid: string): Promise<void> {
-  const result = await git(repoRoot, [
-    "update-ref",
-    "--no-deref",
-    ref,
-    oid,
-    "0".repeat(oid.length),
-  ]);
-  if (result.exitCode !== 0) throw runGitError("create recovery Git ref", result);
 }
 
 async function removeStaleCandidateAnchor(repoRoot: string, runId: string): Promise<void> {
@@ -384,37 +356,6 @@ function parseCleanupRecord(line: string): CleanupRecord {
     throw new RuntimeError("cleanup journal Git metadata is malformed");
   }
   return record as CleanupRecord;
-}
-
-function cleanupOutcome(record: CleanupRecord): AnchorCleanup {
-  if (record.repoRoot === null) return "not-applicable";
-  return record.backupRef === null ? "already-absent" : "deleted";
-}
-
-async function appendCleanupRecord(runsRoot: string, record: CleanupRecord): Promise<void> {
-  const identity = await plainDirectoryIdentity(runsRoot);
-  if (identity === null) throw new RuntimeError("cleanup journal root disappeared");
-  const filename = path.join(runsRoot, "cleanup.ndjson");
-  const handle = await open(
-    filename,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | NO_FOLLOW,
-    0o600,
-  );
-  try {
-    const metadata = await handle.stat();
-    const currentRoot = await lstat(runsRoot);
-    if (!metadata.isFile() || !isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, identity)) {
-      throw new RuntimeError("cleanup journal identity changed during recovery");
-    }
-    await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  const currentRoot = await lstat(runsRoot);
-  if (!isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, identity)) {
-    throw new RuntimeError("cleanup journal root changed after recovery append");
-  }
 }
 
 function boundedQuarantineReason(error: unknown): string {
@@ -892,65 +833,6 @@ async function quarantineRun(
   }
 }
 
-async function reconcileCleanupRefs(
-  record: CleanupRecord,
-  action: "finish" | "rollback",
-): Promise<AnchorCleanup> {
-  const outcome = cleanupOutcome(record);
-  if (outcome === "not-applicable") return outcome;
-  const repoRoot = await validateRepositoryRoot(record.repoRoot!);
-  const anchorRef = record.anchorRef!;
-  const candidateOid = record.candidateCommitOid!;
-  let anchorOid = await readDirectRef(repoRoot, anchorRef);
-  if (anchorOid !== null && anchorOid !== candidateOid) {
-    throw new RuntimeError("candidate anchor moved during interrupted prune recovery");
-  }
-  if (outcome === "already-absent") {
-    if (anchorOid !== null) {
-      throw new RuntimeError("candidate anchor unexpectedly reappeared during prune recovery");
-    }
-    return outcome;
-  }
-
-  const backupRef = record.backupRef!;
-  let backupOid = await readDirectRef(repoRoot, backupRef);
-  if (backupOid !== null && backupOid !== candidateOid) {
-    throw new RuntimeError("candidate prune backup moved during recovery");
-  }
-  if (action === "finish") {
-    if (anchorOid !== null && backupOid === null) {
-      await createExactRef(repoRoot, backupRef, candidateOid);
-      backupOid = candidateOid;
-    }
-    if (anchorOid !== null) {
-      await deleteExactRef(repoRoot, anchorRef, candidateOid);
-      anchorOid = null;
-    }
-    return outcome;
-  }
-
-  if (anchorOid === null) {
-    if (backupOid === null) {
-      throw new RuntimeError("cannot restore candidate anchor without its prune backup");
-    }
-    await createExactRef(repoRoot, anchorRef, candidateOid);
-    anchorOid = candidateOid;
-  }
-  if (backupOid !== null) await deleteExactRef(repoRoot, backupRef, candidateOid);
-  return outcome;
-}
-
-async function commitCleanupRefs(record: CleanupRecord): Promise<void> {
-  if (cleanupOutcome(record) !== "deleted") return;
-  const repoRoot = await validateRepositoryRoot(record.repoRoot!);
-  const backupOid = await readDirectRef(repoRoot, record.backupRef!);
-  if (backupOid === null) return;
-  if (backupOid !== record.candidateCommitOid) {
-    throw new RuntimeError("candidate prune backup moved before cleanup commit");
-  }
-  await deleteExactRef(repoRoot, record.backupRef!, backupOid);
-}
-
 async function readPendingCleanupRecords(
   runsRoot: string,
 ): Promise<{ pending: Map<string, CleanupRecord>; tornTail: boolean }> {
@@ -966,118 +848,14 @@ async function readPendingCleanupRecords(
   return { pending, tornTail };
 }
 
-async function currentPendingCleanupRecord(
-  runsRoot: string,
-  expected: CleanupRecord,
-): Promise<CleanupRecord | null> {
-  const snapshot = await readPendingCleanupRecords(runsRoot);
-  if (snapshot.tornTail) return null;
-  const current = snapshot.pending.get(expected.runId) ?? null;
-  if (current !== null && JSON.stringify(current) !== JSON.stringify(expected)) {
-    throw new RuntimeError("cleanup journal record changed before interrupted prune replay");
-  }
-  return current;
-}
-
-async function checkoutLockKeyForRepository(repoRoot: string): Promise<string> {
-  const canonicalRoot = await validateRepositoryRoot(repoRoot);
-  const result = await git(canonicalRoot, [
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-common-dir",
-  ]);
-  if (result.exitCode !== 0) {
-    throw runGitError("resolve cleanup repository common directory", result);
-  }
-  const commonDir = await validateGitCommonDir(await realpath(result.stdout.trim()));
-  return createHash("sha256").update(commonDir).digest("hex");
-}
-
-async function replayInterruptedPruneRecord(
-  runsRoot: string,
-  record: CleanupRecord,
-): Promise<void> {
-  const runDirectory = path.join(runsRoot, record.runId);
-  const quarantinePath = path.join(runsRoot, record.quarantineName);
-  const runIdentity = await plainDirectoryIdentity(runDirectory);
-  const quarantineIdentity = await plainDirectoryIdentity(quarantinePath);
-  if (runIdentity !== null && quarantineIdentity !== null) {
-    throw new RuntimeError("both retained and quarantined run archives exist during recovery");
-  }
-  const action = runIdentity !== null ? "rollback" : "finish";
-  const outcome = await reconcileCleanupRefs(record, action);
-  if (action === "finish") {
-    if (quarantineIdentity !== null) {
-      await removePlainDirectory(quarantinePath, quarantineIdentity);
-    }
-    await commitCleanupRefs(record);
-  }
-  await appendCleanupRecord(runsRoot, {
-    ...record,
-    event: action === "finish" ? "prune-cleanup-complete" : "prune-cleanup-rollback",
-    anchorCleanup: outcome,
-    recordedAt: new Date().toISOString(),
-  });
-}
-
 async function replayInterruptedPrunes(
   runsRoot: string,
-  locksRoot: string,
-  ownerContents: Buffer,
-  isProcessAlive: (pid: number) => boolean,
-  getProcessStartToken: (pid: number) => Promise<string | null>,
-): Promise<void> {
+): Promise<Set<string>> {
   const { pending, tornTail } = await readPendingCleanupRecords(runsRoot);
-  if (tornTail) {
-    logger.warn("startup recovery deferred interrupted prune replay for a torn cleanup journal");
-    return;
+  if (tornTail || pending.size > 0) {
+    logger.warn("startup recovery deferred interrupted prune replay for the shared cleanup journal");
   }
-
-  for (const record of [...pending.values()].sort((left, right) =>
-    left.runId.localeCompare(right.runId))) {
-    if (record.repoRoot === null) {
-      const currentRecord = await currentPendingCleanupRecord(runsRoot, record);
-      if (currentRecord !== null) {
-        await replayInterruptedPruneRecord(runsRoot, currentRecord);
-      }
-      continue;
-    }
-
-    const lockKey = await checkoutLockKeyForRepository(record.repoRoot);
-    const checkoutLock = await acquireOwnedLock(
-      path.join(locksRoot, `${lockKey}.lock`),
-      ownerContents,
-      isProcessAlive,
-      getProcessStartToken,
-    );
-    if (checkoutLock === null) continue;
-    let replayError: unknown;
-    let replayFailed = false;
-    try {
-      const currentRecord = await currentPendingCleanupRecord(runsRoot, record);
-      if (currentRecord !== null) {
-        const currentLockKey = await checkoutLockKeyForRepository(currentRecord.repoRoot!);
-        if (currentLockKey !== lockKey) {
-          throw new RuntimeError("cleanup repository identity changed after checkout lock acquisition");
-        }
-        await replayInterruptedPruneRecord(runsRoot, currentRecord);
-      }
-    } catch (error) {
-      replayError = error;
-      replayFailed = true;
-    } finally {
-      try {
-        await releaseOwnedLock(checkoutLock);
-      } catch (releaseError) {
-        if (!replayFailed) throw releaseError;
-        throw new AggregateError(
-          [replayError, releaseError],
-          "interrupted prune replay failed and its checkout lock could not be released",
-        );
-      }
-    }
-    if (replayFailed) throw replayError;
-  }
+  return new Set(pending.keys());
 }
 
 async function recoverRun(
@@ -1773,15 +1551,9 @@ export async function recoverStaleRuns(
   try {
     const runsRoot = path.join(root, "runs");
     const runsIdentity = await plainDirectoryIdentity(runsRoot);
-    if (runsIdentity !== null) {
-      await replayInterruptedPrunes(
-        runsRoot,
-        locksRoot,
-        ownerContents,
-        isProcessAlive,
-        pid => ps.getProcessStartToken(pid),
-      );
-    }
+    const deferredPruneRunIds = runsIdentity === null
+      ? new Set<string>()
+      : await replayInterruptedPrunes(runsRoot);
     const journaledQuarantines = runsIdentity === null
       ? new Set<string>()
       : (await readRecoveryQuarantineJournal(runsRoot)).runIds;
@@ -1800,6 +1572,7 @@ export async function recoverStaleRuns(
           }
           continue;
         }
+        if (deferredPruneRunIds.has(entry.name)) continue;
         if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
         try {
           const runDirectory = path.join(runsRoot, entry.name);

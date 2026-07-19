@@ -1580,91 +1580,50 @@ describe("recoverStaleRuns", () => {
     await expect(store.readResult(runId)).resolves.toMatchObject({ status: "cancelled" });
   });
 
-  it.each([
-    {
-      ownerDescription: "a live matching-token owner",
-      lockBytes: Buffer.from(JSON.stringify({
-        pid: 9501,
-        processToken: "darwin:live-prune",
-      })),
-      ownerIsLive: true,
-    },
-    {
-      ownerDescription: "an incomplete empty owner",
-      lockBytes: Buffer.alloc(0),
-      ownerIsLive: false,
-    },
-  ])("defers interrupted prune replay for $ownerDescription", async ({
-    lockBytes,
-    ownerIsLive,
-  }) => {
-    const repo = await initRepo();
-    const healthyRepo = await initRepo();
-    const runId = ownerIsLive ? "run-prune-live-lock" : "run-prune-incomplete-lock";
-    const healthyRunId = ownerIsLive
-      ? "run-prune-live-lock-healthy"
-      : "run-prune-incomplete-lock-healthy";
-    const healthyStore = await createUnfinishedRun(healthyRunId, healthyRepo.commonDir, null);
-    const anchorRef = `refs/claude-architect/candidates/${runId}`;
-    const backupRef = `refs/claude-architect/prune-backups/${runId}`;
-    const quarantineName = `.prune-${runId}-00000000-0000-4000-8000-000000000003`;
+  it("rejects a malformed complete cleanup record before torn-tail deferral", async () => {
     const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
-    const runDirectory = path.join(runsRoot, runId);
-    const quarantinePath = path.join(runsRoot, quarantineName);
-    await mkdir(runDirectory, { recursive: true });
-    await writeFile(path.join(runDirectory, "result.json"), "{}\n");
-    await runGit(repo.directory, ["update-ref", backupRef, repo.head]);
-    await rename(runDirectory, quarantinePath);
-    const cleanupBytes = Buffer.from(`${JSON.stringify({
-      event: "prune-cleanup-intent",
-      runId,
+    await mkdir(runsRoot, { recursive: true });
+    await writeFile(
+      path.join(runsRoot, "cleanup.ndjson"),
+      "not-json\n{\"event\":\"prune-cleanup-com",
+    );
+
+    await expect(recoverStaleRuns()).rejects.toThrow(/cleanup journal contains invalid JSON/i);
+  });
+
+  it("allows normal recovery when the cleanup journal is fully terminal", async () => {
+    const repo = await initRepo();
+    const runId = "run-terminal-cleanup-healthy";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const cleanupRunId = "run-terminal-cleanup-record";
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    await writeFile(path.join(runsRoot, "cleanup.ndjson"), `${JSON.stringify({
+      event: "prune-cleanup-complete",
+      runId: cleanupRunId,
       reason: "max-age",
-      anchorCleanup: "pending",
+      anchorCleanup: "not-applicable",
       archiveBytes: 3,
-      quarantineName,
-      repoRoot: repo.directory,
-      anchorRef,
-      backupRef,
-      candidateCommitOid: repo.head,
+      quarantineName: `.prune-${cleanupRunId}-00000000-0000-4000-8000-000000000006`,
+      repoRoot: null,
+      anchorRef: null,
+      backupRef: null,
+      candidateCommitOid: null,
       recordedAt: "2026-07-14T12:00:00.000Z",
     })}\n`);
-    const cleanupPath = path.join(runsRoot, "cleanup.ndjson");
-    await writeFile(cleanupPath, cleanupBytes);
-    const quarantineIdentity = await lstat(quarantinePath);
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    let recoveryResult: Awaited<ReturnType<typeof recoverStaleRuns>> | undefined;
+    let warnCalls: unknown[][] = [];
+    try {
+      recoveryResult = await recoverStaleRuns({ isProcessAlive: () => false });
+    } finally {
+      warnCalls = [...warn.mock.calls];
+      warn.mockRestore();
+    }
 
-    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
-    const checkoutLockPath = path.join(
-      process.env.CLAUDE_PLUGIN_DATA!,
-      "locks",
-      `${lockKey}.lock`,
-    );
-    await mkdir(path.dirname(checkoutLockPath), { recursive: true });
-    await writeFile(checkoutLockPath, lockBytes);
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken(pid) {
-          return pid === 9501 ? "darwin:live-prune" : "darwin:self";
-        },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: pid => ownerIsLive && pid === 9501,
-    })).resolves.toEqual({ recovered: [healthyRunId], quarantined: [] });
-
-    const settledQuarantine = await lstat(quarantinePath);
-    expect({ dev: settledQuarantine.dev, ino: settledQuarantine.ino }).toEqual({
-      dev: quarantineIdentity.dev,
-      ino: quarantineIdentity.ino,
-    });
-    await expect(readFile(cleanupPath)).resolves.toEqual(cleanupBytes);
-    await expect(readFile(checkoutLockPath)).resolves.toEqual(lockBytes);
-    expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", anchorRef])).exitCode)
-      .not.toBe(0);
-    expect(await runGit(repo.directory, ["rev-parse", backupRef])).toBe(repo.head);
-    await expect(healthyStore.readResult(healthyRunId))
-      .resolves.toMatchObject({ status: "cancelled" });
-  }, { timeout: 120_000 });
+    expect(recoveryResult).toEqual({ recovered: [runId], quarantined: [] });
+    expect(warnCalls).toEqual([]);
+    await expect(store.readResult(runId)).resolves.toMatchObject({ status: "cancelled" });
+  });
 
   it("defers all interrupted prunes when the shared cleanup journal has a torn tail", async () => {
     const firstRepo = await initRepo();
@@ -1724,7 +1683,7 @@ describe("recoverStaleRuns", () => {
 
     expect(recoveryResult).toEqual({ recovered: [healthyRunId], quarantined: [] });
     expect(warnCalls).toEqual([[
-      "startup recovery deferred interrupted prune replay for a torn cleanup journal",
+      "startup recovery deferred interrupted prune replay for the shared cleanup journal",
     ]]);
     await expect(readFile(cleanupPath)).resolves.toEqual(cleanupBytes);
     for (const { repo, runId, suffix } of fixtures) {
@@ -1749,7 +1708,7 @@ describe("recoverStaleRuns", () => {
       .resolves.toMatchObject({ status: "cancelled" });
   }, { timeout: 120_000 });
 
-  it("finishes an interrupted prune after the archive was quarantined", async () => {
+  it("defers an interrupted prune after the archive was quarantined", async () => {
     const repo = await initRepo();
     const runId = "run-prune-finish";
     const anchorRef = `refs/claude-architect/candidates/${runId}`;
@@ -1762,7 +1721,9 @@ describe("recoverStaleRuns", () => {
     await writeFile(path.join(runDirectory, "result.json"), "{}\n");
     await runGit(repo.directory, ["update-ref", backupRef, repo.head]);
     await rename(runDirectory, quarantinePath);
-    await writeFile(path.join(runsRoot, "cleanup.ndjson"), `${JSON.stringify({
+    const quarantineIdentity = await lstat(quarantinePath);
+    const cleanupPath = path.join(runsRoot, "cleanup.ndjson");
+    const cleanupBytes = Buffer.from(`${JSON.stringify({
       event: "prune-cleanup-intent",
       runId,
       reason: "max-age",
@@ -1775,37 +1736,49 @@ describe("recoverStaleRuns", () => {
       candidateCommitOid: repo.head,
       recordedAt: "2026-07-14T12:00:00.000Z",
     })}\n`);
+    await writeFile(cleanupPath, cleanupBytes);
 
-    await recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
+    await expect(recoverStaleRuns({ isProcessAlive: () => false }))
+      .resolves.toEqual({ recovered: [], quarantined: [] });
+
+    const settledQuarantine = await lstat(quarantinePath);
+    expect({ dev: settledQuarantine.dev, ino: settledQuarantine.ino }).toEqual({
+      dev: quarantineIdentity.dev,
+      ino: quarantineIdentity.ino,
     });
-
-    await expectMissing(quarantinePath);
-    expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", backupRef])).exitCode)
+    await expect(readFile(cleanupPath)).resolves.toEqual(cleanupBytes);
+    expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", anchorRef])).exitCode)
       .not.toBe(0);
-    const records = (await readFile(path.join(runsRoot, "cleanup.ndjson"), "utf8"))
-      .trim().split("\n").map(line => JSON.parse(line) as { event: string });
-    expect(records.map(record => record.event)).toEqual([
-      "prune-cleanup-intent",
-      "prune-cleanup-complete",
-    ]);
+    expect(await runGit(repo.directory, ["rev-parse", backupRef])).toBe(repo.head);
   });
 
-  it("rolls back an interrupted prune while the archive is still retained", async () => {
+  it("fences a retained pending prune from ordinary stale recovery", async () => {
     const repo = await initRepo();
+    const healthyRepo = await initRepo();
     const runId = "run-prune-rollback";
+    const healthyRunId = "run-prune-rollback-healthy";
     const anchorRef = `refs/claude-architect/candidates/${runId}`;
     const backupRef = `refs/claude-architect/prune-backups/${runId}`;
     const quarantineName = `.prune-${runId}-00000000-0000-4000-8000-000000000002`;
     const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
-    await mkdir(path.join(runsRoot, runId), { recursive: true });
+    const store = await createTerminalRun(runId, repo.commonDir);
+    const healthyStore = await createUnfinishedRun(healthyRunId, healthyRepo.commonDir, null);
+    const pipelineWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-pipeline`,
+    ).create(repo.head);
+    const verifyWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-verify`,
+    ).create(repo.head);
+    await store.writePipelineActiveMarker({
+      pid: 4242,
+      processToken: "darwin:dead-pipeline",
+      startedAt: "2026-07-18T12:00:00.000Z",
+    });
     await runGit(repo.directory, ["update-ref", backupRef, repo.head]);
-    await writeFile(path.join(runsRoot, "cleanup.ndjson"), `${JSON.stringify({
+    const cleanupPath = path.join(runsRoot, "cleanup.ndjson");
+    const cleanupBytes = Buffer.from(`${JSON.stringify({
       event: "prune-cleanup-intent",
       runId,
       reason: "max-bytes",
@@ -1818,22 +1791,31 @@ describe("recoverStaleRuns", () => {
       candidateCommitOid: repo.head,
       recordedAt: "2026-07-14T12:00:00.000Z",
     })}\n`);
+    await writeFile(cleanupPath, cleanupBytes);
+    const resultPath = path.join(store.runDirectory, "result.json");
+    const markerPath = path.join(store.runDirectory, "pipeline-active.json");
+    const runIdentity = await lstat(store.runDirectory);
+    const resultBytes = await readFile(resultPath);
+    const markerBytes = await readFile(markerPath);
 
-    await recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
+    await expect(recoverStaleRuns({ isProcessAlive: () => false }))
+      .resolves.toEqual({ recovered: [healthyRunId], quarantined: [] });
+
+    const settledRun = await lstat(store.runDirectory);
+    expect({ dev: settledRun.dev, ino: settledRun.ino }).toEqual({
+      dev: runIdentity.dev,
+      ino: runIdentity.ino,
     });
-
-    expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
-    expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", backupRef])).exitCode)
+    await expect(readFile(resultPath)).resolves.toEqual(resultBytes);
+    await expect(readFile(markerPath)).resolves.toEqual(markerBytes);
+    await expect(access(pipelineWorktree.path)).resolves.toBeUndefined();
+    await expect(access(verifyWorktree.path)).resolves.toBeUndefined();
+    await expect(readFile(cleanupPath)).resolves.toEqual(cleanupBytes);
+    expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", anchorRef])).exitCode)
       .not.toBe(0);
-    const records = (await readFile(path.join(runsRoot, "cleanup.ndjson"), "utf8"))
-      .trim().split("\n").map(line => JSON.parse(line) as { event: string });
-    expect(records.at(-1)?.event).toBe("prune-cleanup-rollback");
+    expect(await runGit(repo.directory, ["rev-parse", backupRef])).toBe(repo.head);
+    await expect(healthyStore.readResult(healthyRunId))
+      .resolves.toMatchObject({ status: "cancelled" });
   });
 });
 
