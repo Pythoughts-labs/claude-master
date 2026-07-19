@@ -1247,8 +1247,17 @@ async function repositoryRootExists(repoRoot: string): Promise<boolean> {
 // there is nothing to reconcile in Git; only the archive must converge. The checkout
 // lease is intentionally skipped: it serializes Git-ref reconciliation, and this path
 // performs none — a vanished repository cannot host a racing integration, and recovery
-// already holds the global recovery lock. The per-intent quarantine name is unique, so a
-// concurrent normal prune reclaiming the same run cannot collide on this archive.
+// already holds the global recovery lock.
+//
+// Limit of the lease-skip: the normal path's per-repo checkout lease also guarantees at
+// most one pending intent per run, so a shadowed quarantine can never be orphaned. This
+// path drops that lease, so IF prune were ever wired to run concurrently across processes
+// (it has no such caller today — the checkout lease is prune's only cross-process guard),
+// two repo-gone intents for one run could interleave and a crash after the losing rename
+// could strand a quarantine dir that no surviving pending intent references. That is a
+// disk-only leak, never a double-free (rename is atomic) or fail-open. Closing it needs a
+// recovery sweep of `.prune-*` dirs unmatched by any pending intent; do that before wiring
+// concurrent multi-process prune, not before.
 async function reconcileRepoAbsentPrune(
   runsRoot: string,
   record: CleanupRecord,

@@ -1217,6 +1217,10 @@ export class ArtifactStore {
           // repository, so reclaim the archive directly — no lease, no Git — instead of
           // retaining the run forever and blocking maxBytes/maxAge convergence. Any other
           // canonicalization failure stays fail-closed (retained) via the outer catch.
+          // Tradeoff: a transiently-unmounted volume also reads as ENOENT, so a run on it
+          // may be reclaimed early. This is bounded — only maxAge/maxBytes-eligible runs
+          // reach here, and no Git runs, so the repository's refs survive a remount — and
+          // preferable to retaining unreclaimable runs forever.
           await this.reclaimRepoAbsentArchive(
             entry, reason, quarantineName, quarantinePath, initialManifest.repoRoot,
           );
