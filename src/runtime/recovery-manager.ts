@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   lstat,
+  mkdir,
   open,
   readdir,
   realpath,
@@ -68,6 +69,14 @@ interface LockOwner {
   pid: number;
   processToken: string | null;
 }
+
+interface AcquiredLock {
+  lockPath: string;
+  identity: DirectoryIdentity;
+  contents: Buffer;
+}
+
+type DeadLockReclaimResult = "reclaimed" | "live" | "contended";
 
 function errorCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException).code;
@@ -586,6 +595,154 @@ async function lockOwnerIsLive(
     || await getProcessStartToken(owner.pid) === owner.processToken;
 }
 
+async function readHandleBytes(
+  handle: Awaited<ReturnType<typeof open>>,
+  size: number,
+): Promise<Buffer> {
+  const contents = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const { bytesRead } = await handle.read(
+      contents,
+      offset,
+      size - offset,
+      offset,
+    );
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return contents.subarray(0, offset);
+}
+
+async function removeLockIfUnchanged(
+  lockPath: string,
+  handle: Awaited<ReturnType<typeof open>>,
+  expectedIdentity: DirectoryIdentity,
+  expectedContents: Buffer,
+): Promise<boolean> {
+  const handleMetadata = await handle.stat();
+  if (!handleMetadata.isFile() || handleMetadata.size > MAX_STATE_FILE_BYTES) {
+    return false;
+  }
+  const currentContents = await readHandleBytes(handle, handleMetadata.size);
+  if (!currentContents.equals(expectedContents)) return false;
+
+  let pathMetadata;
+  try {
+    pathMetadata = await lstat(lockPath);
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
+  }
+  if (!pathMetadata.isFile()
+    || pathMetadata.isSymbolicLink()
+    || !sameIdentity(pathMetadata, expectedIdentity)
+    || pathMetadata.size !== currentContents.byteLength) return false;
+  try {
+    await rm(lockPath, { force: false });
+    return true;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
+  }
+}
+
+async function reclaimDeadLock(
+  lockPath: string,
+  isProcessAlive: (pid: number) => boolean,
+  getProcessStartToken: (pid: number) => Promise<string | null>,
+): Promise<DeadLockReclaimResult> {
+  let handle;
+  try {
+    handle = await open(lockPath, constants.O_RDONLY | NO_FOLLOW);
+  } catch (error) {
+    if (isMissing(error)) return "contended";
+    throw error;
+  }
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > MAX_STATE_FILE_BYTES) {
+      throw new RuntimeError("recovery lock must be a bounded regular file");
+    }
+    const contents = await readHandleBytes(handle, metadata.size);
+    if (contents.byteLength !== metadata.size) return "contended";
+    if (await lockOwnerIsLive(
+      parseLockOwner(contents.toString("utf8")),
+      isProcessAlive,
+      getProcessStartToken,
+    )) return "live";
+    return await removeLockIfUnchanged(
+      lockPath,
+      handle,
+      { dev: metadata.dev, ino: metadata.ino },
+      contents,
+    ) ? "reclaimed" : "contended";
+  } finally {
+    await handle.close();
+  }
+}
+
+async function createOwnedLock(
+  lockPath: string,
+  contents: Buffer,
+): Promise<AcquiredLock | null> {
+  let handle;
+  try {
+    handle = await open(
+      lockPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW,
+      0o600,
+    );
+  } catch (error) {
+    if (errorCode(error) === "EEXIST") return null;
+    throw error;
+  }
+  try {
+    await handle.writeFile(contents);
+    await handle.sync();
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) {
+      throw new RuntimeError("new recovery lock is not a regular file");
+    }
+    return {
+      lockPath,
+      identity: { dev: metadata.dev, ino: metadata.ino },
+      contents,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function acquireOwnedLock(
+  lockPath: string,
+  contents: Buffer,
+  isProcessAlive: (pid: number) => boolean,
+  getProcessStartToken: (pid: number) => Promise<string | null>,
+): Promise<AcquiredLock | null> {
+  const created = await createOwnedLock(lockPath, contents);
+  if (created !== null) return created;
+  if (await reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) !== "reclaimed") {
+    return null;
+  }
+  return createOwnedLock(lockPath, contents);
+}
+
+async function releaseOwnedLock(lock: AcquiredLock): Promise<void> {
+  let handle;
+  try {
+    handle = await open(lock.lockPath, constants.O_RDONLY | NO_FOLLOW);
+  } catch (error) {
+    if (isMissing(error)) return;
+    throw error;
+  }
+  try {
+    await removeLockIfUnchanged(lock.lockPath, handle, lock.identity, lock.contents);
+  } finally {
+    await handle.close();
+  }
+}
+
 function defaultIsProcessAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 1) return false;
   try {
@@ -619,14 +776,7 @@ async function reclaimLocks(
     if (!entry.isFile() || entry.isSymbolicLink()) {
       throw new RuntimeError("checkout lock must be a regular file during recovery");
     }
-    const contents = await readBoundedRegularFile(lockPath);
-    if (contents === null) continue;
-    if (await lockOwnerIsLive(parseLockOwner(contents), isProcessAlive, getProcessStartToken)) continue;
-    const identity = await lstat(lockPath);
-    if (!identity.isFile() || identity.isSymbolicLink()) {
-      throw new RuntimeError("checkout lock identity changed during recovery");
-    }
-    await rm(lockPath, { force: false });
+    await reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken);
   }
 }
 
@@ -643,80 +793,112 @@ async function lockIsOwnedByLiveProcess(
 
 export async function recoverStaleRuns(
   dependencies: RecoveryDependencies = {},
-): Promise<{ recovered: string[] }> {
+): Promise<{ recovered: string[]; quarantined: string[] }> {
   const root = await stateRoot();
-  if (root === null) return { recovered: [] };
-  const runsRoot = path.join(root, "runs");
-  const runsIdentity = await plainDirectoryIdentity(runsRoot);
-  if (runsIdentity !== null) await replayInterruptedPrunes(runsRoot);
-
   const ps = dependencies.platformServices ?? getPlatformServices();
   const isProcessAlive = dependencies.isProcessAlive ?? defaultIsProcessAlive;
   const requestCooperativeTermination = dependencies.requestCooperativeTermination
     ?? defaultRequestCooperativeTermination;
   const delayMs = dependencies.delayMs ?? defaultDelayMs;
   const graceMs = dependencies.graceMs ?? 3000;
-  const locksRoot = path.join(root, "locks");
-  const stale: RunStartRecord[] = [];
-  if (runsIdentity !== null) {
-    const runEntries = await readdir(runsRoot, { withFileTypes: true });
-    for (const entry of runEntries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
-      const runDirectory = path.join(runsRoot, entry.name);
-      const runStartText = await readBoundedRegularFile(path.join(runDirectory, "run-start.json"));
-      if (runStartText === null) continue;
-      const record = parseRunStart(runStartText, entry.name);
-      const store = new ArtifactStore(entry.name);
-      const result = await store.readResult(entry.name);
-      if (result !== null) {
-        validateTerminalResult(result, entry.name);
-        const marker = await store.readPipelineActiveMarker(entry.name);
-        if (marker !== null && !await lockOwnerIsLive(
-          { pid: marker.pid, processToken: marker.processToken },
-          isProcessAlive,
-          pid => ps.getProcessStartToken(pid),
-        )) {
-          const commonDir = await validateGitCommonDir(record.canonicalCommonDir);
-          for (const managedId of [
-            `${entry.name}-pipeline`,
-            `${entry.name}-verify`,
-          ]) {
-            const worktreePath = path.join(root, "worktrees", managedId);
-            if (await plainDirectoryIdentity(worktreePath) !== null) {
-              await new WorktreeManager(commonDir, managedId, ps).remove(worktreePath);
-            }
-          }
-          await store.clearPipelineActiveMarker();
-        }
-        continue;
-      }
-      if (await lockIsOwnedByLiveProcess(
-        locksRoot,
-        record.lockKey,
-        isProcessAlive,
-        pid => ps.getProcessStartToken(pid),
-      )) continue;
-      stale.push(record);
-    }
-  }
+  if (root === null) return { recovered: [], quarantined: [] };
 
-  const recovered: string[] = [];
-  for (const record of stale) {
-    await recoverRun(
-      record,
-      root,
-      ps,
-      isProcessAlive,
-      requestCooperativeTermination,
-      delayMs,
-      graceMs,
-    );
-    recovered.push(record.runId);
+  const locksRoot = path.join(root, "locks");
+  await mkdir(locksRoot, { recursive: true });
+  if (await plainDirectoryIdentity(locksRoot) === null) {
+    throw new RuntimeError("recovery locks directory disappeared");
   }
-  await reclaimLocks(
-    locksRoot,
+  const ownerContents = Buffer.from(JSON.stringify({
+    pid: nodeProcess.pid,
+    processToken: await ps.getProcessStartToken(nodeProcess.pid),
+  }));
+  const recoveryLock = await acquireOwnedLock(
+    path.join(locksRoot, "recovery.lock"),
+    ownerContents,
     isProcessAlive,
     pid => ps.getProcessStartToken(pid),
   );
-  return { recovered };
+  if (recoveryLock === null) return { recovered: [], quarantined: [] };
+
+  try {
+    const runsRoot = path.join(root, "runs");
+    const runsIdentity = await plainDirectoryIdentity(runsRoot);
+    if (runsIdentity !== null) await replayInterruptedPrunes(runsRoot);
+
+    const stale: RunStartRecord[] = [];
+    if (runsIdentity !== null) {
+      const runEntries = await readdir(runsRoot, { withFileTypes: true });
+      for (const entry of runEntries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
+        const runDirectory = path.join(runsRoot, entry.name);
+        const runStartText = await readBoundedRegularFile(path.join(runDirectory, "run-start.json"));
+        if (runStartText === null) continue;
+        const record = parseRunStart(runStartText, entry.name);
+        const store = new ArtifactStore(entry.name);
+        const result = await store.readResult(entry.name);
+        if (result !== null) {
+          validateTerminalResult(result, entry.name);
+          const marker = await store.readPipelineActiveMarker(entry.name);
+          if (marker !== null && !await lockOwnerIsLive(
+            { pid: marker.pid, processToken: marker.processToken },
+            isProcessAlive,
+            pid => ps.getProcessStartToken(pid),
+          )) {
+            const commonDir = await validateGitCommonDir(record.canonicalCommonDir);
+            for (const managedId of [
+              `${entry.name}-pipeline`,
+              `${entry.name}-verify`,
+            ]) {
+              const worktreePath = path.join(root, "worktrees", managedId);
+              if (await plainDirectoryIdentity(worktreePath) !== null) {
+                await new WorktreeManager(commonDir, managedId, ps).remove(worktreePath);
+              }
+            }
+            await store.clearPipelineActiveMarker();
+          }
+          continue;
+        }
+        if (await lockIsOwnedByLiveProcess(
+          locksRoot,
+          record.lockKey,
+          isProcessAlive,
+          pid => ps.getProcessStartToken(pid),
+        )) continue;
+        stale.push(record);
+      }
+    }
+
+    const recovered: string[] = [];
+    for (const record of stale) {
+      const checkoutLock = await acquireOwnedLock(
+        path.join(locksRoot, `${record.lockKey}.lock`),
+        ownerContents,
+        isProcessAlive,
+        pid => ps.getProcessStartToken(pid),
+      );
+      if (checkoutLock === null) continue;
+      try {
+        await recoverRun(
+          record,
+          root,
+          ps,
+          isProcessAlive,
+          requestCooperativeTermination,
+          delayMs,
+          graceMs,
+        );
+        recovered.push(record.runId);
+      } finally {
+        await releaseOwnedLock(checkoutLock);
+      }
+    }
+    await reclaimLocks(
+      locksRoot,
+      isProcessAlive,
+      pid => ps.getProcessStartToken(pid),
+    );
+    return { recovered, quarantined: [] };
+  } finally {
+    await releaseOwnedLock(recoveryLock);
+  }
 }

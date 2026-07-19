@@ -105,6 +105,125 @@ afterEach(async () => {
 });
 
 describe("recoverStaleRuns", () => {
+  it("skips recovery while a live recovery mutex is held", async () => {
+    const repo = await initRepo();
+    const runId = "run-live-recovery-mutex";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const recoveryLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      "recovery.lock",
+    );
+    const owner = { pid: 9101, processToken: "darwin:live-recovery" };
+    await mkdir(path.dirname(recoveryLockPath), { recursive: true });
+    await writeFile(recoveryLockPath, JSON.stringify(owner));
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          return pid === owner.pid ? owner.processToken : "darwin:self";
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: pid => pid === owner.pid,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    await expect(store.readResult(runId)).resolves.toBeNull();
+    await expect(readFile(recoveryLockPath, "utf8"))
+      .resolves.toBe(JSON.stringify(owner));
+  }, { timeout: 120_000 });
+
+  it("reclaims a dead recovery mutex before recovering stale runs", async () => {
+    const repo = await initRepo();
+    const runId = "run-dead-recovery-mutex";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const recoveryLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      "recovery.lock",
+    );
+    await mkdir(path.dirname(recoveryLockPath), { recursive: true });
+    await writeFile(recoveryLockPath, JSON.stringify({
+      pid: 9102,
+      processToken: "darwin:dead-recovery",
+    }));
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
+
+    await expect(store.readResult(runId))
+      .resolves.toMatchObject({ status: "cancelled" });
+    await expectMissing(recoveryLockPath);
+  }, { timeout: 120_000 });
+
+  it("defers recovery when checkout ownership becomes live before mutation", async () => {
+    const repo = await initRepo();
+    const runId = "run-checkout-owner-revived";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
+    const lockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      `${lockKey}.lock`,
+    );
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "9103");
+    let ownerChecks = 0;
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive(pid) {
+        if (pid !== 9103) return false;
+        ownerChecks += 1;
+        return ownerChecks > 1;
+      },
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    expect(ownerChecks).toBeGreaterThanOrEqual(2);
+    await expect(store.readResult(runId)).resolves.toBeNull();
+    await expect(readFile(lockPath, "utf8")).resolves.toBe("9103");
+  }, { timeout: 120_000 });
+
+  it("preserves a replacement lock swapped during owner token probing", async () => {
+    const locksRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks");
+    const lockPath = path.join(locksRoot, `${"f".repeat(64)}.lock`);
+    const replacementPath = path.join(locksRoot, "replacement.lock");
+    const replacementOwner = { pid: 9202, processToken: "darwin:live" };
+    await mkdir(locksRoot, { recursive: true });
+    await writeFile(lockPath, JSON.stringify({
+      pid: 9201,
+      processToken: "darwin:stale",
+    }));
+
+    await recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          if (pid !== 9201) return "darwin:self";
+          await writeFile(replacementPath, JSON.stringify(replacementOwner));
+          await rename(replacementPath, lockPath);
+          return "darwin:replacement";
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => true,
+    });
+
+    await expect(readFile(lockPath, "utf8"))
+      .resolves.toBe(JSON.stringify(replacementOwner));
+  });
+
   it("cleans dead-owner pipeline worktrees for a terminal run", async () => {
     const repo = await initRepo();
     const runId = "run-dead-pipeline";
@@ -150,7 +269,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     await expectMissing(pipelineWorktree.path);
     await expectMissing(verifyWorktree.path);
@@ -204,7 +323,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => true,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     await expect(access(pipelineWorktree.path)).resolves.toBeUndefined();
     await expect(access(verifyWorktree.path)).resolves.toBeUndefined();
@@ -261,7 +380,7 @@ describe("recoverStaleRuns", () => {
       isProcessAlive: () => false,
     });
 
-    expect(result).toEqual({ recovered: [runId] });
+    expect(result).toEqual({ recovered: [runId], quarantined: [] });
     expect(terminated).toEqual([]);
     await expectMissing(worktree.path);
     await expectMissing(baselineWorktree.path);
@@ -288,7 +407,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid(pid) { terminated.push(pid); },
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
     expect(terminated).toEqual([]);
   });
 
@@ -324,7 +443,7 @@ describe("recoverStaleRuns", () => {
       isProcessAlive: () => true,
     });
 
-    expect(result).toEqual({ recovered: [runId] });
+    expect(result).toEqual({ recovered: [runId], quarantined: [] });
     expect(calls).toEqual([]);
     await expectMissing(worktree.path);
     await expect(store.readResult(runId)).resolves.toMatchObject({
@@ -347,7 +466,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => true,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     await expect(readFile(lockPath, "utf8")).resolves.toBe(String(process.pid));
   });
@@ -380,7 +499,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid(pid) { terminated.push(pid); },
       },
       isProcessAlive: pid => pid === 7777,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     expect(terminated).toEqual([]);
     await expect(access(worktree.path)).resolves.toBeUndefined();
@@ -485,7 +604,7 @@ describe("recoverStaleRuns", () => {
       isProcessAlive: () => true,
       requestCooperativeTermination() { events.push("cooperative"); },
       async delayMs(ms) { events.push(`delay:${ms}`); },
-    })).resolves.toEqual({ recovered: [runId] });
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
 
     expect(events).toEqual(["cooperative", "delay:3000", "forced"]);
     await expectMissing(pipelineWorktree.path);
@@ -510,7 +629,7 @@ describe("recoverStaleRuns", () => {
       isProcessAlive: () => alive,
       requestCooperativeTermination() { events.push("cooperative"); },
       async delayMs() { events.push("delay"); alive = false; },
-    })).resolves.toEqual({ recovered: [runId] });
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
 
     expect(events).toEqual(["cooperative", "delay"]);
     await expect(store.readResult(runId)).resolves.toMatchObject({
@@ -573,7 +692,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [runId] });
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
 
     await expect(store.readResult(runId)).resolves.toMatchObject({ status: "cancelled" });
   });
@@ -671,7 +790,7 @@ describe("MCP startup recovery", () => {
     await start({
       async recoverStaleRuns() {
         serverEvents.push("recover");
-        return { recovered: [] };
+        return { recovered: [], quarantined: [] };
       },
     });
 
