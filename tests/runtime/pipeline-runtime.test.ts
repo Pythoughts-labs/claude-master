@@ -1444,7 +1444,7 @@ describe("runPipeline", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     await expect(store.readResult(runId)).resolves.toMatchObject({
       status: "failed",
@@ -2611,7 +2611,7 @@ describe("runPipeline", () => {
       isProcessAlive: () => false,
     });
 
-    expect(recovery).toEqual({ recovered: [] });
+    expect(recovery).toEqual({ recovered: [], quarantined: [] });
     expect(terminated).toEqual([]);
     await expect(store.readResult(runId)).resolves.toMatchObject({
       status: "verified-candidate",

@@ -31189,13 +31189,16 @@ async function handleIntegrateCandidate(checkoutPath, runId, expectedArtifactHas
 }
 
 // src/runtime/recovery-manager.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash6, randomUUID as randomUUID5 } from "node:crypto";
 import { constants as constants4 } from "node:fs";
 import {
   lstat as lstat6,
+  link as link2,
+  mkdir as mkdir5,
   open as open5,
   readdir as readdir2,
   realpath as realpath6,
+  rename as rename3,
   rm as rm7
 } from "node:fs/promises";
 import path14 from "node:path";
@@ -31208,6 +31211,8 @@ var OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 var CANDIDATE_REF_PREFIX3 = "refs/claude-architect/candidates/";
 var BACKUP_REF_PREFIX = "refs/claude-architect/prune-backups/";
 var SLICE_REF_PREFIX2 = "refs/claude-architect/slices/";
+var MAX_QUARANTINE_REASON_BYTES = 2e3;
+var MAX_QUARANTINE_RECORD_BYTES = 4096;
 function errorCode4(error2) {
   return error2.code;
 }
@@ -31260,24 +31265,54 @@ async function readBoundedRegularFile(filename) {
 async function readCleanupJournal(filename) {
   let handle;
   try {
-    handle = await open5(filename, constants4.O_RDWR | NO_FOLLOW3);
-    const metadata = await handle.stat();
-    if (!metadata.isFile() || metadata.size > MAX_STATE_FILE_BYTES) {
-      throw new RuntimeError("cleanup journal is not a bounded regular file");
-    }
-    const text = await handle.readFile({ encoding: "utf8" });
-    if (text === "" || text.endsWith("\n")) return text;
-    const finalNewline = text.lastIndexOf("\n");
-    const completePrefix = finalNewline === -1 ? "" : text.slice(0, finalNewline + 1);
-    await handle.truncate(Buffer.byteLength(completePrefix, "utf8"));
-    await handle.sync();
-    return completePrefix;
+    handle = await open5(filename, constants4.O_RDONLY | NO_FOLLOW3);
   } catch (error2) {
-    if (isMissing2(error2)) return null;
+    if (isMissing2(error2)) return { text: null, tornTail: false };
     throw error2;
-  } finally {
-    await handle?.close();
   }
+  let result;
+  let primaryError;
+  try {
+    const metadata = await handle.stat();
+    const namedMetadata = await lstat6(filename);
+    if (!metadata.isFile() || metadata.nlink !== 1 || metadata.size > MAX_STATE_FILE_BYTES || !namedMetadata.isFile() || namedMetadata.isSymbolicLink() || namedMetadata.nlink !== 1 || namedMetadata.dev !== metadata.dev || namedMetadata.ino !== metadata.ino || namedMetadata.size !== metadata.size) {
+      throw new RuntimeError("cleanup journal must be a bounded regular single-link file");
+    }
+    const bytes = await readHandleBytes(handle, metadata.size);
+    const repeatedBytes = await readHandleBytes(handle, metadata.size);
+    const settledMetadata = await handle.stat();
+    const settledNamedMetadata = await lstat6(filename);
+    if (bytes.byteLength > MAX_STATE_FILE_BYTES || settledMetadata.size > MAX_STATE_FILE_BYTES) {
+      throw new RuntimeError("cleanup journal exceeds its size limit during read");
+    }
+    if (!settledMetadata.isFile() || settledMetadata.nlink !== 1 || settledMetadata.dev !== metadata.dev || settledMetadata.ino !== metadata.ino || settledMetadata.size !== metadata.size || settledMetadata.mtimeMs !== metadata.mtimeMs || settledMetadata.ctimeMs !== metadata.ctimeMs || !settledNamedMetadata.isFile() || settledNamedMetadata.isSymbolicLink() || settledNamedMetadata.nlink !== 1 || settledNamedMetadata.dev !== metadata.dev || settledNamedMetadata.ino !== metadata.ino || settledNamedMetadata.size !== metadata.size || bytes.byteLength !== metadata.size || !repeatedBytes.equals(bytes)) {
+      throw new RuntimeError("cleanup journal changed during read");
+    }
+    const text = bytes.toString("utf8");
+    if (text === "" || text.endsWith("\n")) {
+      result = { text, tornTail: false };
+    } else {
+      const finalNewline = text.lastIndexOf("\n");
+      const completePrefix = finalNewline === -1 ? "" : text.slice(0, finalNewline + 1);
+      result = { text: completePrefix, tornTail: true };
+    }
+  } catch (error2) {
+    primaryError = error2;
+  }
+  try {
+    await handle.close();
+  } catch (closeError) {
+    if (primaryError !== void 0) {
+      throw new AggregateError(
+        [primaryError, closeError],
+        "cleanup journal read failed and its handle could not be closed"
+      );
+    }
+    throw closeError;
+  }
+  if (primaryError !== void 0) throw primaryError;
+  if (result === void 0) throw new RuntimeError("cleanup journal read produced no result");
+  return result;
 }
 async function plainDirectoryIdentity(directory) {
   try {
@@ -31290,13 +31325,6 @@ async function plainDirectoryIdentity(directory) {
     if (isMissing2(error2)) return null;
     throw error2;
   }
-}
-async function removePlainDirectory(directory, expected) {
-  const metadata = await lstat6(directory);
-  if (!isPlainDirectory(metadata) || !sameIdentity(metadata, expected)) {
-    throw new RuntimeError("recovery directory identity changed before removal");
-  }
-  await rm7(directory, { recursive: true, force: false });
 }
 function parseRunStart(text, expectedRunId) {
   let value;
@@ -31380,16 +31408,6 @@ async function readDirectRef(repoRoot, ref, runGit = git) {
 async function deleteExactRef(repoRoot, ref, oid, runGit = git) {
   const result = await runGit(repoRoot, ["update-ref", "--no-deref", "-d", ref, oid]);
   if (result.exitCode !== 0) throw runGitError("delete recovery Git ref", result);
-}
-async function createExactRef(repoRoot, ref, oid) {
-  const result = await git(repoRoot, [
-    "update-ref",
-    "--no-deref",
-    ref,
-    oid,
-    "0".repeat(oid.length)
-  ]);
-  if (result.exitCode !== 0) throw runGitError("create recovery Git ref", result);
 }
 async function removeStaleCandidateAnchor(repoRoot, runId) {
   const ref = `${CANDIDATE_REF_PREFIX3}${runId}`;
@@ -31533,6 +31551,401 @@ function cleanupOutcome(record2) {
   if (record2.repoRoot === null || record2.anchorRef === null) return "not-applicable";
   return record2.backupRef === null ? "already-absent" : "deleted";
 }
+function boundedQuarantineReason(error2) {
+  const raw = error2 instanceof Error ? `${error2.name}: ${error2.message}` : String(error2);
+  const sanitized = redact(raw).replace(/\\\\[^'"\r\n]*/g, "[path]").replace(/[A-Za-z]:[\\/][^'"\r\n]*/g, "[path]").replace(/\\[^'"\r\n]*/g, "[path]").replace(/\/[^'"\r\n]*/g, "[path]");
+  const bytes = Buffer.from(sanitized, "utf8");
+  if (bytes.byteLength <= MAX_QUARANTINE_REASON_BYTES) return sanitized;
+  let end = MAX_QUARANTINE_REASON_BYTES;
+  while (end > 0 && (bytes[end] & 192) === 128) end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
+}
+function parseRecoveryQuarantineRecord(line) {
+  if (Buffer.byteLength(`${line}
+`, "utf8") > MAX_QUARANTINE_RECORD_BYTES) {
+    throw new RuntimeError("recovery quarantine journal record exceeds its size limit");
+  }
+  let value;
+  try {
+    value = JSON.parse(line);
+  } catch (cause) {
+    throw new RuntimeError("recovery quarantine journal contains invalid JSON", { cause });
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new RuntimeError("recovery quarantine journal record must be an object");
+  }
+  const record2 = value;
+  validateRunId(record2.runId);
+  if (Object.keys(value).sort().join(",") !== "event,reason,recordedAt,runId" || record2.event !== "recovery-quarantine" || typeof record2.reason !== "string" || Buffer.byteLength(record2.reason, "utf8") > MAX_QUARANTINE_REASON_BYTES || typeof record2.recordedAt !== "string" || !Number.isFinite(Date.parse(record2.recordedAt))) {
+    throw new RuntimeError("recovery quarantine journal record is malformed");
+  }
+  return record2;
+}
+function parseRecoveryQuarantineJournal(bytes) {
+  const text = bytes.toString("utf8");
+  const runIds = /* @__PURE__ */ new Set();
+  if (text === "") return runIds;
+  if (!text.endsWith("\n")) {
+    throw new RuntimeError("recovery quarantine journal has a torn final record");
+  }
+  for (const line of text.slice(0, -1).split("\n")) {
+    if (line === "") throw new RuntimeError("recovery quarantine journal contains a blank record");
+    const record2 = parseRecoveryQuarantineRecord(line);
+    if (runIds.has(record2.runId)) {
+      throw new RuntimeError("duplicate recovery quarantine runId");
+    }
+    runIds.add(record2.runId);
+  }
+  return runIds;
+}
+async function readRecoveryQuarantineJournal(runsRoot) {
+  const rootIdentity = await plainDirectoryIdentity(runsRoot);
+  if (rootIdentity === null) {
+    throw new RuntimeError("recovery quarantine journal root disappeared");
+  }
+  const filename = path14.join(runsRoot, "recovery-quarantine.ndjson");
+  let expectedMetadata;
+  try {
+    expectedMetadata = await lstat6(filename);
+  } catch (error2) {
+    if (!isMissing2(error2)) throw error2;
+    const currentRoot = await lstat6(runsRoot);
+    if (!isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, rootIdentity)) {
+      throw new RuntimeError("recovery quarantine journal root changed during missing read");
+    }
+    return {
+      bytes: Buffer.alloc(0),
+      runIds: /* @__PURE__ */ new Set(),
+      rootIdentity,
+      journalIdentity: null
+    };
+  }
+  if (!expectedMetadata.isFile() || expectedMetadata.isSymbolicLink() || expectedMetadata.nlink !== 1 || expectedMetadata.size > MAX_STATE_FILE_BYTES) {
+    throw new RuntimeError("recovery quarantine journal is not a bounded regular file");
+  }
+  let handle;
+  try {
+    handle = await open5(filename, constants4.O_RDONLY | NO_FOLLOW3);
+  } catch (error2) {
+    if (!isMissing2(error2)) throw error2;
+    try {
+      await lstat6(filename);
+    } catch (namedError) {
+      if (isMissing2(namedError)) {
+        const currentRoot = await lstat6(runsRoot);
+        if (isPlainDirectory(currentRoot) && sameIdentity(currentRoot, rootIdentity)) {
+          return {
+            bytes: Buffer.alloc(0),
+            runIds: /* @__PURE__ */ new Set(),
+            rootIdentity,
+            journalIdentity: null
+          };
+        }
+      }
+    }
+    throw new RuntimeError("recovery quarantine journal changed before read", { cause: error2 });
+  }
+  let bytes;
+  let journalIdentity;
+  let primaryError;
+  try {
+    const metadata = await handle.stat();
+    const namedMetadata = await lstat6(filename);
+    const currentRoot = await lstat6(runsRoot);
+    if (!metadata.isFile() || metadata.size > MAX_STATE_FILE_BYTES || metadata.size !== expectedMetadata.size || metadata.nlink !== 1 || !namedMetadata.isFile() || namedMetadata.isSymbolicLink() || namedMetadata.nlink !== 1 || namedMetadata.size !== metadata.size || namedMetadata.dev !== expectedMetadata.dev || namedMetadata.ino !== expectedMetadata.ino || namedMetadata.dev !== metadata.dev || namedMetadata.ino !== metadata.ino || !isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, rootIdentity)) {
+      throw new RuntimeError("recovery quarantine journal changed during read");
+    }
+    journalIdentity = { dev: metadata.dev, ino: metadata.ino };
+    bytes = await handle.readFile();
+    const settledMetadata = await lstat6(filename);
+    const settledRoot = await lstat6(runsRoot);
+    if (!settledMetadata.isFile() || settledMetadata.isSymbolicLink() || settledMetadata.nlink !== 1 || settledMetadata.size !== bytes.byteLength || settledMetadata.dev !== metadata.dev || settledMetadata.ino !== metadata.ino || !isPlainDirectory(settledRoot) || !sameIdentity(settledRoot, rootIdentity)) {
+      throw new RuntimeError("recovery quarantine journal changed after read");
+    }
+  } catch (error2) {
+    primaryError = error2;
+  }
+  try {
+    await handle.close();
+  } catch (closeError) {
+    if (primaryError !== void 0) {
+      throw new AggregateError(
+        [primaryError, closeError],
+        "recovery quarantine journal read failed and its handle could not be closed"
+      );
+    }
+    throw closeError;
+  }
+  if (primaryError !== void 0) throw primaryError;
+  if (bytes === void 0 || journalIdentity === void 0) {
+    throw new RuntimeError("recovery quarantine journal read produced no content");
+  }
+  return {
+    bytes,
+    runIds: parseRecoveryQuarantineJournal(bytes),
+    rootIdentity,
+    journalIdentity
+  };
+}
+async function syncRecoveryDirectory(directory) {
+  let handle;
+  let primaryError;
+  try {
+    handle = await open5(directory, constants4.O_RDONLY | NO_FOLLOW3);
+    await handle.sync();
+  } catch (error2) {
+    const unsupportedOnWindows = nodeProcess4.platform === "win32" && ["EISDIR", "EINVAL", "ENOTSUP", "EPERM"].includes(errorCode4(error2) ?? "");
+    if (!unsupportedOnWindows) primaryError = error2;
+  }
+  try {
+    await handle?.close();
+  } catch (closeError) {
+    if (primaryError !== void 0) {
+      throw new AggregateError(
+        [primaryError, closeError],
+        "recovery directory sync failed and its handle could not be closed"
+      );
+    }
+    throw closeError;
+  }
+  if (primaryError !== void 0) throw primaryError;
+}
+async function publishRecoveryQuarantineJournal(runsRoot, filename, snapshot, nextBytes) {
+  const temporaryPath = path14.join(
+    runsRoot,
+    `.recovery-quarantine-journal-${randomUUID5()}.tmp`
+  );
+  let handle;
+  let temporaryCreated = false;
+  let temporaryConsumed = false;
+  let linkedPublication = false;
+  let temporaryIdentity;
+  let primaryError;
+  try {
+    handle = await open5(
+      temporaryPath,
+      constants4.O_RDWR | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW3,
+      384
+    );
+    temporaryCreated = true;
+    const metadata = await handle.stat();
+    temporaryIdentity = { dev: metadata.dev, ino: metadata.ino };
+    const namedMetadata = await lstat6(temporaryPath);
+    const currentRoot = await lstat6(runsRoot);
+    if (!metadata.isFile() || metadata.nlink !== 1 || !namedMetadata.isFile() || namedMetadata.isSymbolicLink() || namedMetadata.nlink !== 1 || namedMetadata.dev !== metadata.dev || namedMetadata.ino !== metadata.ino || metadata.size > MAX_STATE_FILE_BYTES || !isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, snapshot.rootIdentity)) {
+      throw new RuntimeError("recovery quarantine journal temp changed during creation");
+    }
+    await handle.writeFile(nextBytes);
+    await handle.sync();
+    await validateOwnedLockState(
+      handle,
+      [temporaryPath],
+      temporaryIdentity,
+      nextBytes,
+      1,
+      runsRoot,
+      snapshot.rootIdentity
+    );
+  } catch (error2) {
+    primaryError = error2;
+  }
+  if (handle !== void 0) {
+    try {
+      await handle.close();
+    } catch (closeError) {
+      if (primaryError !== void 0) {
+        primaryError = new AggregateError(
+          [primaryError, closeError],
+          "recovery quarantine journal temp failed and its handle could not be closed"
+        );
+      } else {
+        primaryError = closeError;
+      }
+    }
+  }
+  if (primaryError === void 0) {
+    try {
+      if (temporaryIdentity === void 0) {
+        throw new RuntimeError("recovery quarantine journal temp identity is unavailable");
+      }
+      await validatePublishedLock(
+        temporaryPath,
+        temporaryIdentity,
+        nextBytes,
+        runsRoot,
+        snapshot.rootIdentity
+      );
+      const currentSnapshot = await readRecoveryQuarantineJournal(runsRoot);
+      const sameJournalIdentity = snapshot.journalIdentity === null ? currentSnapshot.journalIdentity === null : currentSnapshot.journalIdentity !== null && currentSnapshot.journalIdentity.dev === snapshot.journalIdentity.dev && currentSnapshot.journalIdentity.ino === snapshot.journalIdentity.ino;
+      if (currentSnapshot.rootIdentity.dev !== snapshot.rootIdentity.dev || currentSnapshot.rootIdentity.ino !== snapshot.rootIdentity.ino || !sameJournalIdentity || !currentSnapshot.bytes.equals(snapshot.bytes)) {
+        throw new RuntimeError("recovery quarantine journal changed before publication");
+      }
+      if (snapshot.journalIdentity === null) {
+        await link2(temporaryPath, filename);
+        linkedPublication = true;
+        await validatePublishedLock(
+          temporaryPath,
+          temporaryIdentity,
+          nextBytes,
+          runsRoot,
+          snapshot.rootIdentity,
+          2,
+          [temporaryPath, filename]
+        );
+        const removal = await removeExpectedLockPath(
+          temporaryPath,
+          temporaryIdentity,
+          nextBytes,
+          2
+        );
+        if (removal === "changed") {
+          throw new RuntimeError("recovery quarantine journal temp changed before unlink");
+        }
+        temporaryConsumed = true;
+      } else {
+        await rename3(temporaryPath, filename);
+        temporaryConsumed = true;
+      }
+    } catch (error2) {
+      primaryError = error2;
+    }
+  }
+  const cleanupErrors = [];
+  if (temporaryCreated && !temporaryConsumed) {
+    if (temporaryIdentity === void 0) {
+      cleanupErrors.push(new RuntimeError(
+        "recovery quarantine journal temp identity is unavailable for cleanup"
+      ));
+    } else {
+      cleanupErrors.push(...await cleanupOwnedLockPaths(
+        runsRoot,
+        snapshot.rootIdentity,
+        temporaryPath,
+        filename,
+        temporaryIdentity,
+        nextBytes,
+        linkedPublication
+      ));
+    }
+  }
+  if (primaryError !== void 0 && cleanupErrors.length > 0) {
+    throw new AggregateError(
+      [primaryError, ...cleanupErrors],
+      "recovery quarantine journal publication and temp cleanup failed"
+    );
+  }
+  if (primaryError !== void 0) throw primaryError;
+  if (cleanupErrors.length === 1) throw cleanupErrors[0];
+  if (cleanupErrors.length > 1) {
+    throw new AggregateError(cleanupErrors, "recovery quarantine journal temp cleanup failed");
+  }
+  const publishedSnapshot = await readRecoveryQuarantineJournal(runsRoot);
+  if (temporaryIdentity === void 0 || publishedSnapshot.journalIdentity === null || publishedSnapshot.journalIdentity.dev !== temporaryIdentity.dev || publishedSnapshot.journalIdentity.ino !== temporaryIdentity.ino || publishedSnapshot.rootIdentity.dev !== snapshot.rootIdentity.dev || publishedSnapshot.rootIdentity.ino !== snapshot.rootIdentity.ino || !publishedSnapshot.bytes.equals(nextBytes)) {
+    throw new RuntimeError("recovery quarantine journal changed after publication");
+  }
+  await syncRecoveryDirectory(runsRoot);
+}
+async function appendRecoveryQuarantineRecord(runsRoot, record2) {
+  const line = `${JSON.stringify(record2)}
+`;
+  const lineBytes = Buffer.byteLength(line, "utf8");
+  if (lineBytes > MAX_QUARANTINE_RECORD_BYTES) {
+    throw new RuntimeError("recovery quarantine record exceeds its size limit");
+  }
+  const filename = path14.join(runsRoot, "recovery-quarantine.ndjson");
+  const snapshot = await readRecoveryQuarantineJournal(runsRoot);
+  if (snapshot.runIds.has(record2.runId)) {
+    await syncRecoveryDirectory(runsRoot);
+    const settledSnapshot = await readRecoveryQuarantineJournal(runsRoot);
+    if (settledSnapshot.rootIdentity.dev !== snapshot.rootIdentity.dev || settledSnapshot.rootIdentity.ino !== snapshot.rootIdentity.ino || settledSnapshot.journalIdentity === null || snapshot.journalIdentity === null || settledSnapshot.journalIdentity.dev !== snapshot.journalIdentity.dev || settledSnapshot.journalIdentity.ino !== snapshot.journalIdentity.ino || !settledSnapshot.bytes.equals(snapshot.bytes)) {
+      throw new RuntimeError("recovery quarantine journal changed after retry sync");
+    }
+    return;
+  }
+  const nextBytes = Buffer.concat([snapshot.bytes, Buffer.from(line, "utf8")]);
+  if (nextBytes.byteLength > MAX_STATE_FILE_BYTES) {
+    throw new RuntimeError("recovery quarantine journal exceeds its size limit");
+  }
+  await publishRecoveryQuarantineJournal(runsRoot, filename, snapshot, nextBytes);
+}
+async function quarantineRun(runsRoot, runId, error2) {
+  const runDirectory = path14.join(runsRoot, runId);
+  const quarantinePath = path14.join(runsRoot, `.poisoned-${runId}`);
+  const runsIdentity = await plainDirectoryIdentity(runsRoot);
+  if (runsIdentity === null) throw new RuntimeError("recovery runs root disappeared");
+  let runIdentity = null;
+  let renamed = false;
+  let journaled = false;
+  try {
+    runIdentity = await plainDirectoryIdentity(runDirectory);
+    if (runIdentity === null) throw new RuntimeError("poisoned recovery run disappeared");
+    if (await plainDirectoryIdentity(quarantinePath) !== null) {
+      throw new RuntimeError("poisoned recovery quarantine already exists");
+    }
+    await rename3(runDirectory, quarantinePath);
+    renamed = true;
+    const quarantineIdentity = await plainDirectoryIdentity(quarantinePath);
+    const currentRoot = await lstat6(runsRoot);
+    if (quarantineIdentity === null || quarantineIdentity.dev !== runIdentity.dev || quarantineIdentity.ino !== runIdentity.ino || !isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, runsIdentity)) {
+      throw new RuntimeError("poisoned recovery run identity changed during quarantine");
+    }
+    const record2 = {
+      event: "recovery-quarantine",
+      runId,
+      reason: boundedQuarantineReason(error2),
+      recordedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    await appendRecoveryQuarantineRecord(runsRoot, record2);
+    journaled = true;
+    logger.warn("startup recovery quarantined poisoned run", {
+      runId,
+      reason: record2.reason
+    });
+  } catch (quarantineError) {
+    const errors = [error2, quarantineError];
+    if (renamed && !journaled && runIdentity !== null) {
+      try {
+        const quarantineMetadata = await lstat6(quarantinePath);
+        const currentRoot = await lstat6(runsRoot);
+        if (!isPlainDirectory(quarantineMetadata) || !sameIdentity(quarantineMetadata, runIdentity) || await plainDirectoryIdentity(runDirectory) !== null || !isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, runsIdentity)) {
+          throw new RuntimeError("poisoned recovery rollback identity or destination is unsafe");
+        }
+        await rename3(quarantinePath, runDirectory);
+        const restoredMetadata = await lstat6(runDirectory);
+        const restoredRoot = await lstat6(runsRoot);
+        if (!isPlainDirectory(restoredMetadata) || !sameIdentity(restoredMetadata, runIdentity) || !isPlainDirectory(restoredRoot) || !sameIdentity(restoredRoot, runsIdentity)) {
+          throw new RuntimeError("poisoned recovery rollback identity changed");
+        }
+        await syncRecoveryDirectory(runsRoot);
+        const settledMetadata = await lstat6(runDirectory);
+        const settledRoot = await lstat6(runsRoot);
+        if (!isPlainDirectory(settledMetadata) || !sameIdentity(settledMetadata, runIdentity) || !isPlainDirectory(settledRoot) || !sameIdentity(settledRoot, runsIdentity)) {
+          throw new RuntimeError("poisoned recovery rollback changed after directory sync");
+        }
+      } catch (rollbackError) {
+        errors.push(rollbackError);
+      }
+    }
+    throw new AggregateError(errors, "run recovery failed and quarantine did not complete");
+  }
+}
+async function removePlainDirectory(directory, expected) {
+  const metadata = await lstat6(directory);
+  if (!isPlainDirectory(metadata) || !sameIdentity(metadata, expected)) {
+    throw new RuntimeError("recovery directory identity changed before removal");
+  }
+  await rm7(directory, { recursive: true, force: false });
+}
+async function createExactRef(repoRoot, ref, oid) {
+  const result = await git(repoRoot, [
+    "update-ref",
+    "--no-deref",
+    ref,
+    oid,
+    "0".repeat(oid.length)
+  ]);
+  if (result.exitCode !== 0) throw runGitError("create recovery Git ref", result);
+}
 async function appendCleanupRecord(runsRoot, record2) {
   const identity = await plainDirectoryIdentity(runsRoot);
   if (identity === null) throw new RuntimeError("cleanup journal root disappeared");
@@ -31611,16 +32024,46 @@ async function commitCleanupRefs(record2) {
   }
   await deleteExactRef(repoRoot, record2.backupRef, backupOid);
 }
-async function replayInterruptedPrunes(runsRoot, ps) {
-  const text = await readCleanupJournal(path14.join(runsRoot, "cleanup.ndjson"));
-  if (text === null || text.trim() === "") return;
+async function readPendingCleanupRecords(runsRoot) {
+  const { text, tornTail } = await readCleanupJournal(path14.join(runsRoot, "cleanup.ndjson"));
   const pending = /* @__PURE__ */ new Map();
-  for (const line of text.trimEnd().split("\n")) {
+  if (text === null || text === "") return { pending, tornTail };
+  const completeText = text.endsWith("\n") ? text.slice(0, -1) : text;
+  for (const line of completeText.split("\n")) {
     if (line.trim() === "") throw new RuntimeError("cleanup journal contains a blank record");
     const record2 = parseCleanupRecord(line);
     if (record2.event === "prune-cleanup-intent") pending.set(record2.runId, record2);
     else pending.delete(record2.runId);
   }
+  return { pending, tornTail };
+}
+async function truncateCleanupTornTail(filename) {
+  let handle;
+  try {
+    handle = await open5(filename, constants4.O_RDWR | NO_FOLLOW3);
+  } catch (error2) {
+    if (isMissing2(error2)) return;
+    throw error2;
+  }
+  try {
+    const metadata = await handle.stat();
+    const namedMetadata = await lstat6(filename);
+    if (!metadata.isFile() || metadata.nlink !== 1 || metadata.size > MAX_STATE_FILE_BYTES || !namedMetadata.isFile() || namedMetadata.isSymbolicLink() || namedMetadata.nlink !== 1 || namedMetadata.dev !== metadata.dev || namedMetadata.ino !== metadata.ino) {
+      throw new RuntimeError("cleanup journal must be a bounded regular single-link file");
+    }
+    const text = await handle.readFile({ encoding: "utf8" });
+    if (text === "" || text.endsWith("\n")) return;
+    const finalNewline = text.lastIndexOf("\n");
+    const completePrefix = finalNewline === -1 ? "" : text.slice(0, finalNewline + 1);
+    await handle.truncate(Buffer.byteLength(completePrefix, "utf8"));
+    await handle.sync();
+  } finally {
+    await handle?.close();
+  }
+}
+async function replayInterruptedPrunes(runsRoot, ps) {
+  const { pending, tornTail } = await readPendingCleanupRecords(runsRoot);
+  if (tornTail) await truncateCleanupTornTail(path14.join(runsRoot, "cleanup.ndjson"));
   for (const record2 of [...pending.values()].sort((left, right) => left.runId.localeCompare(right.runId))) {
     if (record2.repoRoot === null) continue;
     const repoRoot = await validateRepositoryRoot(record2.repoRoot);
@@ -31678,11 +32121,13 @@ async function replayInterruptedPrunes(runsRoot, ps) {
     if (primaryError !== void 0) throw primaryError;
   }
 }
-async function recoverRun(record2, root, ps, isProcessAlive, requestCooperativeTermination, delayMs, graceMs, runGit, locksRoot) {
+async function recoverRun(record2, root, ps, isProcessAlive, requestCooperativeTermination, delayMs, graceMs, runGit = git) {
   let escalation;
+  let unverifiedLivePid;
   if (record2.pid !== null && isProcessAlive(record2.pid)) {
-    const liveToken = record2.processToken === null ? null : await ps.getProcessStartToken(record2.pid);
-    if (record2.processToken === null || liveToken === record2.processToken) {
+    if (record2.processToken === null) {
+      unverifiedLivePid = record2.pid;
+    } else if (await ps.getProcessStartToken(record2.pid) === record2.processToken) {
       await requestCooperativeTermination(record2.pid);
       await delayMs(graceMs);
       if (isProcessAlive(record2.pid)) {
@@ -31693,99 +32138,39 @@ async function recoverRun(record2, root, ps, isProcessAlive, requestCooperativeT
       }
     }
   }
-  await reclaimExactLock(
-    locksRoot,
-    record2.lockKey,
-    isProcessAlive,
-    (pid) => ps.getProcessStartToken(pid)
-  );
   const commonDir = await validateGitCommonDir(record2.canonicalCommonDir);
-  const lease = await ps.acquireCheckoutLock(commonDir);
-  let primaryError;
-  let recovered = false;
-  try {
-    if (lease.repositoryIdentity !== commonDir) {
-      throw new RuntimeError("checkout lease repository identity changed during recovery");
-    }
-    const store = new ArtifactStore(record2.runId);
-    const currentRunStartText = await readBoundedRegularFile(
-      path14.join(store.runDirectory, "run-start.json")
-    );
-    if (currentRunStartText === null) return false;
-    const currentRecord = parseRunStart(currentRunStartText, record2.runId);
-    if (currentRecord.canonicalCommonDir !== commonDir || currentRecord.lockKey !== record2.lockKey) {
-      throw new RuntimeError("run-start repository identity changed during recovery");
-    }
-    const result = await store.readResult(record2.runId);
-    const marker = await store.readPipelineActiveMarker(record2.runId);
-    if (marker !== null && await lockOwnerIsLive(
-      { pid: marker.pid, processToken: marker.processToken },
-      isProcessAlive,
-      (pid) => ps.getProcessStartToken(pid)
-    )) return false;
-    if (result !== null) {
-      validateTerminalResult(result, record2.runId);
-      if (marker === null) return false;
-      if (marker.sliced) await archiveInterruptedPipeline(store, result);
-      await cleanupManagedWorktrees(commonDir, root, record2.runId, ps);
-      await cleanupTemporarySliceRefs2(commonDir, record2.runId, runGit);
-      await store.clearPipelineActiveMarker();
-      return false;
-    }
-    if (currentRecord.pid !== null && isProcessAlive(currentRecord.pid)) {
-      const token = currentRecord.processToken === null ? null : await ps.getProcessStartToken(currentRecord.pid);
-      const ownerIsLive = currentRecord.processToken === null || token === currentRecord.processToken;
-      const isExactTerminatedOwner = escalation !== void 0 && currentRecord.pid === record2.pid && currentRecord.processToken === record2.processToken;
-      if (ownerIsLive && !isExactTerminatedOwner) return false;
-    }
-    const logsRef = await store.writeLog(
-      "recovery",
-      "startup recovery reclaimed unfinished run\n"
-    );
-    await cleanupManagedWorktrees(commonDir, root, record2.runId, ps);
-    await cleanupTemporarySliceRefs2(commonDir, record2.runId, runGit);
-    await removeStaleCandidateAnchor(commonDir, record2.runId);
-    await store.writeResult({
-      resultVersion: "1",
-      runId: record2.runId,
-      status: "cancelled",
-      failure: "cancelled",
-      summary: "Interrupted attempt was cancelled during startup recovery.",
-      producerSummary: null,
-      candidate: null,
-      requestedVerification: [],
-      executedVerification: [],
-      unresolvedIssues: ["attempt-interrupted-before-terminal-result"],
-      evidence: {
-        recovery: "startup-stale-run",
-        originalStartedAt: record2.startedAt,
-        ...escalation === void 0 ? {} : { escalation }
-      },
-      logsRef,
-      producerId: null,
-      producerVersion: null,
-      producerModel: null,
-      durationMs: Math.max(0, Date.now() - Date.parse(record2.startedAt)),
-      sessionId: null
-    });
-    recovered = true;
-  } catch (error2) {
-    primaryError = error2;
-  } finally {
-    try {
-      await lease.release();
-    } catch (releaseError) {
-      if (primaryError !== void 0) {
-        throw new AggregateError(
-          [primaryError, releaseError],
-          "startup recovery failed and its checkout lease could not be released"
-        );
-      }
-      throw releaseError;
-    }
-  }
-  if (primaryError !== void 0) throw primaryError;
-  return recovered;
+  const store = new ArtifactStore(record2.runId);
+  const logsRef = await store.writeLog(
+    "recovery",
+    "startup recovery reclaimed unfinished run\n"
+  );
+  await cleanupManagedWorktrees(commonDir, root, record2.runId, ps);
+  await cleanupTemporarySliceRefs2(commonDir, record2.runId, runGit);
+  await removeStaleCandidateAnchor(commonDir, record2.runId);
+  await store.writeResult({
+    resultVersion: "1",
+    runId: record2.runId,
+    status: "cancelled",
+    failure: "cancelled",
+    summary: "Interrupted attempt was cancelled during startup recovery.",
+    producerSummary: null,
+    candidate: null,
+    requestedVerification: [],
+    executedVerification: [],
+    unresolvedIssues: ["attempt-interrupted-before-terminal-result"],
+    evidence: {
+      recovery: "startup-stale-run",
+      originalStartedAt: record2.startedAt,
+      ...escalation === void 0 ? {} : { escalation },
+      ...unverifiedLivePid === void 0 ? {} : { unverifiedLivePid }
+    },
+    logsRef,
+    producerId: null,
+    producerVersion: null,
+    producerModel: null,
+    durationMs: 0,
+    sessionId: null
+  });
 }
 function defaultRequestCooperativeTermination(pid) {
   try {
@@ -31815,7 +32200,419 @@ function parseLockOwner(contents) {
 }
 async function lockOwnerIsLive(owner, isProcessAlive, getProcessStartToken) {
   if (owner === null || !isProcessAlive(owner.pid)) return false;
-  return owner.processToken === null || await getProcessStartToken(owner.pid) === owner.processToken;
+  if (owner.processToken === null) return true;
+  const currentToken = await getProcessStartToken(owner.pid);
+  return currentToken === null || currentToken === owner.processToken;
+}
+async function readHandleBytes(handle, size) {
+  const contents = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const { bytesRead } = await handle.read(
+      contents,
+      offset,
+      size - offset,
+      offset
+    );
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return contents.subarray(0, offset);
+}
+async function removeLockIfUnchanged(lockPath, handle, expectedIdentity, expectedContents, expectedLinks = 1) {
+  const expectedSize = expectedContents.byteLength;
+  const handleMetadata = await handle.stat();
+  if (!isExpectedLockMetadata(
+    handleMetadata,
+    expectedIdentity,
+    expectedSize,
+    expectedLinks
+  )) return false;
+  const currentContents = await readHandleBytes(handle, handleMetadata.size);
+  if (!currentContents.equals(expectedContents)) return false;
+  let pathMetadata;
+  try {
+    pathMetadata = await lstat6(lockPath);
+  } catch (error2) {
+    if (isMissing2(error2)) return false;
+    throw error2;
+  }
+  if (!isExpectedLockMetadata(
+    pathMetadata,
+    expectedIdentity,
+    expectedSize,
+    expectedLinks
+  )) return false;
+  const settledHandleMetadata = await handle.stat();
+  if (!isExpectedLockMetadata(
+    settledHandleMetadata,
+    expectedIdentity,
+    expectedSize,
+    expectedLinks
+  )) return false;
+  const settledContents = await readHandleBytes(handle, settledHandleMetadata.size);
+  if (!settledContents.equals(expectedContents)) return false;
+  let settledPathMetadata;
+  try {
+    settledPathMetadata = await lstat6(lockPath);
+  } catch (error2) {
+    if (isMissing2(error2)) return false;
+    throw error2;
+  }
+  if (!isExpectedLockMetadata(
+    settledPathMetadata,
+    expectedIdentity,
+    expectedSize,
+    expectedLinks
+  )) return false;
+  try {
+    await rm7(lockPath, { force: false });
+    return true;
+  } catch (error2) {
+    if (isMissing2(error2)) return false;
+    throw error2;
+  }
+}
+async function reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) {
+  let handle;
+  try {
+    handle = await open5(lockPath, constants4.O_RDONLY | NO_FOLLOW3);
+  } catch (error2) {
+    if (isMissing2(error2)) return "contended";
+    throw error2;
+  }
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > MAX_STATE_FILE_BYTES) {
+      throw new RuntimeError("recovery lock must be a bounded regular file");
+    }
+    const contents = await readHandleBytes(handle, metadata.size);
+    if (contents.byteLength !== metadata.size) return "contended";
+    const owner = parseLockOwner(contents.toString("utf8"));
+    if (owner === null) return "contended";
+    if (await lockOwnerIsLive(
+      owner,
+      isProcessAlive,
+      getProcessStartToken
+    )) return "live";
+    return await removeLockIfUnchanged(
+      lockPath,
+      handle,
+      { dev: metadata.dev, ino: metadata.ino },
+      contents
+    ) ? "reclaimed" : "contended";
+  } finally {
+    await handle.close();
+  }
+}
+async function validateLockParentIdentity(parentPath, expectedIdentity) {
+  const metadata = await lstat6(parentPath);
+  if (!isPlainDirectory(metadata) || !sameIdentity(metadata, expectedIdentity)) {
+    throw new RuntimeError("recovery lock parent identity changed");
+  }
+}
+function isExpectedLockMetadata(metadata, expectedIdentity, expectedSize, expectedLinks) {
+  return metadata.isFile() && !metadata.isSymbolicLink() && metadata.nlink === expectedLinks && sameIdentity(metadata, expectedIdentity) && metadata.size === expectedSize && metadata.size <= MAX_STATE_FILE_BYTES;
+}
+async function validateOwnedLockState(handle, namedPaths, expectedIdentity, expectedContents, expectedLinks, parentPath, parentIdentity) {
+  const validateHandle = async () => {
+    const metadata = await handle.stat();
+    if (!isExpectedLockMetadata(
+      metadata,
+      expectedIdentity,
+      expectedContents.byteLength,
+      expectedLinks
+    ) || !(await readHandleBytes(handle, metadata.size)).equals(expectedContents)) {
+      throw new RuntimeError("recovery lock handle or contents changed");
+    }
+  };
+  await validateLockParentIdentity(parentPath, parentIdentity);
+  await validateHandle();
+  for (const namedPath of namedPaths) {
+    const metadata = await lstat6(namedPath);
+    if (!isExpectedLockMetadata(
+      metadata,
+      expectedIdentity,
+      expectedContents.byteLength,
+      expectedLinks
+    )) throw new RuntimeError("recovery lock path changed");
+  }
+  await validateHandle();
+  await validateLockParentIdentity(parentPath, parentIdentity);
+}
+async function removeExpectedLockPath(filename, expectedIdentity, expectedContents, expectedLinks) {
+  let handle;
+  try {
+    handle = await open5(filename, constants4.O_RDONLY | NO_FOLLOW3);
+  } catch (error2) {
+    if (isMissing2(error2)) return "absent";
+    throw error2;
+  }
+  let primaryError;
+  let removed = false;
+  try {
+    removed = await removeLockIfUnchanged(
+      filename,
+      handle,
+      expectedIdentity,
+      expectedContents,
+      expectedLinks
+    );
+  } catch (error2) {
+    primaryError = error2;
+  }
+  try {
+    await handle.close();
+  } catch (closeError) {
+    if (primaryError !== void 0) {
+      throw new AggregateError(
+        [primaryError, closeError],
+        "recovery lock cleanup failed and its handle could not be closed"
+      );
+    }
+    throw closeError;
+  }
+  if (primaryError !== void 0) throw primaryError;
+  return removed ? "removed" : "changed";
+}
+async function pathNamesLockIdentity(filename, expectedIdentity) {
+  try {
+    const metadata = await lstat6(filename);
+    return metadata.isFile() && !metadata.isSymbolicLink() && sameIdentity(metadata, expectedIdentity);
+  } catch (error2) {
+    if (isMissing2(error2)) return false;
+    throw error2;
+  }
+}
+async function validatePublishedLock(lockPath, expectedIdentity, expectedContents, parentPath, parentIdentity, expectedLinks = 1, namedPaths = [lockPath]) {
+  const handle = await open5(lockPath, constants4.O_RDONLY | NO_FOLLOW3);
+  let primaryError;
+  try {
+    await validateOwnedLockState(
+      handle,
+      namedPaths,
+      expectedIdentity,
+      expectedContents,
+      expectedLinks,
+      parentPath,
+      parentIdentity
+    );
+  } catch (error2) {
+    primaryError = error2;
+  }
+  try {
+    await handle.close();
+  } catch (closeError) {
+    if (primaryError !== void 0) {
+      throw new AggregateError(
+        [primaryError, closeError],
+        "published recovery lock validation failed and its handle could not be closed"
+      );
+    }
+    throw closeError;
+  }
+  if (primaryError !== void 0) throw primaryError;
+}
+function throwLockAcquisitionErrors(errors) {
+  if (errors.length === 1) throw errors[0];
+  throw new AggregateError(errors, "recovery lock acquisition and safe cleanup failed");
+}
+async function cleanupOwnedLockPaths(parentPath, parentIdentity, temporaryPath, lockPath, expectedIdentity, expectedContents, published) {
+  const errors = [];
+  try {
+    await validateLockParentIdentity(parentPath, parentIdentity);
+  } catch (error2) {
+    return [error2];
+  }
+  if (published) {
+    try {
+      const temporaryExists = await pathNamesLockIdentity(temporaryPath, expectedIdentity);
+      const result = await removeExpectedLockPath(
+        lockPath,
+        expectedIdentity,
+        expectedContents,
+        temporaryExists ? 2 : 1
+      );
+      if (result === "changed") {
+        errors.push(new RuntimeError("published recovery lock changed before safe cleanup"));
+      }
+    } catch (error2) {
+      errors.push(error2);
+    }
+  }
+  try {
+    const result = await removeExpectedLockPath(
+      temporaryPath,
+      expectedIdentity,
+      expectedContents,
+      1
+    );
+    if (result === "changed") {
+      errors.push(new RuntimeError("temporary recovery lock changed before safe cleanup"));
+    }
+  } catch (error2) {
+    errors.push(error2);
+  }
+  try {
+    await validateLockParentIdentity(parentPath, parentIdentity);
+  } catch (error2) {
+    errors.push(error2);
+  }
+  return errors;
+}
+async function createOwnedLock(lockPath, contents) {
+  if (contents.byteLength > MAX_STATE_FILE_BYTES) {
+    throw new RuntimeError("new recovery lock exceeds its size limit");
+  }
+  const parentPath = path14.dirname(lockPath);
+  const parentIdentity = await plainDirectoryIdentity(parentPath);
+  if (parentIdentity === null) {
+    throw new RuntimeError("recovery lock parent must remain a plain directory");
+  }
+  const temporaryPath = path14.join(parentPath, `.recovery-lock-${randomUUID5()}.tmp`);
+  let handle;
+  let temporaryIdentity;
+  let temporaryCreated = false;
+  let published = false;
+  let contended = false;
+  const errors = [];
+  try {
+    handle = await open5(
+      temporaryPath,
+      constants4.O_RDWR | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW3,
+      384
+    );
+    temporaryCreated = true;
+    const metadata = await handle.stat();
+    temporaryIdentity = { dev: metadata.dev, ino: metadata.ino };
+    await handle.writeFile(contents);
+    await handle.sync();
+    await validateOwnedLockState(
+      handle,
+      [temporaryPath],
+      temporaryIdentity,
+      contents,
+      1,
+      parentPath,
+      parentIdentity
+    );
+    try {
+      await link2(temporaryPath, lockPath);
+      published = true;
+    } catch (error2) {
+      if (errorCode4(error2) === "EEXIST") contended = true;
+      else throw error2;
+    }
+    if (published) {
+      await validateOwnedLockState(
+        handle,
+        [temporaryPath, lockPath],
+        temporaryIdentity,
+        contents,
+        2,
+        parentPath,
+        parentIdentity
+      );
+    }
+  } catch (error2) {
+    errors.push(error2);
+  }
+  if (handle !== void 0) {
+    try {
+      await handle.close();
+    } catch (error2) {
+      errors.push(error2);
+    }
+  }
+  if (temporaryCreated && temporaryIdentity === void 0) {
+    errors.push(new RuntimeError("temporary recovery lock identity is unavailable for cleanup"));
+  }
+  if (temporaryIdentity === void 0) throwLockAcquisitionErrors(errors);
+  if (contended) {
+    errors.push(...await cleanupOwnedLockPaths(
+      parentPath,
+      parentIdentity,
+      temporaryPath,
+      lockPath,
+      temporaryIdentity,
+      contents,
+      false
+    ));
+    if (errors.length === 0) return null;
+    throwLockAcquisitionErrors(errors);
+  }
+  if (!published) {
+    if (temporaryCreated) {
+      errors.push(...await cleanupOwnedLockPaths(
+        parentPath,
+        parentIdentity,
+        temporaryPath,
+        lockPath,
+        temporaryIdentity,
+        contents,
+        false
+      ));
+    }
+    throwLockAcquisitionErrors(errors);
+  }
+  if (errors.length === 0) {
+    try {
+      await validateLockParentIdentity(parentPath, parentIdentity);
+      const result = await removeExpectedLockPath(
+        temporaryPath,
+        temporaryIdentity,
+        contents,
+        2
+      );
+      if (result === "changed") {
+        throw new RuntimeError("temporary recovery lock changed before unlink");
+      }
+      await validatePublishedLock(
+        lockPath,
+        temporaryIdentity,
+        contents,
+        parentPath,
+        parentIdentity
+      );
+    } catch (error2) {
+      errors.push(error2);
+    }
+  }
+  if (errors.length === 0) {
+    return { lockPath, identity: temporaryIdentity, contents };
+  }
+  errors.push(...await cleanupOwnedLockPaths(
+    parentPath,
+    parentIdentity,
+    temporaryPath,
+    lockPath,
+    temporaryIdentity,
+    contents,
+    true
+  ));
+  throwLockAcquisitionErrors(errors);
+}
+async function acquireOwnedLock(lockPath, contents, isProcessAlive, getProcessStartToken) {
+  const created = await createOwnedLock(lockPath, contents);
+  if (created !== null) return created;
+  if (await reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) !== "reclaimed") {
+    return null;
+  }
+  return createOwnedLock(lockPath, contents);
+}
+async function releaseOwnedLock(lock) {
+  let handle;
+  try {
+    handle = await open5(lock.lockPath, constants4.O_RDONLY | NO_FOLLOW3);
+  } catch (error2) {
+    if (isMissing2(error2)) return;
+    throw error2;
+  }
+  try {
+    await removeLockIfUnchanged(lock.lockPath, handle, lock.identity, lock.contents);
+  } finally {
+    await handle.close();
+  }
 }
 function defaultIsProcessAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 1) return false;
@@ -31845,33 +32642,8 @@ async function reclaimLocks(locksRoot, isProcessAlive, getProcessStartToken) {
     if (!entry.isFile() || entry.isSymbolicLink()) {
       throw new RuntimeError("checkout lock must be a regular file during recovery");
     }
-    const contents = await readBoundedRegularFile(lockPath);
-    if (contents === null) continue;
-    const owner = parseLockOwner(contents);
-    if (owner === null || await lockOwnerIsLive(owner, isProcessAlive, getProcessStartToken)) continue;
-    if (!await lockIsStableRegularFile(lockPath, contents)) {
-      throw new RuntimeError("checkout lock identity changed during recovery");
-    }
-    await rm7(lockPath, { force: false });
+    await reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken);
   }
-}
-async function lockIsStableRegularFile(lockPath, expected) {
-  const before = await lstat6(lockPath);
-  const current = await readBoundedRegularFile(lockPath);
-  if (current === null) return false;
-  const after = await lstat6(lockPath);
-  return before.isFile() && !before.isSymbolicLink() && after.isFile() && !after.isSymbolicLink() && before.dev === after.dev && before.ino === after.ino && current === expected;
-}
-async function reclaimExactLock(locksRoot, lockKey, isProcessAlive, getProcessStartToken) {
-  const lockPath = path14.join(locksRoot, `${lockKey}.lock`);
-  const contents = await readBoundedRegularFile(lockPath);
-  if (contents === null) return;
-  const owner = parseLockOwner(contents);
-  if (owner === null || await lockOwnerIsLive(owner, isProcessAlive, getProcessStartToken)) return;
-  if (!await lockIsStableRegularFile(lockPath, contents)) {
-    throw new RuntimeError("checkout lock identity changed during recovery");
-  }
-  await rm7(lockPath, { force: false });
 }
 async function lockIsOwnedByLiveProcess(locksRoot, lockKey, isProcessAlive, getProcessStartToken) {
   const contents = await readBoundedRegularFile(path14.join(locksRoot, `${lockKey}.lock`));
@@ -31880,9 +32652,6 @@ async function lockIsOwnedByLiveProcess(locksRoot, lockKey, isProcessAlive, getP
 }
 async function recoverStaleRuns(dependencies = {}) {
   const root = await stateRoot();
-  if (root === null) return { recovered: [] };
-  const runsRoot = path14.join(root, "runs");
-  const runsIdentity = await plainDirectoryIdentity(runsRoot);
   const supplied = dependencies.platformServices;
   const selected = getPlatformServices();
   const ps = {
@@ -31891,61 +32660,214 @@ async function recoverStaleRuns(dependencies = {}) {
     terminateProcessTreeByPid: (pid, token) => (supplied ?? selected).terminateProcessTreeByPid(pid, token),
     acquireCheckoutLock: (checkout) => supplied && supplied.acquireCheckoutLock ? supplied.acquireCheckoutLock(checkout) : selected.acquireCheckoutLock(checkout)
   };
-  if (runsIdentity !== null) await replayInterruptedPrunes(runsRoot, ps);
   const isProcessAlive = dependencies.isProcessAlive ?? defaultIsProcessAlive;
   const requestCooperativeTermination = dependencies.requestCooperativeTermination ?? defaultRequestCooperativeTermination;
   const delayMs = dependencies.delayMs ?? defaultDelayMs;
   const graceMs = dependencies.graceMs ?? 3e3;
   const runGit = dependencies.git ?? git;
+  if (root === null) return { recovered: [], quarantined: [] };
   const locksRoot = path14.join(root, "locks");
-  const stale = [];
-  if (runsIdentity !== null) {
-    const runEntries = await readdir2(runsRoot, { withFileTypes: true });
-    for (const entry of runEntries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
-      const runDirectory = path14.join(runsRoot, entry.name);
-      const runStartText = await readBoundedRegularFile(path14.join(runDirectory, "run-start.json"));
-      if (runStartText === null) continue;
-      const record2 = parseRunStart(runStartText, entry.name);
-      const store = new ArtifactStore(entry.name);
-      const result = await store.readResult(entry.name);
-      if (result !== null) validateTerminalResult(result, entry.name);
-      const marker = result === null ? null : await store.readPipelineActiveMarker(entry.name);
-      if (result !== null && marker === null) continue;
-      if (marker !== null && await lockOwnerIsLive(
-        { pid: marker.pid, processToken: marker.processToken },
-        isProcessAlive,
-        (pid) => ps.getProcessStartToken(pid)
-      )) continue;
-      if (await lockIsOwnedByLiveProcess(
-        locksRoot,
-        record2.lockKey,
-        isProcessAlive,
-        (pid) => ps.getProcessStartToken(pid)
-      )) continue;
-      stale.push(record2);
-    }
+  await mkdir5(locksRoot, { recursive: true });
+  if (await plainDirectoryIdentity(locksRoot) === null) {
+    throw new RuntimeError("recovery locks directory disappeared");
   }
-  const recovered = [];
-  for (const record2 of stale) {
-    if (await recoverRun(
-      record2,
-      root,
-      ps,
-      isProcessAlive,
-      requestCooperativeTermination,
-      delayMs,
-      graceMs,
-      runGit,
-      locksRoot
-    )) recovered.push(record2.runId);
-  }
-  await reclaimLocks(
-    locksRoot,
+  const ownerContents = Buffer.from(JSON.stringify({
+    pid: nodeProcess4.pid,
+    processToken: await ps.getProcessStartToken(nodeProcess4.pid)
+  }));
+  const recoveryLock = await acquireOwnedLock(
+    path14.join(locksRoot, "recovery.lock"),
+    ownerContents,
     isProcessAlive,
     (pid) => ps.getProcessStartToken(pid)
   );
-  return { recovered };
+  if (recoveryLock === null) return { recovered: [], quarantined: [] };
+  let primaryError;
+  try {
+    const runsRoot = path14.join(root, "runs");
+    const runsIdentity = await plainDirectoryIdentity(runsRoot);
+    if (runsIdentity !== null) await replayInterruptedPrunes(runsRoot, ps);
+    const deferredPruneRunIds = /* @__PURE__ */ new Set();
+    const journaledQuarantines = runsIdentity === null ? /* @__PURE__ */ new Set() : (await readRecoveryQuarantineJournal(runsRoot)).runIds;
+    const stale = [];
+    const recovered = [];
+    const quarantined = [];
+    if (runsIdentity !== null) {
+      const runEntries = await readdir2(runsRoot, { withFileTypes: true });
+      for (const entry of runEntries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (entry.isDirectory() && !entry.isSymbolicLink() && entry.name.startsWith(".poisoned-")) {
+          const runId = entry.name.slice(".poisoned-".length);
+          validateRunId(runId);
+          if (!journaledQuarantines.has(runId)) {
+            throw new RuntimeError(`unjournaled poisoned run detected: ${runId}`);
+          }
+          continue;
+        }
+        if (deferredPruneRunIds.has(entry.name)) continue;
+        if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
+        try {
+          const runDirectory = path14.join(runsRoot, entry.name);
+          const runStartText = await readBoundedRegularFile(path14.join(runDirectory, "run-start.json"));
+          if (runStartText === null) continue;
+          const record2 = parseRunStart(runStartText, entry.name);
+          const store = new ArtifactStore(entry.name);
+          const result = await store.readResult(entry.name);
+          if (result !== null) {
+            validateTerminalResult(result, entry.name);
+            const marker = await store.readPipelineActiveMarker(entry.name);
+            if (marker !== null && !await lockOwnerIsLive(
+              { pid: marker.pid, processToken: marker.processToken },
+              isProcessAlive,
+              (pid) => ps.getProcessStartToken(pid)
+            )) {
+              const checkoutLock = await acquireOwnedLock(
+                path14.join(locksRoot, `${record2.lockKey}.lock`),
+                ownerContents,
+                isProcessAlive,
+                (pid) => ps.getProcessStartToken(pid)
+              );
+              if (checkoutLock === null) continue;
+              let cleanupError;
+              let cleanupFailed = false;
+              try {
+                const lockedRunStartText = await readBoundedRegularFile(
+                  path14.join(runDirectory, "run-start.json")
+                );
+                if (lockedRunStartText === null) {
+                  throw new RuntimeError("run-start recovery record disappeared during recovery");
+                }
+                const lockedRecord = parseRunStart(lockedRunStartText, entry.name);
+                if (lockedRunStartText !== runStartText || lockedRecord.runId !== record2.runId || lockedRecord.lockKey !== record2.lockKey || lockedRecord.canonicalCommonDir !== record2.canonicalCommonDir || lockedRecord.pid !== record2.pid || lockedRecord.processToken !== record2.processToken || lockedRecord.startedAt !== record2.startedAt) {
+                  throw new RuntimeError("run-start recovery record changed during recovery");
+                }
+                const lockedResult = await store.readResult(entry.name);
+                if (lockedResult === null) {
+                  throw new RuntimeError("terminal attempt result disappeared during recovery");
+                }
+                validateTerminalResult(lockedResult, entry.name);
+                const lockedMarker = await store.readPipelineActiveMarker(entry.name);
+                if (lockedMarker !== null && !await lockOwnerIsLive(
+                  { pid: lockedMarker.pid, processToken: lockedMarker.processToken },
+                  isProcessAlive,
+                  (pid) => ps.getProcessStartToken(pid)
+                )) {
+                  const commonDir = await validateGitCommonDir(lockedRecord.canonicalCommonDir);
+                  if (lockedMarker.sliced) await archiveInterruptedPipeline(store, lockedResult);
+                  await cleanupManagedWorktrees(commonDir, root, entry.name, ps);
+                  await cleanupTemporarySliceRefs2(commonDir, entry.name, runGit);
+                  await store.clearPipelineActiveMarker();
+                }
+              } catch (error2) {
+                cleanupError = error2;
+                cleanupFailed = true;
+              } finally {
+                try {
+                  await releaseOwnedLock(checkoutLock);
+                } catch (releaseError) {
+                  if (!cleanupFailed) throw releaseError;
+                  throw new AggregateError(
+                    [cleanupError, releaseError],
+                    "terminal pipeline cleanup failed and its checkout lock could not be released"
+                  );
+                }
+              }
+              if (cleanupFailed) throw cleanupError;
+            }
+            continue;
+          }
+          if (await lockIsOwnedByLiveProcess(
+            locksRoot,
+            record2.lockKey,
+            isProcessAlive,
+            (pid) => ps.getProcessStartToken(pid)
+          )) continue;
+          stale.push({ record: record2, runStartText });
+        } catch (error2) {
+          await quarantineRun(runsRoot, entry.name, error2);
+          quarantined.push(entry.name);
+        }
+      }
+    }
+    for (const { record: record2, runStartText } of stale) {
+      const checkoutLock = await acquireOwnedLock(
+        path14.join(locksRoot, `${record2.lockKey}.lock`),
+        ownerContents,
+        isProcessAlive,
+        (pid) => ps.getProcessStartToken(pid)
+      );
+      if (checkoutLock === null) continue;
+      let recoveryError;
+      let recoveryFailed = false;
+      let becameTerminal = false;
+      try {
+        const lockedRunStartText = await readBoundedRegularFile(
+          path14.join(runsRoot, record2.runId, "run-start.json")
+        );
+        if (lockedRunStartText === null) {
+          throw new RuntimeError("run-start recovery record disappeared before stale recovery");
+        }
+        const lockedRecord = parseRunStart(lockedRunStartText, record2.runId);
+        if (lockedRunStartText !== runStartText) {
+          throw new RuntimeError("run-start recovery record changed before stale recovery");
+        }
+        const lockedResult = await new ArtifactStore(record2.runId).readResult(record2.runId);
+        if (lockedResult !== null) {
+          validateTerminalResult(lockedResult, record2.runId);
+          becameTerminal = true;
+        } else {
+          await recoverRun(
+            lockedRecord,
+            root,
+            ps,
+            isProcessAlive,
+            requestCooperativeTermination,
+            delayMs,
+            graceMs,
+            runGit
+          );
+        }
+      } catch (error2) {
+        recoveryError = error2;
+        recoveryFailed = true;
+      } finally {
+        try {
+          await releaseOwnedLock(checkoutLock);
+        } catch (cleanupError) {
+          if (!recoveryFailed) throw cleanupError;
+          throw new AggregateError(
+            [recoveryError, cleanupError],
+            "stale-run recovery failed and its checkout lock could not be released"
+          );
+        }
+      }
+      if (recoveryFailed) {
+        await quarantineRun(runsRoot, record2.runId, recoveryError);
+        quarantined.push(record2.runId);
+        continue;
+      }
+      if (becameTerminal) continue;
+      recovered.push(record2.runId);
+    }
+    await reclaimLocks(
+      locksRoot,
+      isProcessAlive,
+      (pid) => ps.getProcessStartToken(pid)
+    );
+    return { recovered, quarantined };
+  } catch (error2) {
+    primaryError = error2;
+    throw error2;
+  } finally {
+    try {
+      await releaseOwnedLock(recoveryLock);
+    } catch (cleanupError) {
+      if (primaryError === void 0) throw cleanupError;
+      throw new AggregateError(
+        [primaryError, cleanupError],
+        "startup recovery failed and its recovery lock could not be released"
+      );
+    }
+  }
 }
 
 // src/mcp/server.ts

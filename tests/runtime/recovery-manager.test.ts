@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto";
 import {
   access,
+  link,
   mkdir,
+  lstat,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,6 +22,7 @@ import { start } from "../../src/mcp/server.js";
 import { ArtifactStore } from "../../src/runtime/artifact-store.js";
 import { recoverStaleRuns } from "../../src/runtime/recovery-manager.js";
 import { buildRunManifest } from "../../src/runtime/run-manifest.js";
+import { logger } from "../../src/util/logger.js";
 
 const serverEvents = vi.hoisted(() => [] as string[]);
 
@@ -65,6 +70,32 @@ async function expectMissing(filename: string): Promise<void> {
   await expect(access(filename)).rejects.toMatchObject({ code: "ENOENT" });
 }
 
+async function expectQuarantinedRun(
+  runId: string,
+  runDirectory: string,
+  forbiddenText: string[] = [],
+): Promise<string> {
+  await expectMissing(runDirectory);
+  await expect(access(path.join(path.dirname(runDirectory), `.poisoned-${runId}`)))
+    .resolves.toBeUndefined();
+  const journal = await readFile(
+    path.join(path.dirname(runDirectory), "recovery-quarantine.ndjson"),
+    "utf8",
+  );
+  const records = journal.trimEnd().split("\n");
+  expect(records).toHaveLength(1);
+  expect(Buffer.byteLength(records[0]!, "utf8")).toBeLessThanOrEqual(4_096);
+  const record = JSON.parse(records[0]!) as { reason: string };
+  expect(record).toMatchObject({
+    event: "recovery-quarantine",
+    runId,
+  });
+  expect(Buffer.byteLength(record.reason, "utf8")).toBeLessThanOrEqual(2_000);
+  await expectMissing(path.join(path.dirname(runDirectory), "cleanup.ndjson"));
+  for (const text of forbiddenText) expect(records[0]).not.toContain(text);
+  return records[0]!;
+}
+
 async function createUnfinishedRun(
   runId: string,
   commonDir: string,
@@ -82,6 +113,33 @@ async function createUnfinishedRun(
     processToken,
     startedAt: "2026-07-14T12:00:00.000Z",
   })}\n`);
+  return store;
+}
+
+async function createTerminalRun(
+  runId: string,
+  commonDir: string,
+): Promise<ArtifactStore> {
+  const store = await createUnfinishedRun(runId, commonDir, null);
+  await store.writeResult({
+    resultVersion: "1",
+    runId,
+    status: "failed",
+    failure: "producer-failure",
+    summary: "pipeline failed",
+    producerSummary: null,
+    candidate: null,
+    requestedVerification: [],
+    executedVerification: [],
+    unresolvedIssues: [],
+    evidence: {},
+    logsRef: "logs/producer.log",
+    producerId: null,
+    producerVersion: null,
+    producerModel: null,
+    durationMs: 1,
+    sessionId: null,
+  });
   return store;
 }
 
@@ -202,17 +260,127 @@ afterEach(async () => {
 });
 
 describe("recoverStaleRuns", () => {
-  it("downgrades a verified candidate before clearing a dead sliced pipeline marker", async () => {
+  it("skips recovery while a live recovery mutex is held", async () => {
     const repo = await initRepo();
-    const runId = "run-interrupted-pipeline-authority";
+    const runId = "run-live-recovery-mutex";
     const store = await createUnfinishedRun(runId, repo.commonDir, null);
-    await writeVerifiedCandidate(store, runId, repo);
-    await store.writePipelineActiveMarker({
-      pid: 4242,
-      processToken: "darwin:dead",
-      startedAt: "2026-07-18T12:00:00.000Z",
-      sliced: true,
-    });
+    const worktree = await new WorktreeManager(repo.directory, runId).create(repo.head);
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
+    const recoveryLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      "recovery.lock",
+    );
+    const owner = { pid: 9101, processToken: "darwin:live-recovery" };
+    await mkdir(path.dirname(recoveryLockPath), { recursive: true });
+    await writeFile(recoveryLockPath, JSON.stringify(owner));
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          return pid === owner.pid ? owner.processToken : "darwin:self";
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: pid => pid === owner.pid,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    await expect(store.readResult(runId)).resolves.toBeNull();
+    await expect(access(worktree.path)).resolves.toBeUndefined();
+    expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
+    await expect(readFile(recoveryLockPath, "utf8"))
+      .resolves.toBe(JSON.stringify(owner));
+  }, { timeout: 120_000 });
+
+  it("defers recovery when a live recovery mutex token cannot be probed", async () => {
+    const repo = await initRepo();
+    const runId = "run-unprobeable-recovery-mutex";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const worktree = await new WorktreeManager(repo.directory, runId).create(repo.head);
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
+    const recoveryLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      "recovery.lock",
+    );
+    const owner = { pid: 9104, processToken: "recorded" };
+    const lockBytes = Buffer.from(JSON.stringify(owner));
+    const tokenProbes: number[] = [];
+    await mkdir(path.dirname(recoveryLockPath), { recursive: true });
+    await writeFile(recoveryLockPath, lockBytes);
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          if (pid === owner.pid) tokenProbes.push(pid);
+          return null;
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: pid => pid === owner.pid,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    expect(tokenProbes).toEqual([owner.pid]);
+    await expect(readFile(recoveryLockPath)).resolves.toEqual(lockBytes);
+    await expect(access(worktree.path)).resolves.toBeUndefined();
+    expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
+    await expect(store.readResult(runId)).resolves.toBeNull();
+  }, { timeout: 120_000 });
+
+  it("preserves a primary recovery error when lock releases also fail", async () => {
+    const repo = await initRepo();
+    const runId = "run-primary-and-release-failure";
+    await createUnfinishedRun(runId, repo.commonDir, 4242, "darwin:live");
+    const locksRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks");
+    const primaryError = new Error("primary recovery failure");
+
+    let thrown: unknown;
+    try {
+      await recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken(pid) {
+            return pid === 4242 ? "darwin:live" : "darwin:self";
+          },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: () => true,
+        async requestCooperativeTermination() {
+          await rm(locksRoot, { recursive: true });
+          await writeFile(locksRoot, "blocks lock release");
+          throw primaryError;
+        },
+        graceMs: 0,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const containedErrors = (error: unknown): unknown[] => error instanceof AggregateError
+      ? error.errors.flatMap(containedErrors)
+      : [error];
+    expect(containedErrors(thrown)).toContain(primaryError);
+  }, { timeout: 120_000 });
+
+  it("reclaims a dead recovery mutex before recovering stale runs", async () => {
+    const repo = await initRepo();
+    const runId = "run-dead-recovery-mutex";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const recoveryLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      "recovery.lock",
+    );
+    await mkdir(path.dirname(recoveryLockPath), { recursive: true });
+    await writeFile(recoveryLockPath, JSON.stringify({
+      pid: 9102,
+      processToken: "darwin:dead-recovery",
+    }));
 
     await expect(recoverStaleRuns({
       platformServices: {
@@ -221,471 +389,358 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
 
-    await expect(store.readResult(runId)).resolves.toMatchObject({
-      status: "failed",
-      failure: "verification-failure",
-      candidate: expect.any(Object),
-      unresolvedIssues: ["pipeline-interrupted-before-terminal-cleanup"],
-      evidence: {
-        pipelineRecovery: "interrupted-before-terminal-cleanup",
+    await expect(store.readResult(runId))
+      .resolves.toMatchObject({ status: "cancelled" });
+    await expectMissing(recoveryLockPath);
+  }, { timeout: 120_000 });
+
+  it("defers recovery rather than unlinking a hard-linked stale recovery mutex", async () => {
+    const repo = await initRepo();
+    const runId = "run-hard-linked-recovery-mutex";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const worktree = await new WorktreeManager(repo.directory, runId).create(repo.head);
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
+    const recoveryLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      "recovery.lock",
+    );
+    const aliasPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "recovery-lock-alias");
+    const lockBytes = Buffer.from(JSON.stringify({
+      pid: 9105,
+      processToken: "stale",
+    }));
+    await mkdir(path.dirname(recoveryLockPath), { recursive: true });
+    await writeFile(recoveryLockPath, lockBytes);
+    await link(recoveryLockPath, aliasPath);
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
       },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    await expect(readFile(recoveryLockPath)).resolves.toEqual(lockBytes);
+    await expect(readFile(aliasPath)).resolves.toEqual(lockBytes);
+    await expect(access(worktree.path)).resolves.toBeUndefined();
+    expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
+    await expect(store.readResult(runId)).resolves.toBeNull();
+  }, { timeout: 120_000 });
+
+  it("defers recovery when checkout ownership becomes live before mutation", async () => {
+    const repo = await initRepo();
+    const runId = "run-checkout-owner-revived";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
+    const lockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      `${lockKey}.lock`,
+    );
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "9103");
+    let ownerChecks = 0;
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive(pid) {
+        if (pid !== 9103) return false;
+        ownerChecks += 1;
+        return ownerChecks > 1;
+      },
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    expect(ownerChecks).toBeGreaterThanOrEqual(2);
+    await expect(store.readResult(runId)).resolves.toBeNull();
+    await expect(readFile(lockPath, "utf8")).resolves.toBe("9103");
+  }, { timeout: 120_000 });
+
+  it("preserves a replacement lock swapped during owner token probing", async () => {
+    const locksRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks");
+    const lockPath = path.join(locksRoot, `${"f".repeat(64)}.lock`);
+    const replacementPath = path.join(locksRoot, "replacement.lock");
+    const replacementOwner = { pid: 9202, processToken: "darwin:live" };
+    await mkdir(locksRoot, { recursive: true });
+    await writeFile(lockPath, JSON.stringify({
+      pid: 9201,
+      processToken: "darwin:stale",
+    }));
+
+    await recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          if (pid !== 9201) return "darwin:self";
+          await writeFile(replacementPath, JSON.stringify(replacementOwner));
+          await rename(replacementPath, lockPath);
+          return "darwin:replacement";
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => true,
     });
-    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
+
+    await expect(readFile(lockPath, "utf8"))
+      .resolves.toBe(JSON.stringify(replacementOwner));
   });
 
-  it("preserves a verified candidate while clearing a dead non-sliced pipeline marker", async () => {
+  it("preserves a terminal result published after the stale scan", async () => {
     const repo = await initRepo();
-    const runId = "run-interrupted-non-sliced-pipeline";
+    const runId = "run-terminal-after-stale-scan";
     const store = await createUnfinishedRun(runId, repo.commonDir, null);
-    await writeVerifiedCandidate(store, runId, repo);
+    const worktree = await new WorktreeManager(repo.directory, runId).create(repo.head);
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
+    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
+    const checkoutLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      `${lockKey}.lock`,
+    );
+    const checkoutOwner = { pid: 9701, processToken: "darwin:stale-checkout" };
+    await mkdir(path.dirname(checkoutLockPath), { recursive: true });
+    await writeFile(checkoutLockPath, JSON.stringify(checkoutOwner));
+    let publishedResult: Buffer | undefined;
+    let ownerProbes = 0;
+
+    const result = await recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          if (pid === checkoutOwner.pid) {
+            ownerProbes += 1;
+            if (publishedResult === undefined) {
+              await store.writeResult({
+                resultVersion: "1",
+                runId,
+                status: "failed",
+                failure: "producer-failure",
+                summary: "producer completed while recovery waited for the checkout lock",
+                producerSummary: null,
+                candidate: null,
+                requestedVerification: [],
+                executedVerification: [],
+                unresolvedIssues: [],
+                evidence: {},
+                logsRef: "logs/producer.log",
+                producerId: null,
+                producerVersion: null,
+                producerModel: null,
+                durationMs: 1,
+                sessionId: null,
+              });
+              publishedResult = await readFile(path.join(store.runDirectory, "result.json"));
+            }
+            return "darwin:replacement-checkout";
+          }
+          return "darwin:self";
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: pid => pid === checkoutOwner.pid,
+    });
+
+    expect(result).toEqual({ recovered: [], quarantined: [] });
+    expect(ownerProbes).toBeGreaterThanOrEqual(2);
+    expect(publishedResult).toBeDefined();
+    await expect(readFile(path.join(store.runDirectory, "result.json")))
+      .resolves.toEqual(publishedResult);
+    await expect(access(worktree.path)).resolves.toBeUndefined();
+    expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
+    await expectMissing(checkoutLockPath);
+  }, { timeout: 120_000 });
+
+  it.each([
+    {
+      ownerDescription: "a live matching-token owner",
+      lockBytes: Buffer.from(JSON.stringify({
+        pid: 9301,
+        processToken: "darwin:live-checkout",
+      })),
+      ownerIsLive: true,
+    },
+    {
+      ownerDescription: "an incomplete empty owner",
+      lockBytes: Buffer.alloc(0),
+      ownerIsLive: false,
+    },
+  ])("defers terminal pipeline cleanup while checkout lock has $ownerDescription", async ({
+    lockBytes,
+    ownerIsLive,
+  }) => {
+    const repo = await initRepo();
+    const runId = ownerIsLive
+      ? "run-terminal-live-checkout"
+      : "run-terminal-incomplete-checkout";
+    const store = await createTerminalRun(runId, repo.commonDir);
+    const pipelineWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-pipeline`,
+    ).create(repo.head);
+    const verifyWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-verify`,
+    ).create(repo.head);
+    const pipelineSentinelPath = path.join(pipelineWorktree.path, "pipeline-sentinel.bin");
+    const verifySentinelPath = path.join(verifyWorktree.path, "verify-sentinel.bin");
+    await writeFile(pipelineSentinelPath, Buffer.from([0x00, 0x50, 0xff, 0x0a]));
+    await writeFile(verifySentinelPath, Buffer.from([0x00, 0x56, 0xfe, 0x0a]));
     await store.writePipelineActiveMarker({
       pid: 4242,
-      processToken: "darwin:dead",
+      processToken: "darwin:dead-pipeline",
       startedAt: "2026-07-18T12:00:00.000Z",
       sliced: false,
     });
 
+    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
+    const checkoutLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      `${lockKey}.lock`,
+    );
+    await mkdir(path.dirname(checkoutLockPath), { recursive: true });
+    await writeFile(checkoutLockPath, lockBytes);
+
+    const resultPath = path.join(store.runDirectory, "result.json");
+    const markerPath = path.join(store.runDirectory, "pipeline-active.json");
+    const [
+      resultBefore,
+      markerBefore,
+      pipelineSentinelBefore,
+      verifySentinelBefore,
+      checkoutLockBefore,
+      pipelineIdentityBefore,
+      verifyIdentityBefore,
+    ] = await Promise.all([
+      readFile(resultPath),
+      readFile(markerPath),
+      readFile(pipelineSentinelPath),
+      readFile(verifySentinelPath),
+      readFile(checkoutLockPath),
+      lstat(pipelineWorktree.path),
+      lstat(verifyWorktree.path),
+    ]);
+
     await expect(recoverStaleRuns({
       platformServices: {
         os: "darwin",
-        async getProcessStartToken() { return null; },
+        async getProcessStartToken(pid) {
+          return pid === 9301 ? "darwin:live-checkout" : "darwin:self";
+        },
         async terminateProcessTreeByPid() {},
       },
-      isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+      isProcessAlive: pid => ownerIsLive && pid === 9301,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
-    await expect(store.readResult(runId)).resolves.toMatchObject({
-      status: "verified-candidate",
-      failure: null,
+    const [pipelineIdentityAfter, verifyIdentityAfter] = await Promise.all([
+      lstat(pipelineWorktree.path),
+      lstat(verifyWorktree.path),
+    ]);
+    expect({ dev: pipelineIdentityAfter.dev, ino: pipelineIdentityAfter.ino }).toEqual({
+      dev: pipelineIdentityBefore.dev,
+      ino: pipelineIdentityBefore.ino,
     });
-    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
-  });
-
-  it("treats a legacy pipeline marker as non-sliced during recovery", async () => {
-    const repo = await initRepo();
-    const runId = "run-interrupted-legacy-pipeline";
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
-    await writeVerifiedCandidate(store, runId, repo);
-    await writeFile(path.join(store.runDirectory, "pipeline-active.json"), `${JSON.stringify({
-      pid: 4242,
-      processToken: "darwin:dead",
-      startedAt: "2026-07-18T12:00:00.000Z",
-    })}\n`);
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
-
-    await expect(store.readResult(runId)).resolves.toMatchObject({
-      status: "verified-candidate",
-      failure: null,
+    expect({ dev: verifyIdentityAfter.dev, ino: verifyIdentityAfter.ino }).toEqual({
+      dev: verifyIdentityBefore.dev,
+      ino: verifyIdentityBefore.ino,
     });
-    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
-  });
+    await expect(readFile(resultPath)).resolves.toEqual(resultBefore);
+    await expect(readFile(markerPath)).resolves.toEqual(markerBefore);
+    await expect(readFile(pipelineSentinelPath)).resolves.toEqual(pipelineSentinelBefore);
+    await expect(readFile(verifySentinelPath)).resolves.toEqual(verifySentinelBefore);
+    await expect(readFile(checkoutLockPath)).resolves.toEqual(checkoutLockBefore);
+  }, { timeout: 120_000 });
 
-  it("cleans every sliced worktree and ref for a terminal run without touching a prefix neighbor", async () => {
+  it("revalidates a dead pipeline marker after reclaiming its checkout lock", async () => {
     const repo = await initRepo();
-    const runId = "run-sliced-terminal";
-    const neighborRunId = `${runId}-neighbor`;
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
-    await writeTerminalFailure(store, runId);
-    const slicedWorktrees = await createManagedWorktrees(repo, slicedManagedIds(runId));
-    const neighborWorktree = (await createManagedWorktrees(
-      repo,
-      [`${neighborRunId}-slice-1-attempt-0`],
-    ))[0]!;
-    const sliceRefs = [
-      `refs/claude-architect/slices/${runId}/slice-1-attempt-1`,
-      `refs/claude-architect/slices/${runId}/slice-2-attempt-0`,
-    ];
-    const neighborRef = `refs/claude-architect/slices/${neighborRunId}/slice-1-attempt-0`;
-    for (const ref of [...sliceRefs, neighborRef]) {
-      await runGit(repo.directory, ["update-ref", ref, repo.head]);
-    }
+    const runId = "run-terminal-marker-revalidated";
+    const store = await createTerminalRun(runId, repo.commonDir);
+    const pipelineWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-pipeline`,
+    ).create(repo.head);
+    const verifyWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-verify`,
+    ).create(repo.head);
+    const markerPath = path.join(store.runDirectory, "pipeline-active.json");
     await store.writePipelineActiveMarker({
       pid: 4242,
-      processToken: "darwin:dead",
+      processToken: "darwin:dead-pipeline",
       startedAt: "2026-07-18T12:00:00.000Z",
-      sliced: true,
+      sliced: false,
     });
+    const resultPath = path.join(store.runDirectory, "result.json");
+    const resultBefore = await readFile(resultPath);
 
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
-
-    await Promise.all(slicedWorktrees.map(worktree => expectMissing(worktree.path)));
-    await expect(access(neighborWorktree.path)).resolves.toBeUndefined();
-    for (const ref of sliceRefs) {
-      expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", ref])).exitCode)
-        .not.toBe(0);
-    }
-    expect(await runGit(repo.directory, ["rev-parse", neighborRef])).toBe(repo.head);
-    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
-    await expect(access(neighborWorktree.path)).resolves.toBeUndefined();
-    expect(await runGit(repo.directory, ["rev-parse", neighborRef])).toBe(repo.head);
-  }, { timeout: 120_000 });
-
-  it("waits for the checkout lease and preserves a run that completes while waiting", async () => {
-    const repo = await initRepo();
-    const runId = "run-completes-while-lease-waits";
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-        async acquireCheckoutLock() {
-          // The producer reaches a terminal result while recovery waits for the
-          // lease; recovery must observe it and leave the run untouched.
-          await writeTerminalFailure(store, runId);
-          return { key: "test", repositoryIdentity: repo.commonDir, async release() {} };
-        },
-      },
-      isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
-
-    await expect(store.readResult(runId)).resolves.toMatchObject({ status: "failed" });
-  });
-
-  it("preserves an unfinished run when its marker becomes live while the lease waits", async () => {
-    const repo = await initRepo();
-    const runId = "run-marker-live-while-lease-waits";
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return "darwin:live"; },
-        async terminateProcessTreeByPid() {},
-        async acquireCheckoutLock() {
-          await store.writePipelineActiveMarker({
-            pid: 9191,
-            processToken: "darwin:live",
-            startedAt: "2026-07-18T12:00:00.000Z",
-            sliced: false,
-          });
-          return { key: "test", repositoryIdentity: repo.commonDir, async release() {} };
-        },
-      },
-      isProcessAlive: pid => pid === 9191,
-    })).resolves.toEqual({ recovered: [] });
-
-    await expect(store.readResult(runId)).resolves.toBeNull();
-  });
-
-  it("preserves a replacement live run-start owner installed while the lease waits", async () => {
-    const repo = await initRepo();
-    const runId = "run-replacement-owner-while-lease-waits";
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const checkoutOwner = { pid: 9401, processToken: "darwin:stale-checkout" };
+    const livePipelineOwner = {
+      pid: 9402,
+      processToken: "darwin:live-pipeline",
+      startedAt: "2026-07-18T12:01:00.000Z",
+      sliced: false,
+    };
     const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
-    const runStartPath = path.join(store.runDirectory, "run-start.json");
+    const checkoutLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      `${lockKey}.lock`,
+    );
+    await mkdir(path.dirname(checkoutLockPath), { recursive: true });
+    await writeFile(checkoutLockPath, JSON.stringify(checkoutOwner));
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
 
+    let checkoutOwnerProbes = 0;
+    let worktreesPresentDuringCheckoutProbe: boolean | undefined;
+    let replacementMarkerBytes: Buffer | undefined;
     await expect(recoverStaleRuns({
       platformServices: {
         os: "darwin",
-        async getProcessStartToken() { return "darwin:new-owner"; },
-        async terminateProcessTreeByPid() {},
-        async acquireCheckoutLock() {
-          // A fresh, live owner claims the same run while we wait for the lease.
-          await writeFile(runStartPath, `${JSON.stringify({
-            runId,
-            lockKey,
-            canonicalCommonDir: repo.commonDir,
-            pid: 7373,
-            processToken: "darwin:new-owner",
-            startedAt: "2026-07-18T12:30:00.000Z",
-          })}\n`);
-          return { key: "test", repositoryIdentity: repo.commonDir, async release() {} };
+        async getProcessStartToken(pid) {
+          if (pid === checkoutOwner.pid) {
+            checkoutOwnerProbes += 1;
+            await store.writePipelineActiveMarker(livePipelineOwner);
+            replacementMarkerBytes = await readFile(markerPath);
+            try {
+              await Promise.all([
+                access(pipelineWorktree.path),
+                access(verifyWorktree.path),
+              ]);
+              worktreesPresentDuringCheckoutProbe = true;
+            } catch {
+              worktreesPresentDuringCheckoutProbe = false;
+            }
+            return "darwin:replacement-checkout";
+          }
+          if (pid === livePipelineOwner.pid) return livePipelineOwner.processToken;
+          return "darwin:self";
         },
-      },
-      isProcessAlive: pid => pid === 7373,
-    })).resolves.toEqual({ recovered: [] });
-
-    await expect(store.readResult(runId)).resolves.toBeNull();
-  });
-
-  it("exposes both recovery and release failures and releases exactly once", async () => {
-    const repo = await initRepo();
-    const runId = "run-recovery-and-release-fail";
-    await createUnfinishedRun(runId, repo.commonDir, null);
-    let releases = 0;
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-        async acquireCheckoutLock() {
-          return {
-            key: "test",
-            repositoryIdentity: "/identity/that/does/not/match",
-            async release() { releases += 1; throw new Error("release boom"); },
-          };
-        },
-      },
-      isProcessAlive: () => false,
-    })).rejects.toThrow(AggregateError);
-
-    expect(releases).toBe(1);
-  });
-
-  it("fails visibly when the acquired checkout identity differs", async () => {
-    const repo = await initRepo();
-    const runId = "run-lease-identity-differs";
-    await createUnfinishedRun(runId, repo.commonDir, null);
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-        async acquireCheckoutLock() {
-          return {
-            key: "test",
-            repositoryIdentity: "/identity/that/does/not/match",
-            async release() {},
-          };
-        },
-      },
-      isProcessAlive: () => false,
-    })).rejects.toThrow("checkout lease repository identity changed during recovery");
-  });
-
-  it("preserves a malformed lock during the broad reclaim sweep", async () => {
-    // No stale runs: exercise only the end-of-recovery broad lock sweep.
-    const locksRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks");
-    await mkdir(locksRoot, { recursive: true });
-    const strayLock = path.join(locksRoot, `${"de".repeat(32)}.lock`);
-    await writeFile(strayLock, "not-json-not-a-pid");
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
         async terminateProcessTreeByPid() {},
       },
-      isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+      isProcessAlive: pid => pid === checkoutOwner.pid || pid === livePipelineOwner.pid,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
-    // A lock whose owner cannot be parsed is never unlinked blindly.
-    await expect(access(strayLock)).resolves.toBeUndefined();
-  });
-
-  it("refuses to unlink a malformed exact lock and fails closed", async () => {
-    const repo = await initRepo();
-    const runId = "run-malformed-exact-lock";
-    await createUnfinishedRun(runId, repo.commonDir, null);
-    const locksRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks");
-    await mkdir(locksRoot, { recursive: true });
-    // The exact checkout lock key for this run carries unparseable bytes.
-    const exactLockKey = createHash("sha256").update(repo.commonDir).digest("hex");
-    const exactLock = path.join(locksRoot, `${exactLockKey}.lock`);
-    await writeFile(exactLock, "not-json-not-a-pid");
-
-    // reclaimExactLock refuses to remove it, so the checkout lease cannot be
-    // acquired — recovery fails closed rather than force-clearing the lock.
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).rejects.toThrow("checkout is locked");
-
-    await expect(access(exactLock)).resolves.toBeUndefined();
-  });
-
-  it("cleans every sliced worktree and ref for an unfinished run idempotently", async () => {
-    const repo = await initRepo();
-    const runId = "run-sliced-unfinished";
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
-    const slicedWorktrees = await createManagedWorktrees(repo, slicedManagedIds(runId));
-    const sliceRefs = [
-      `refs/claude-architect/slices/${runId}/slice-1-attempt-1`,
-      `refs/claude-architect/slices/${runId}/slice-2-attempt-0`,
-    ];
-    for (const ref of sliceRefs) await runGit(repo.directory, ["update-ref", ref, repo.head]);
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [runId] });
-
-    await Promise.all(slicedWorktrees.map(worktree => expectMissing(worktree.path)));
-    for (const ref of sliceRefs) {
-      expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", ref])).exitCode)
-        .not.toBe(0);
-    }
-    await expect(store.readResult(runId)).resolves.toMatchObject({ status: "cancelled" });
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+    expect(checkoutOwnerProbes).toBe(1);
+    expect(worktreesPresentDuringCheckoutProbe).toBe(true);
+    expect(replacementMarkerBytes).toBeDefined();
+    await expect(readFile(markerPath)).resolves.toEqual(replacementMarkerBytes);
+    await expect(readFile(resultPath)).resolves.toEqual(resultBefore);
+    await expect(access(pipelineWorktree.path)).resolves.toBeUndefined();
+    await expect(access(verifyWorktree.path)).resolves.toBeUndefined();
+    await expectMissing(checkoutLockPath);
+    expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
   }, { timeout: 120_000 });
-
-  it("fails closed on a malformed ref inside the run-specific slice namespace", async () => {
-    const repo = await initRepo();
-    const runId = "run-sliced-malformed-ref";
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
-    const malformedRef = `refs/claude-architect/slices/${runId}/unexpected`;
-    await runGit(repo.directory, ["update-ref", malformedRef, repo.head]);
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).rejects.toThrow("temporary slice ref name is malformed during recovery");
-
-    expect(await runGit(repo.directory, ["rev-parse", malformedRef])).toBe(repo.head);
-    await expect(store.readResult(runId)).resolves.toBeNull();
-  });
-
-  it("fails closed when a slice ref points to a tag that peels to a commit", async () => {
-    const repo = await initRepo();
-    const runId = "run-sliced-tag-ref";
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
-    const sliceRef = `refs/claude-architect/slices/${runId}/slice-2-attempt-0`;
-    await runGit(repo.directory, ["tag", "-a", "slice-tag", "-m", "slice tag", repo.head]);
-    const tagOid = await runGit(repo.directory, ["rev-parse", "refs/tags/slice-tag"]);
-    await runGit(repo.directory, ["update-ref", sliceRef, tagOid]);
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).rejects.toThrow("temporary slice ref does not identify a commit during recovery");
-
-    expect(await runGit(repo.directory, ["rev-parse", sliceRef])).toBe(tagOid);
-    await expect(store.readResult(runId)).resolves.toBeNull();
-  });
-
-  it("rejects a non-commit slice ref even when a replacement object spoofs its type", async () => {
-    const repo = await initRepo();
-    const runId = "run-sliced-replacement-spoof";
-    await createUnfinishedRun(runId, repo.commonDir, null);
-    const sliceRef = `refs/claude-architect/slices/${runId}/slice-2-attempt-0`;
-    const treeOid = await runGit(repo.directory, ["rev-parse", `${repo.head}^{tree}`]);
-    await runGit(repo.directory, ["update-ref", sliceRef, treeOid]);
-    await runGit(repo.directory, ["update-ref", `refs/replace/${treeOid}`, repo.head]);
-    expect(await runGit(repo.directory, ["cat-file", "-t", treeOid])).toBe("commit");
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-    })).rejects.toThrow("temporary slice ref does not identify a commit during recovery");
-
-    expect(await runGit(repo.directory, ["rev-parse", sliceRef])).toBe(treeOid);
-  });
-
-  it("disables replacement objects only for temporary-ref object type validation", async () => {
-    const repo = await initRepo();
-    const runId = "run-sliced-no-replace-scope";
-    await createUnfinishedRun(runId, repo.commonDir, null);
-    const sliceRef = `refs/claude-architect/slices/${runId}/slice-2-attempt-0`;
-    await runGit(repo.directory, ["update-ref", sliceRef, repo.head]);
-    const observed: Array<{ command: string; noReplace: string | undefined }> = [];
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-      git: async (cwd, args, options) => {
-        observed.push({
-          command: args[0] ?? "",
-          noReplace: typeof options === "object"
-            ? options.env?.GIT_NO_REPLACE_OBJECTS
-            : undefined,
-        });
-        return git(cwd, args, options);
-      },
-    })).resolves.toEqual({ recovered: [runId] });
-
-    expect(observed.filter(call => call.command === "cat-file"))
-      .toEqual([{ command: "cat-file", noReplace: "1" }]);
-    expect(observed.filter(call => call.command !== "cat-file").every(
-      call => call.noReplace === undefined,
-    )).toBe(true);
-  });
-
-  it("fails closed when a slice ref moves after recovery enumeration", async () => {
-    const repo = await initRepo();
-    const runId = "run-sliced-moved-ref";
-    const store = await createUnfinishedRun(runId, repo.commonDir, null);
-    const sliceRef = `refs/claude-architect/slices/${runId}/slice-2-attempt-0`;
-    await runGit(repo.directory, ["update-ref", sliceRef, repo.head]);
-    const movedOid = await runGit(repo.directory, [
-      "commit-tree",
-      `${repo.head}^{tree}`,
-      "-p",
-      repo.head,
-      "-m",
-      "moved slice ref",
-    ]);
-    let moved = false;
-
-    await expect(recoverStaleRuns({
-      platformServices: {
-        os: "darwin",
-        async getProcessStartToken() { return null; },
-        async terminateProcessTreeByPid() {},
-      },
-      isProcessAlive: () => false,
-      git: async (cwd, args, options) => {
-        const result = await git(cwd, args, options);
-        if (!moved && args[0] === "for-each-ref") {
-          moved = true;
-          await runGit(repo.directory, ["update-ref", sliceRef, movedOid, repo.head]);
-        }
-        return result;
-      },
-    })).rejects.toThrow("temporary slice ref moved during recovery");
-
-    expect(await runGit(repo.directory, ["rev-parse", sliceRef])).toBe(movedOid);
-    await expect(store.readResult(runId)).resolves.toBeNull();
-  });
 
   it("cleans dead-owner pipeline worktrees for a terminal run", async () => {
     const repo = await initRepo();
@@ -733,7 +788,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     await expectMissing(pipelineWorktree.path);
     await expectMissing(verifyWorktree.path);
@@ -788,7 +843,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => true,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     await expect(access(pipelineWorktree.path)).resolves.toBeUndefined();
     await expect(access(verifyWorktree.path)).resolves.toBeUndefined();
@@ -845,7 +900,7 @@ describe("recoverStaleRuns", () => {
       isProcessAlive: () => false,
     });
 
-    expect(result).toEqual({ recovered: [runId] });
+    expect(result).toEqual({ recovered: [runId], quarantined: [] });
     expect(terminated).toEqual([]);
     await expectMissing(worktree.path);
     await expectMissing(baselineWorktree.path);
@@ -872,7 +927,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid(pid) { terminated.push(pid); },
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
     expect(terminated).toEqual([]);
   });
 
@@ -908,13 +963,93 @@ describe("recoverStaleRuns", () => {
       isProcessAlive: () => true,
     });
 
-    expect(result).toEqual({ recovered: [runId] });
+    expect(result).toEqual({ recovered: [runId], quarantined: [] });
     expect(calls).toEqual([]);
     await expectMissing(worktree.path);
     await expect(store.readResult(runId)).resolves.toMatchObject({
       runId,
       status: "cancelled",
       evidence: { recovery: "startup-stale-run" },
+    });
+  });
+
+  it("archives byte-identical recovered results under different wall clocks", async () => {
+    const repo = await initRepo();
+    const runId = "run-deterministic-recovery-result";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const resultPath = path.join(store.runDirectory, "result.json");
+    const now = vi.spyOn(Date, "now");
+
+    try {
+      now.mockReturnValue(Date.parse("2026-07-15T12:00:00.000Z"));
+      await expect(recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken() { return null; },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: () => false,
+      })).resolves.toEqual({ recovered: [runId], quarantined: [] });
+      const firstResult = await readFile(resultPath);
+
+      await rm(resultPath);
+      now.mockReturnValue(Date.parse("2026-07-18T12:00:00.000Z"));
+      await expect(recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken() { return null; },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: () => false,
+      })).resolves.toEqual({ recovered: [runId], quarantined: [] });
+      const secondResult = await readFile(resultPath);
+
+      expect(secondResult.equals(firstResult)).toBe(true);
+      expect(JSON.parse(secondResult.toString("utf8"))).toMatchObject({ durationMs: 0 });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("does not kill an alive pid when its recorded process token is null", async () => {
+    const repo = await initRepo();
+    const runId = "run-live-null-token";
+    const pid = 4242;
+    const store = await createUnfinishedRun(runId, repo.commonDir, pid, null);
+    const worktree = await new WorktreeManager(repo.directory, runId).create(repo.head);
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
+    const cooperative = vi.fn();
+    const forced = vi.fn();
+    const tokenProbes: number[] = [];
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(probedPid) {
+          tokenProbes.push(probedPid);
+          return "darwin:live";
+        },
+        async terminateProcessTreeByPid(...args) { forced(...args); },
+      },
+      isProcessAlive: probedPid => probedPid === pid,
+      requestCooperativeTermination: cooperative,
+      async delayMs() {},
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
+
+    expect(cooperative).not.toHaveBeenCalled();
+    expect(forced).not.toHaveBeenCalled();
+    expect(tokenProbes).not.toContain(pid);
+    await expectMissing(worktree.path);
+    expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", anchorRef])).exitCode)
+      .not.toBe(0);
+    await expect(store.readResult(runId)).resolves.toMatchObject({
+      status: "cancelled",
+      evidence: {
+        recovery: "startup-stale-run",
+        originalStartedAt: "2026-07-14T12:00:00.000Z",
+        unverifiedLivePid: pid,
+      },
     });
   });
 
@@ -931,7 +1066,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => true,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     await expect(readFile(lockPath, "utf8")).resolves.toBe(String(process.pid));
   });
@@ -964,7 +1099,7 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid(pid) { terminated.push(pid); },
       },
       isProcessAlive: pid => pid === 7777,
-    })).resolves.toEqual({ recovered: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
 
     expect(terminated).toEqual([]);
     await expect(access(worktree.path)).resolves.toBeUndefined();
@@ -973,7 +1108,31 @@ describe("recoverStaleRuns", () => {
     await expect(store.readResult(runId)).resolves.toBeNull();
   });
 
-  it("rejects a coercible non-string status instead of treating it as terminal", async () => {
+  it("defers recovery when the checkout lock owner is empty", async () => {
+    const repo = await initRepo();
+    const runId = "run-empty-checkout-owner";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const worktree = await new WorktreeManager(repo.directory, runId).create(repo.head);
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
+    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
+    const lockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      `${lockKey}.lock`,
+    );
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "");
+
+    await expect(recoverStaleRuns()).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    await expect(store.readResult(runId)).resolves.toBeNull();
+    await expect(access(worktree.path)).resolves.toBeUndefined();
+    expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
+    await expect(readFile(lockPath, "utf8")).resolves.toBe("");
+  }, { timeout: 120_000 });
+
+  it("quarantines a coercible non-string terminal status", async () => {
     const runId = "run-malformed-terminal";
     const commonDir = path.join(process.env.CLAUDE_PLUGIN_DATA!, "missing-common-dir");
     const lockKey = createHash("sha256").update(commonDir).digest("hex");
@@ -998,10 +1157,11 @@ describe("recoverStaleRuns", () => {
         async getProcessStartToken() { return null; },
         async terminateProcessTreeByPid() {},
       },
-    })).rejects.toThrow(/attempt result.*invalid|terminal attempt result is malformed/);
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
+    await expectQuarantinedRun(runId, runDirectory);
   });
 
-  it("rejects a non-string process token", async () => {
+  it("quarantines a non-string process token", async () => {
     const runId = "run-malformed-process-token";
     const commonDir = path.join(process.env.CLAUDE_PLUGIN_DATA!, "missing-common-dir");
     const lockKey = createHash("sha256").update(commonDir).digest("hex");
@@ -1022,12 +1182,18 @@ describe("recoverStaleRuns", () => {
         async getProcessStartToken() { return null; },
         async terminateProcessTreeByPid() {},
       },
-    })).rejects.toThrow("run-start recovery record is malformed");
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
+    await expectQuarantinedRun(runId, runDirectory);
   });
 
-  it("terminates the recorded producer before validating a missing repository", async () => {
+  it("quarantines a missing recorded repository with a bounded redacted diagnostic", async () => {
     const runId = "run-missing-repository";
-    const commonDir = path.join(process.env.CLAUDE_PLUGIN_DATA!, "missing-common-dir");
+    const secret = "sk-recovery-secret-12345678";
+    const commonDir = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "missing-common-dir",
+      secret,
+    );
     const lockKey = createHash("sha256").update(commonDir).digest("hex");
     const runDirectory = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs", runId);
     await mkdir(runDirectory, { recursive: true });
@@ -1039,6 +1205,7 @@ describe("recoverStaleRuns", () => {
       startedAt: "2026-07-14T12:00:00.000Z",
     })}\n`);
     const terminated: number[] = [];
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     await expect(recoverStaleRuns({
       platformServices: {
@@ -1046,8 +1213,392 @@ describe("recoverStaleRuns", () => {
         async getProcessStartToken() { return null; },
         async terminateProcessTreeByPid(pid) { terminated.push(pid); },
       },
-    })).rejects.toMatchObject({ code: "ENOENT" });
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
     expect(terminated).toEqual([]);
+    await expectQuarantinedRun(runId, runDirectory, [secret, commonDir]);
+    const warnCalls = [...warn.mock.calls];
+    warn.mockRestore();
+    expect(warnCalls).toHaveLength(1);
+    const diagnostic = JSON.stringify(warnCalls[0]);
+    expect(Buffer.byteLength(diagnostic, "utf8")).toBeLessThanOrEqual(4_096);
+    expect(diagnostic).not.toContain(secret);
+    expect(diagnostic).not.toContain(commonDir);
+    expect(diagnostic).not.toContain(process.env.CLAUDE_PLUGIN_DATA!);
+  });
+
+  it("preserves a healthy recovery when a later stale run is poisoned", async () => {
+    const repo = await initRepo();
+    const healthyRunId = "run-a-healthy";
+    const poisonedRunId = "run-z-poisoned";
+    const healthyStore = await createUnfinishedRun(healthyRunId, repo.commonDir, null);
+    const missingCommonDir = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "missing-common-dir",
+    );
+    const poisonedStore = await createUnfinishedRun(
+      poisonedRunId,
+      missingCommonDir,
+      null,
+    );
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({
+      recovered: [healthyRunId],
+      quarantined: [poisonedRunId],
+    });
+
+    await expect(healthyStore.readResult(healthyRunId))
+      .resolves.toMatchObject({ status: "cancelled" });
+    await expectQuarantinedRun(poisonedRunId, poisonedStore.runDirectory, [missingCommonDir]);
+  }, { timeout: 120_000 });
+
+  it("restores a poisoned run and preserves both errors when quarantine persistence fails", async () => {
+    const runId = "run-journal-failure";
+    const repo = await initRepo();
+    const store = await createUnfinishedRun(runId, repo.commonDir, 4242, "darwin:recorded");
+    const runsRoot = path.dirname(store.runDirectory);
+
+    let thrown: unknown;
+    try {
+      await recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken(pid) {
+            if (pid === 4242) {
+              await mkdir(path.join(runsRoot, "recovery-quarantine.ndjson"));
+              throw new Error("primary poison error");
+            }
+            return "darwin:self";
+          },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: pid => pid === 4242,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const errors = (thrown as AggregateError).errors as unknown[];
+    expect(errors).toHaveLength(2);
+    expect(String(errors[0])).toContain("primary poison error");
+    expect(String(errors[1])).toMatch(/EISDIR|regular file|incompatible/i);
+    await expect(access(store.runDirectory)).resolves.toBeUndefined();
+    await expectMissing(path.join(runsRoot, `.poisoned-${runId}`));
+  });
+
+  it("rejects a hard-linked quarantine journal without mutating its external alias", async () => {
+    const runId = "run-hard-linked-journal";
+    const repo = await initRepo();
+    const store = await createUnfinishedRun(runId, repo.commonDir, 4242, "darwin:recorded");
+    const runsRoot = path.dirname(store.runDirectory);
+    const externalPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "external-journal");
+    const journalPath = path.join(runsRoot, "recovery-quarantine.ndjson");
+    const externalBytes = "external bytes must remain unchanged\n";
+    await writeFile(externalPath, externalBytes);
+
+    let thrown: unknown;
+    try {
+      await recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken(pid) {
+            if (pid === 4242) {
+              await link(externalPath, journalPath);
+              throw new Error("primary hard-link poison error");
+            }
+            return "darwin:self";
+          },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: pid => pid === 4242,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const errors = (thrown as AggregateError).errors as unknown[];
+    expect(errors).toHaveLength(2);
+    expect(String(errors[0])).toContain("primary hard-link poison error");
+    expect(String(errors[1])).toMatch(/recovery quarantine journal.*bounded regular file/i);
+    await expect(readFile(externalPath, "utf8")).resolves.toBe(externalBytes);
+    await expect(access(store.runDirectory)).resolves.toBeUndefined();
+    await expectMissing(path.join(runsRoot, `.poisoned-${runId}`));
+  });
+
+  it("rejects a COW update when the validated journal snapshot has a hard-link alias", async () => {
+    const repo = await initRepo();
+    const firstRunId = "run-cow-alias-first";
+    const secondRunId = "run-cow-alias-second";
+    const missingCommonDir = path.join(process.env.CLAUDE_PLUGIN_DATA!, "missing-common-dir");
+    const firstStore = await createUnfinishedRun(firstRunId, missingCommonDir, null);
+
+    await expect(recoverStaleRuns({ isProcessAlive: () => false }))
+      .resolves.toEqual({ recovered: [], quarantined: [firstRunId] });
+
+    const runsRoot = path.dirname(firstStore.runDirectory);
+    const journalPath = path.join(runsRoot, "recovery-quarantine.ndjson");
+    const aliasPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "old-journal-alias");
+    const oldBytes = await readFile(journalPath);
+    const secondStore = await createUnfinishedRun(
+      secondRunId,
+      missingCommonDir,
+      4242,
+      "darwin:recorded",
+    );
+
+    let thrown: unknown;
+    try {
+      await recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken(pid) {
+            if (pid === 4242) {
+              await link(journalPath, aliasPath);
+              throw new Error("second quarantine poison error");
+            }
+            return "darwin:self";
+          },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: pid => pid === 4242,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const containedErrors = (error: unknown): unknown[] => error instanceof AggregateError
+      ? error.errors.flatMap(containedErrors)
+      : [error];
+    expect(containedErrors(thrown).map(String).join("\n"))
+      .toMatch(/recovery quarantine journal.*bounded regular file/i);
+    await expect(readFile(aliasPath)).resolves.toEqual(oldBytes);
+    await expect(readFile(journalPath)).resolves.toEqual(oldBytes);
+    await expect(access(secondStore.runDirectory)).resolves.toBeUndefined();
+    await expectMissing(path.join(runsRoot, `.poisoned-${secondRunId}`));
+  });
+
+  it("preserves journal record order across two successful COW updates", async () => {
+    const firstRunId = "run-cow-order-first";
+    const secondRunId = "run-cow-order-second";
+    const missingCommonDir = path.join(process.env.CLAUDE_PLUGIN_DATA!, "missing-common-dir");
+    const firstStore = await createUnfinishedRun(firstRunId, missingCommonDir, null);
+    await createUnfinishedRun(secondRunId, missingCommonDir, null);
+
+    await expect(recoverStaleRuns({ isProcessAlive: () => false }))
+      .resolves.toEqual({ recovered: [], quarantined: [firstRunId, secondRunId] });
+
+    const journal = await readFile(
+      path.join(path.dirname(firstStore.runDirectory), "recovery-quarantine.ndjson"),
+      "utf8",
+    );
+    const records = journal.trimEnd().split("\n")
+      .map(line => JSON.parse(line) as { runId: string });
+    expect(records.map(record => record.runId)).toEqual([firstRunId, secondRunId]);
+  });
+
+  it("rejects a symlinked quarantine journal without mutating its external target", async ({
+    skip,
+  }) => {
+    const runId = "run-symlinked-journal";
+    const repo = await initRepo();
+    const store = await createUnfinishedRun(runId, repo.commonDir, 4242, "darwin:recorded");
+    const runsRoot = path.dirname(store.runDirectory);
+    const externalPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "external-target");
+    const journalPath = path.join(runsRoot, "recovery-quarantine.ndjson");
+    const externalBytes = "external target must remain unchanged\n";
+    await writeFile(externalPath, externalBytes);
+
+    let thrown: unknown;
+    try {
+      await recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken(pid) {
+            if (pid === 4242) {
+              try {
+                await symlink(externalPath, journalPath, "file");
+              } catch (error) {
+                if (["EACCES", "EPERM", "ENOSYS"].includes(
+                  (error as NodeJS.ErrnoException).code ?? "",
+                )) {
+                  skip();
+                  return "darwin:recorded";
+                }
+                throw error;
+              }
+              throw new Error("primary symlink poison error");
+            }
+            return "darwin:self";
+          },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: pid => pid === 4242,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const errors = (thrown as AggregateError).errors as unknown[];
+    expect(errors).toHaveLength(2);
+    expect(String(errors[0])).toContain("primary symlink poison error");
+    expect(String(errors[1])).toMatch(/ELOOP|symbolic link|bounded regular file/i);
+    await expect(readFile(externalPath, "utf8")).resolves.toBe(externalBytes);
+    await expect(access(store.runDirectory)).resolves.toBeUndefined();
+    await expectMissing(path.join(runsRoot, `.poisoned-${runId}`));
+  });
+
+  it("fails closed for a dangling quarantine journal symlink without creating its target", async ({
+    skip,
+  }) => {
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    const externalPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "missing-external-target");
+    const journalPath = path.join(runsRoot, "recovery-quarantine.ndjson");
+    await mkdir(runsRoot, { recursive: true });
+    try {
+      await symlink(externalPath, journalPath, "file");
+    } catch (error) {
+      if (["EACCES", "EPERM", "ENOSYS"].includes(
+        (error as NodeJS.ErrnoException).code ?? "",
+      )) {
+        skip();
+        return;
+      }
+      throw error;
+    }
+
+    await expect(recoverStaleRuns()).rejects.toThrow();
+    await expectMissing(externalPath);
+  });
+
+  it("fails closed for an unjournaled poisoned run directory", async () => {
+    const runId = "run-unjournaled-poison";
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    await mkdir(path.join(runsRoot, `.poisoned-${runId}`), { recursive: true });
+
+    await expect(recoverStaleRuns()).rejects.toThrow(/unjournaled poisoned run/i);
+  });
+
+  it("authorizes journaled poison without suppressing a normal historical run", async () => {
+    const repo = await initRepo();
+    const poisonRunId = "run-journaled-poison";
+    const historicalRunId = "run-historical-record";
+    const historicalStore = await createUnfinishedRun(historicalRunId, repo.commonDir, null);
+    const runsRoot = path.dirname(historicalStore.runDirectory);
+    await mkdir(path.join(runsRoot, `.poisoned-${poisonRunId}`));
+    await writeFile(path.join(runsRoot, "recovery-quarantine.ndjson"), [
+      JSON.stringify({
+        event: "recovery-quarantine",
+        runId: poisonRunId,
+        reason: "Error: poison",
+        recordedAt: "2026-07-19T00:00:00.000Z",
+      }),
+      JSON.stringify({
+        event: "recovery-quarantine",
+        runId: historicalRunId,
+        reason: "Error: historical intent",
+        recordedAt: "2026-07-19T00:00:00.000Z",
+      }),
+      "",
+    ].join("\n"));
+
+    await expect(recoverStaleRuns({ isProcessAlive: () => false }))
+      .resolves.toEqual({ recovered: [historicalRunId], quarantined: [] });
+  });
+
+  it("reuses an existing quarantine record when retrying the same run", async () => {
+    const runId = "run-quarantine-retry";
+    const missingCommonDir = path.join(process.env.CLAUDE_PLUGIN_DATA!, "missing-common-dir");
+    const store = await createUnfinishedRun(runId, missingCommonDir, null);
+    const runsRoot = path.dirname(store.runDirectory);
+    const journalPath = path.join(runsRoot, "recovery-quarantine.ndjson");
+    const journalBytes = Buffer.from(`${JSON.stringify({
+      event: "recovery-quarantine",
+      runId,
+      reason: "Error: prior publication completed",
+      recordedAt: "2026-07-19T00:00:00.000Z",
+    })}\n`);
+    await writeFile(journalPath, journalBytes);
+
+    await expect(recoverStaleRuns({ isProcessAlive: () => false }))
+      .resolves.toEqual({ recovered: [], quarantined: [runId] });
+
+    await expect(readFile(journalPath)).resolves.toEqual(journalBytes);
+    await expectMissing(store.runDirectory);
+    await expect(access(path.join(runsRoot, `.poisoned-${runId}`))).resolves.toBeUndefined();
+  });
+
+  it("fails closed for duplicate quarantine run ids", async () => {
+    const runId = "run-duplicate-quarantine";
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    const record = {
+      event: "recovery-quarantine",
+      runId,
+      reason: "Error: poison",
+      recordedAt: "2026-07-19T00:00:00.000Z",
+    };
+    await mkdir(runsRoot, { recursive: true });
+    await writeFile(
+      path.join(runsRoot, "recovery-quarantine.ndjson"),
+      `${JSON.stringify(record)}\n${JSON.stringify(record)}\n`,
+    );
+
+    await expect(recoverStaleRuns()).rejects.toThrow(/duplicate.*quarantine/i);
+  });
+
+  it.each([
+    ["torn", "{\"event\":\"recovery-quarantine\"}"],
+    ["malformed", `${JSON.stringify({
+      event: "unexpected",
+      runId: "run-bad-journal",
+      reason: "Error: bad",
+      recordedAt: "2026-07-19T00:00:00.000Z",
+    })}\n`],
+  ])("fails closed for a %s quarantine journal", async (_kind, contents) => {
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    await mkdir(runsRoot, { recursive: true });
+    await writeFile(path.join(runsRoot, "recovery-quarantine.ndjson"), contents);
+
+    await expect(recoverStaleRuns()).rejects.toThrow(/recovery quarantine journal/i);
+  });
+
+  it("redacts a single-backslash-rooted Windows path from quarantine diagnostics", async () => {
+    const runId = "run-rooted-windows-path";
+    const repo = await initRepo();
+    await createUnfinishedRun(runId, repo.commonDir, 4242, "darwin:recorded");
+    const rootedPath = "\\Users\\alice\\repo";
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          if (pid === 4242) throw new Error(`callback failed at ${rootedPath}`);
+          return "darwin:self";
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: pid => pid === 4242,
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
+
+    const journal = await readFile(
+      path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs", "recovery-quarantine.ndjson"),
+      "utf8",
+    );
+    const record = JSON.parse(journal) as { reason: string };
+    const diagnostic = warn.mock.calls[0]?.[1] as { reason?: string };
+    warn.mockRestore();
+    expect(record.reason).not.toContain(rootedPath);
+    expect(diagnostic.reason).not.toContain(rootedPath);
   });
 
   it("escalates a live matching orphan cooperatively and then forcibly", async () => {
@@ -1069,7 +1620,7 @@ describe("recoverStaleRuns", () => {
       isProcessAlive: () => true,
       requestCooperativeTermination() { events.push("cooperative"); },
       async delayMs(ms) { events.push(`delay:${ms}`); },
-    })).resolves.toEqual({ recovered: [runId] });
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
 
     expect(events).toEqual(["cooperative", "delay:3000", "forced"]);
     await expectMissing(pipelineWorktree.path);
@@ -1083,20 +1634,55 @@ describe("recoverStaleRuns", () => {
     const runId = "run-live-orphan-cooperative";
     const store = await createUnfinishedRun(runId, repo.commonDir, 4343, "darwin:start");
     const events: string[] = [];
+    let signalLocksAcquired!: () => void;
+    const locksAcquired = new Promise<void>(resolve => { signalLocksAcquired = resolve; });
+    let releaseRecovery!: () => void;
+    const recoveryReleased = new Promise<void>(resolve => { releaseRecovery = resolve; });
     let alive = true;
 
-    await expect(recoverStaleRuns({
+    const recovery = recoverStaleRuns({
       platformServices: {
         os: "darwin",
         async getProcessStartToken() { return "darwin:start"; },
         async terminateProcessTreeByPid() { events.push("forced"); },
       },
       isProcessAlive: () => alive,
-      requestCooperativeTermination() { events.push("cooperative"); },
+      async requestCooperativeTermination() {
+        events.push("cooperative");
+        signalLocksAcquired();
+        await recoveryReleased;
+      },
       async delayMs() { events.push("delay"); alive = false; },
-    })).resolves.toEqual({ recovered: [runId] });
+    });
+
+    await locksAcquired;
+    const locksRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks");
+    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
+    const lockPaths = [
+      path.join(locksRoot, "recovery.lock"),
+      path.join(locksRoot, `${lockKey}.lock`),
+    ];
+    const ownerBytes = Buffer.from(JSON.stringify({
+      pid: process.pid,
+      processToken: "darwin:start",
+    }));
+    try {
+      for (const lockPath of lockPaths) {
+        const metadata = await lstat(lockPath);
+        expect(metadata.isFile()).toBe(true);
+        expect(metadata.isSymbolicLink()).toBe(false);
+        expect(metadata.nlink).toBe(1);
+        await expect(readFile(lockPath)).resolves.toEqual(ownerBytes);
+      }
+      expect((await readdir(locksRoot)).filter(entry =>
+        /^\.recovery-lock-.*\.tmp$/.test(entry))).toEqual([]);
+    } finally {
+      releaseRecovery();
+    }
+    await expect(recovery).resolves.toEqual({ recovered: [runId], quarantined: [] });
 
     expect(events).toEqual(["cooperative", "delay"]);
+    await Promise.all(lockPaths.map(expectMissing));
     await expect(store.readResult(runId)).resolves.toMatchObject({
       evidence: { recovery: "startup-stale-run", escalation: "cooperative" },
     });
@@ -1157,8 +1743,78 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [runId] });
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
 
+    await expect(store.readResult(runId)).resolves.toMatchObject({ status: "cancelled" });
+  });
+
+  it("rejects a malformed complete cleanup record before torn-tail deferral", async () => {
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    await mkdir(runsRoot, { recursive: true });
+    await writeFile(
+      path.join(runsRoot, "cleanup.ndjson"),
+      "not-json\n{\"event\":\"prune-cleanup-com",
+    );
+
+    await expect(recoverStaleRuns()).rejects.toThrow(/cleanup journal contains invalid JSON/i);
+  });
+
+  it.each([
+    ["blank", "\n"],
+    ["whitespace-only", " \t\n"],
+  ])("rejects a complete %s cleanup journal record", async (_description, contents) => {
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    await mkdir(runsRoot, { recursive: true });
+    await writeFile(path.join(runsRoot, "cleanup.ndjson"), contents);
+
+    await expect(recoverStaleRuns()).rejects.toThrow(/cleanup journal contains a blank record/i);
+  });
+
+  it("rejects a hard-linked cleanup journal without mutating its alias", async () => {
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    const journalPath = path.join(runsRoot, "cleanup.ndjson");
+    const aliasPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "cleanup-journal-alias");
+    const journalBytes = Buffer.alloc(0);
+    await mkdir(runsRoot, { recursive: true });
+    await writeFile(journalPath, journalBytes);
+    await link(journalPath, aliasPath);
+
+    await expect(recoverStaleRuns()).rejects.toThrow(/cleanup journal.*single-link/i);
+    await expect(readFile(journalPath)).resolves.toEqual(journalBytes);
+    await expect(readFile(aliasPath)).resolves.toEqual(journalBytes);
+  });
+
+  it("allows normal recovery when the cleanup journal is fully terminal", async () => {
+    const repo = await initRepo();
+    const runId = "run-terminal-cleanup-healthy";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const cleanupRunId = "run-terminal-cleanup-record";
+    const runsRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "runs");
+    await writeFile(path.join(runsRoot, "cleanup.ndjson"), `${JSON.stringify({
+      event: "prune-cleanup-complete",
+      runId: cleanupRunId,
+      reason: "max-age",
+      anchorCleanup: "not-applicable",
+      archiveBytes: 3,
+      quarantineName: `.prune-${cleanupRunId}-00000000-0000-4000-8000-000000000006`,
+      repoRoot: null,
+      anchorRef: null,
+      backupRef: null,
+      candidateCommitOid: null,
+      recordedAt: "2026-07-14T12:00:00.000Z",
+    })}\n`);
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    let recoveryResult: Awaited<ReturnType<typeof recoverStaleRuns>> | undefined;
+    let warnCalls: unknown[][] = [];
+    try {
+      recoveryResult = await recoverStaleRuns({ isProcessAlive: () => false });
+    } finally {
+      warnCalls = [...warn.mock.calls];
+      warn.mockRestore();
+    }
+
+    expect(recoveryResult).toEqual({ recovered: [runId], quarantined: [] });
+    expect(warnCalls).toEqual([]);
     await expect(store.readResult(runId)).resolves.toMatchObject({ status: "cancelled" });
   });
 
@@ -1248,6 +1904,324 @@ describe("recoverStaleRuns", () => {
       .trim().split("\n").map(line => JSON.parse(line) as { event: string });
     expect(records.at(-1)?.event).toBe("prune-cleanup-rollback");
   });
+
+  it("downgrades a verified candidate before clearing a dead sliced pipeline marker", async () => {
+    const repo = await initRepo();
+    const runId = "run-interrupted-pipeline-authority";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    await writeVerifiedCandidate(store, runId, repo);
+    await store.writePipelineActiveMarker({
+      pid: 4242,
+      processToken: "darwin:dead",
+      startedAt: "2026-07-18T12:00:00.000Z",
+      sliced: true,
+    });
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    await expect(store.readResult(runId)).resolves.toMatchObject({
+      status: "failed",
+      failure: "verification-failure",
+      candidate: expect.any(Object),
+      unresolvedIssues: ["pipeline-interrupted-before-terminal-cleanup"],
+      evidence: {
+        pipelineRecovery: "interrupted-before-terminal-cleanup",
+      },
+    });
+    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
+  });
+
+  it("preserves a verified candidate while clearing a dead non-sliced pipeline marker", async () => {
+    const repo = await initRepo();
+    const runId = "run-interrupted-non-sliced-pipeline";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    await writeVerifiedCandidate(store, runId, repo);
+    await store.writePipelineActiveMarker({
+      pid: 4242,
+      processToken: "darwin:dead",
+      startedAt: "2026-07-18T12:00:00.000Z",
+      sliced: false,
+    });
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    await expect(store.readResult(runId)).resolves.toMatchObject({
+      status: "verified-candidate",
+      failure: null,
+    });
+    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
+  });
+
+  it("treats a legacy pipeline marker as non-sliced during recovery", async () => {
+    const repo = await initRepo();
+    const runId = "run-interrupted-legacy-pipeline";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    await writeVerifiedCandidate(store, runId, repo);
+    await writeFile(path.join(store.runDirectory, "pipeline-active.json"), `${JSON.stringify({
+      pid: 4242,
+      processToken: "darwin:dead",
+      startedAt: "2026-07-18T12:00:00.000Z",
+    })}\n`);
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    await expect(store.readResult(runId)).resolves.toMatchObject({
+      status: "verified-candidate",
+      failure: null,
+    });
+    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
+  });
+
+  it("cleans every sliced worktree and ref for a terminal run without touching a prefix neighbor", async () => {
+    const repo = await initRepo();
+    const runId = "run-sliced-terminal";
+    const neighborRunId = `${runId}-neighbor`;
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    await writeTerminalFailure(store, runId);
+    const slicedWorktrees = await createManagedWorktrees(repo, slicedManagedIds(runId));
+    const neighborWorktree = (await createManagedWorktrees(
+      repo,
+      [`${neighborRunId}-slice-1-attempt-0`],
+    ))[0]!;
+    const sliceRefs = [
+      `refs/claude-architect/slices/${runId}/slice-1-attempt-1`,
+      `refs/claude-architect/slices/${runId}/slice-2-attempt-0`,
+    ];
+    const neighborRef = `refs/claude-architect/slices/${neighborRunId}/slice-1-attempt-0`;
+    for (const ref of [...sliceRefs, neighborRef]) {
+      await runGit(repo.directory, ["update-ref", ref, repo.head]);
+    }
+    await store.writePipelineActiveMarker({
+      pid: 4242,
+      processToken: "darwin:dead",
+      startedAt: "2026-07-18T12:00:00.000Z",
+      sliced: true,
+    });
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    await Promise.all(slicedWorktrees.map(worktree => expectMissing(worktree.path)));
+    await expect(access(neighborWorktree.path)).resolves.toBeUndefined();
+    for (const ref of sliceRefs) {
+      expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", ref])).exitCode)
+        .not.toBe(0);
+    }
+    expect(await runGit(repo.directory, ["rev-parse", neighborRef])).toBe(repo.head);
+    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+    await expect(access(neighborWorktree.path)).resolves.toBeUndefined();
+    expect(await runGit(repo.directory, ["rev-parse", neighborRef])).toBe(repo.head);
+  }, { timeout: 120_000 });
+
+  it("cleans every sliced worktree and ref for an unfinished run idempotently", async () => {
+    const repo = await initRepo();
+    const runId = "run-sliced-unfinished";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const slicedWorktrees = await createManagedWorktrees(repo, slicedManagedIds(runId));
+    const sliceRefs = [
+      `refs/claude-architect/slices/${runId}/slice-1-attempt-1`,
+      `refs/claude-architect/slices/${runId}/slice-2-attempt-0`,
+    ];
+    for (const ref of sliceRefs) await runGit(repo.directory, ["update-ref", ref, repo.head]);
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
+
+    await Promise.all(slicedWorktrees.map(worktree => expectMissing(worktree.path)));
+    for (const ref of sliceRefs) {
+      expect((await git(repo.directory, ["rev-parse", "--verify", "--quiet", ref])).exitCode)
+        .not.toBe(0);
+    }
+    await expect(store.readResult(runId)).resolves.toMatchObject({ status: "cancelled" });
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+  }, { timeout: 120_000 });
+
+  it("fails closed on a malformed ref inside the run-specific slice namespace", async () => {
+    const repo = await initRepo();
+    const runId = "run-sliced-malformed-ref";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const malformedRef = `refs/claude-architect/slices/${runId}/unexpected`;
+    await runGit(repo.directory, ["update-ref", malformedRef, repo.head]);
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
+
+    const record = await expectQuarantinedRun(runId, store.runDirectory);
+    expect(record).toContain("temporary slice ref name is malformed during recovery");
+    expect(await runGit(repo.directory, ["rev-parse", malformedRef])).toBe(repo.head);
+  });
+
+  it("fails closed when a slice ref points to a tag that peels to a commit", async () => {
+    const repo = await initRepo();
+    const runId = "run-sliced-tag-ref";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const sliceRef = `refs/claude-architect/slices/${runId}/slice-2-attempt-0`;
+    await runGit(repo.directory, ["tag", "-a", "slice-tag", "-m", "slice tag", repo.head]);
+    const tagOid = await runGit(repo.directory, ["rev-parse", "refs/tags/slice-tag"]);
+    await runGit(repo.directory, ["update-ref", sliceRef, tagOid]);
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
+
+    const record = await expectQuarantinedRun(runId, store.runDirectory);
+    expect(record).toContain("temporary slice ref does not identify a commit during recovery");
+    expect(await runGit(repo.directory, ["rev-parse", sliceRef])).toBe(tagOid);
+  });
+
+  it("rejects a non-commit slice ref even when a replacement object spoofs its type", async () => {
+    const repo = await initRepo();
+    const runId = "run-sliced-replacement-spoof";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const sliceRef = `refs/claude-architect/slices/${runId}/slice-2-attempt-0`;
+    const treeOid = await runGit(repo.directory, ["rev-parse", `${repo.head}^{tree}`]);
+    await runGit(repo.directory, ["update-ref", sliceRef, treeOid]);
+    await runGit(repo.directory, ["update-ref", `refs/replace/${treeOid}`, repo.head]);
+    expect(await runGit(repo.directory, ["cat-file", "-t", treeOid])).toBe("commit");
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
+
+    const record = await expectQuarantinedRun(runId, store.runDirectory);
+    expect(record).toContain("temporary slice ref does not identify a commit during recovery");
+    expect(await runGit(repo.directory, ["rev-parse", sliceRef])).toBe(treeOid);
+  });
+
+  it("disables replacement objects only for temporary-ref object type validation", async () => {
+    const repo = await initRepo();
+    const runId = "run-sliced-no-replace-scope";
+    await createUnfinishedRun(runId, repo.commonDir, null);
+    const sliceRef = `refs/claude-architect/slices/${runId}/slice-2-attempt-0`;
+    await runGit(repo.directory, ["update-ref", sliceRef, repo.head]);
+    const observed: Array<{ command: string; noReplace: string | undefined }> = [];
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+      git: async (cwd, args, options) => {
+        observed.push({
+          command: args[0] ?? "",
+          noReplace: typeof options === "object"
+            ? options.env?.GIT_NO_REPLACE_OBJECTS
+            : undefined,
+        });
+        return git(cwd, args, options);
+      },
+    })).resolves.toEqual({ recovered: [runId], quarantined: [] });
+
+    expect(observed.filter(call => call.command === "cat-file"))
+      .toEqual([{ command: "cat-file", noReplace: "1" }]);
+    expect(observed.filter(call => call.command !== "cat-file").every(
+      call => call.noReplace === undefined,
+    )).toBe(true);
+  });
+
+  it("fails closed when a slice ref moves after recovery enumeration", async () => {
+    const repo = await initRepo();
+    const runId = "run-sliced-moved-ref";
+    const store = await createUnfinishedRun(runId, repo.commonDir, null);
+    const sliceRef = `refs/claude-architect/slices/${runId}/slice-2-attempt-0`;
+    await runGit(repo.directory, ["update-ref", sliceRef, repo.head]);
+    const movedOid = await runGit(repo.directory, [
+      "commit-tree",
+      `${repo.head}^{tree}`,
+      "-p",
+      repo.head,
+      "-m",
+      "moved slice ref",
+    ]);
+    let moved = false;
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+      git: async (cwd, args, options) => {
+        const result = await git(cwd, args, options);
+        if (!moved && args[0] === "for-each-ref") {
+          moved = true;
+          await runGit(repo.directory, ["update-ref", sliceRef, movedOid, repo.head]);
+        }
+        return result;
+      },
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
+
+    const record = await expectQuarantinedRun(runId, store.runDirectory);
+    expect(record).toContain("temporary slice ref moved during recovery");
+    expect(await runGit(repo.directory, ["rev-parse", sliceRef])).toBe(movedOid);
+  });
 });
 
 describe("MCP startup recovery", () => {
@@ -1255,7 +2229,7 @@ describe("MCP startup recovery", () => {
     await start({
       async recoverStaleRuns() {
         serverEvents.push("recover");
-        return { recovered: [] };
+        return { recovered: [], quarantined: [] };
       },
     });
 
