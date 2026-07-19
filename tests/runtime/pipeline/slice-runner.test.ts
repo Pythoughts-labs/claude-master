@@ -22,12 +22,14 @@ function slice(objective: string): Slice {
 
 function verification(pass: boolean): VerificationReport {
   return {
+    reportVersion: '1',
     pass,
+    commandResults: [{ id: 'verify', exitCode: pass ? 0 : 1, ok: pass }],
     testsDeleted: 0,
     testsSkipped: 0,
     workspaceClean: true,
     scopeViolations: [],
-  } as unknown as VerificationReport;
+  };
 }
 
 function attempt(candidateCommit: string, pass: boolean, hardBlocker = false): SliceAttempt {
@@ -53,6 +55,41 @@ function review(severity: 'blocker' | 'major' | 'minor'): ConsolidationResult {
     }],
     contradictions: [],
   };
+}
+
+function evidencedAttempt(candidateCommit: string, severity: 'major' | 'minor' = 'minor') {
+  return {
+    ...attempt(candidateCommit, true),
+    perSliceReview: review(severity),
+    roleLogRefs: ['logs/objective.log'],
+  } satisfies SliceAttempt;
+}
+
+function mutateNestedEvidence(evidence: {
+  verification: VerificationReport | null;
+  perSliceReview?: ConsolidationResult | null;
+}): void {
+  if (evidence.verification === null || evidence.perSliceReview == null) {
+    throw new Error('test requires complete objective evidence');
+  }
+  evidence.verification.pass = false;
+  evidence.verification.commandResults[0]!.id = 'mutated';
+  evidence.verification.commandResults.push({ id: 'injected', exitCode: 1, ok: false });
+  evidence.verification.scopeViolations.push('mutated-scope');
+  evidence.perSliceReview.findings[0]!.severity = 'blocker';
+  evidence.perSliceReview.findings[0]!.reviewers.push('mutator');
+  evidence.perSliceReview.contradictions.push('mutated contradiction');
+}
+
+function expectObjectiveEvidence(
+  evidence: {
+    verification: VerificationReport | null;
+    perSliceReview?: ConsolidationResult | null;
+  },
+  severity: 'major' | 'minor' = 'minor',
+): void {
+  expect(evidence.verification).toEqual(verification(true));
+  expect(evidence.perSliceReview).toEqual(review(severity));
 }
 
 describe('runSlicePhase', () => {
@@ -307,6 +344,71 @@ describe('runSlicePhase', () => {
     expect(runSlice).toHaveBeenNthCalledWith(2, expect.anything(), 1, 'start', 1);
   });
 
+  it('snapshots the source attempt before onAttempt can mutate it', async () => {
+    const sourceAttempt = evidencedAttempt('source-commit');
+
+    const result = await runSlicePhase([slice('source isolation')], 'start', {
+      runSlice: vi.fn().mockResolvedValue(sourceAttempt),
+      maxRounds: 0,
+      onAttempt: async () => {
+        sourceAttempt.candidateCommit = 'mutated-source-commit';
+        sourceAttempt.hardBlocker = true;
+        sourceAttempt.roleLogRefs.push('logs/mutated-source.log');
+        mutateNestedEvidence(sourceAttempt);
+      },
+    });
+
+    expect(result).toMatchObject({
+      finalCandidateCommit: 'source-commit',
+      haltedSliceIndex: null,
+    });
+    expect(result.slices[0]).toMatchObject({
+      candidateCommit: 'source-commit',
+      route: 'advance',
+      reasons: [],
+      roleLogRefs: ['logs/objective.log'],
+    });
+    expectObjectiveEvidence(result.slices[0]!);
+    expect(result.slices[0]?.attempts[0]).toMatchObject({
+      candidateCommit: 'source-commit',
+      route: 'advance',
+      reasons: [],
+      roleLogRefs: ['logs/objective.log'],
+    });
+    expectObjectiveEvidence(result.slices[0]!.attempts[0]!);
+  });
+
+  it('isolates retained evidence from nested onAttempt mutations', async () => {
+    const result = await runSlicePhase([slice('attempt callback isolation')], 'start', {
+      runSlice: vi.fn().mockResolvedValue(evidencedAttempt('callback-commit')),
+      maxRounds: 0,
+      onAttempt: async evidence => {
+        evidence.candidateCommit = 'mutated-callback-commit';
+        evidence.reasons.push('mutated callback reason');
+        evidence.roleLogRefs.push('logs/mutated-callback.log');
+        mutateNestedEvidence(evidence);
+      },
+    });
+
+    expect(result).toMatchObject({
+      finalCandidateCommit: 'callback-commit',
+      haltedSliceIndex: null,
+    });
+    expect(result.slices[0]).toMatchObject({
+      candidateCommit: 'callback-commit',
+      route: 'advance',
+      reasons: [],
+      roleLogRefs: ['logs/objective.log'],
+    });
+    expectObjectiveEvidence(result.slices[0]!);
+    expect(result.slices[0]?.attempts[0]).toMatchObject({
+      candidateCommit: 'callback-commit',
+      reasons: [],
+      roleLogRefs: ['logs/objective.log'],
+    });
+    expectObjectiveEvidence(result.slices[0]!.attempts[0]!);
+  });
+
   it('rejects failed attempt persistence before onSlice or another slice starts', async () => {
     const runSlice = vi.fn().mockResolvedValue(attempt('candidate', true));
     const onAttempt = vi.fn().mockRejectedValue(new Error('attempt persistence failed'));
@@ -322,6 +424,74 @@ describe('runSlicePhase', () => {
     expect(runSlice).toHaveBeenCalledTimes(1);
     expect(onAttempt).toHaveBeenCalledTimes(1);
     expect(onSlice).not.toHaveBeenCalled();
+  });
+
+  it('isolates an advanced result from nested onSlice mutations', async () => {
+    const result = await runSlicePhase([slice('advance callback isolation')], 'start', {
+      runSlice: vi.fn().mockResolvedValue(evidencedAttempt('advanced-commit')),
+      maxRounds: 0,
+      onSlice: async terminal => {
+        terminal.candidateCommit = 'mutated-advanced-commit';
+        terminal.route = 'halt';
+        terminal.reasons.push('mutated callback reason');
+        terminal.roleLogRefs.push('logs/mutated-callback.log');
+        mutateNestedEvidence(terminal);
+        terminal.attempts[0]!.candidateCommit = 'mutated-attempt-commit';
+        mutateNestedEvidence(terminal.attempts[0]!);
+        terminal.attempts.length = 0;
+      },
+    });
+
+    expect(result).toMatchObject({
+      finalCandidateCommit: 'advanced-commit',
+      haltedSliceIndex: null,
+    });
+    expect(result.slices[0]).toMatchObject({
+      candidateCommit: 'advanced-commit',
+      route: 'advance',
+      reasons: [],
+      roleLogRefs: ['logs/objective.log'],
+    });
+    expectObjectiveEvidence(result.slices[0]!);
+    expect(result.slices[0]?.attempts).toHaveLength(1);
+    expect(result.slices[0]?.attempts[0]).toMatchObject({
+      candidateCommit: 'advanced-commit',
+      route: 'advance',
+    });
+    expectObjectiveEvidence(result.slices[0]!.attempts[0]!);
+  });
+
+  it('isolates a halted result from nested onSlice mutations', async () => {
+    const result = await runSlicePhase([slice('halt callback isolation')], 'start', {
+      runSlice: vi.fn().mockResolvedValue(evidencedAttempt('halted-commit', 'major')),
+      maxRounds: 0,
+      onSlice: async terminal => {
+        terminal.candidateCommit = 'mutated-halted-commit';
+        terminal.route = 'advance';
+        terminal.reasons.length = 0;
+        terminal.roleLogRefs.push('logs/mutated-callback.log');
+        mutateNestedEvidence(terminal);
+        terminal.attempts.length = 0;
+      },
+    });
+
+    expect(result).toMatchObject({
+      finalCandidateCommit: 'start',
+      haltedSliceIndex: 1,
+    });
+    expect(result.slices[0]).toMatchObject({
+      candidateCommit: 'halted-commit',
+      route: 'halt',
+      reasons: ['per-slice review found blocking findings'],
+      roleLogRefs: ['logs/objective.log'],
+    });
+    expectObjectiveEvidence(result.slices[0]!, 'major');
+    expect(result.slices[0]?.attempts).toHaveLength(1);
+    expect(result.slices[0]?.attempts[0]).toMatchObject({
+      candidateCommit: 'halted-commit',
+      route: 'halt',
+    });
+    expectObjectiveEvidence(result.slices[0]!.attempts[0]!, 'major');
   });
 
   it('halts immediately on a hard blocker', async () => {

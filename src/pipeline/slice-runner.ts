@@ -68,9 +68,10 @@ export async function runSlicePhase(
     const attempts: SliceAttemptEvidence[] = [];
 
     while (true) {
-      const attempt = index === 1 && roundsUsed === 0 && deps.initialAttempt !== undefined
+      const sourceAttempt = index === 1 && roundsUsed === 0 && deps.initialAttempt !== undefined
         ? deps.initialAttempt
         : await deps.runSlice(slice, index, currentCommit, roundsUsed);
+      const attempt = structuredClone(sourceAttempt);
       const perSliceReview = attempt.perSliceReview ?? null;
       const route = routeSlice({
         verification: attempt.verification,
@@ -91,11 +92,7 @@ export async function runSlicePhase(
       };
 
       if (deps.onAttempt) {
-        await deps.onAttempt({
-          ...evidence,
-          reasons: [...evidence.reasons],
-          roleLogRefs: [...evidence.roleLogRefs],
-        });
+        await deps.onAttempt(structuredClone(evidence));
       }
       attempts.push(evidence);
 
@@ -119,7 +116,7 @@ export async function runSlicePhase(
       if (route.route === 'advance') {
         results.push(pipelineSlice);
         if (deps.onSlice) {
-          await deps.onSlice(pipelineSlice);
+          await deps.onSlice(structuredClone(pipelineSlice));
         }
         currentCommit = attempt.candidateCommit;
         break;
@@ -132,7 +129,7 @@ export async function runSlicePhase(
 
       results.push(pipelineSlice);
       if (deps.onSlice) {
-        await deps.onSlice(pipelineSlice);
+        await deps.onSlice(structuredClone(pipelineSlice));
       }
       return {
         slices: results,
