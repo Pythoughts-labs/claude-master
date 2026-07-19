@@ -13,7 +13,16 @@ The current session is the architect. It owns requirements, the Delegation Spec,
 
 Always present this skill as `/claude-architect:delegate`. Never show a shorter command.
 
-## Producer selection
+## Agent selection
+
+The delegated CLIs are the architect's **implementation agents** — the same subagent idiom Claude Code uses, except each agent launches an *untrusted Producer* through the trusted MCP runtime inside an isolated Git worktree. Present them as a selectable agent roster: the human picks one `subagent_type`, exactly one agent runs per attempt, and no agent may review or accept its own work.
+
+| Agent (`subagent_type`) | Producer / model | Reasoning control |
+| --- | --- | --- |
+| `codex-implementer` | GPT-5.6 Sol (OpenAI Codex CLI) | `low` by default |
+| `opencode-implementer` | OpenCode provider/model | optional `--variant` |
+| `pi-implementer` | Pi configured model | optional `--thinking` |
+| `pythinker-implementer` | Pythinker provider/model | optional `--thinking-effort` |
 
 If the user invokes `/claude-architect:delegate` without naming a CLI, implementer, or agent, use the host's structured question tool when available, ask this question, and wait for the answer. Include the producer and reasoning control in each option so the user knows what the lane will run:
 
@@ -77,6 +86,39 @@ The `delegate` and `delegatePipeline` MCP calls are synchronous. Keep each call 
 7. Only after an accepted decision, call `integrateCandidate` with `checkoutPath`, the run id, and the exact candidate `manifestHash` as `expectedArtifactHash`. Report `applied`, `conflicted`, or `aborted` truthfully. Integration stages the reviewed tree but does not commit it.
 
 Never accept a Producer self-report as evidence, bypass `reviewCandidate`, call integration before an accepted decision, or substitute a different artifact hash.
+
+## Presenting delegations as subagents
+
+Surface every delegation in the Claude Code subagent look & feel. This is presentation only: it renders the runtime's durable evidence and never replaces spec construction, `reviewCandidate`, the human decision, or `integrateCandidate`. A rendered card is not evidence; a Producer self-report is not evidence; acceptance stays human-only.
+
+**Dispatch card** — emit when you call `delegate`/`delegatePipeline`, so the run reads like an `Agent` launch:
+
+```
+▸ Agent · codex-implementer          edit · worktree-isolated
+  Task    <3–5 word description>
+  Model   GPT-5.6 Sol · reasoning low
+  Mode    foreground        Pipeline  delegatePipeline
+```
+
+**Live status** — one FleetView-style line while the call runs and after the host collapses it to background. Derive it only from the run's durable artifacts using the rules in *Monitoring a backgrounded delegation*; never invent progress.
+
+```
+● running · codex-implementer · verification · 4m12s
+```
+
+Status glyphs: `●` running · `◑` decision-ready / human-decision-required · `✓` verified-candidate · `✗` failed, unavailable, or cancelled.
+
+**Completion notification** — when the call returns, render one compact box populated from the `reviewCandidate` evidence and verification report (mirrors a background subagent's completion notice):
+
+```
+┌ ✓ codex-implementer · verified-candidate ───────────────
+│ 6 files · verification 5/5 pass
+│ findings 1 major (fixed in-pipeline) · 0 open
+│ manifestHash 1f2e3d… → awaiting your decision
+└──────────────────────────────────────────────────────────
+```
+
+The box summarizes; it does not decide. Still read the exact unredacted patch, changed-path manifest, and verification evidence before recommending a decision, and present `failed` or `human-decision-required` outcomes verbatim.
 
 ## Choosing delegate vs delegatePipeline
 
@@ -191,8 +233,8 @@ Correlate the run without guessing:
    implement attempt (baseline or producer) is still running. `result.json`
    appearing means the run finished.
 
-After backgrounding the host returns control once; emit a single status line
-then. Continuous status requires scheduled wakeups (about 75s apart, each a full
+After backgrounding the host returns control once; emit a single Live status
+line (the FleetView-style format above) then. Continuous status requires scheduled wakeups (about 75s apart, each a full
 turn) — only do this when the human explicitly asks for live status, tell them it
 costs a turn per update, and never poll tighter than the round cadence.
 
