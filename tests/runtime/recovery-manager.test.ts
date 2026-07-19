@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import {
   access,
+  link,
   mkdir,
   mkdtemp,
   readFile,
   realpath,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -757,6 +759,98 @@ describe("recoverStaleRuns", () => {
     expect(errors).toHaveLength(2);
     expect(String(errors[0])).toContain("primary poison error");
     expect(String(errors[1])).toMatch(/EISDIR|regular file|incompatible/i);
+    await expect(access(store.runDirectory)).resolves.toBeUndefined();
+    await expectMissing(path.join(runsRoot, `.poisoned-${runId}`));
+  });
+
+  it("rejects a hard-linked quarantine journal without mutating its external alias", async () => {
+    const runId = "run-hard-linked-journal";
+    const repo = await initRepo();
+    const store = await createUnfinishedRun(runId, repo.commonDir, 4242, "darwin:recorded");
+    const runsRoot = path.dirname(store.runDirectory);
+    const externalPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "external-journal");
+    const journalPath = path.join(runsRoot, "recovery-quarantine.ndjson");
+    const externalBytes = "external bytes must remain unchanged\n";
+    await writeFile(externalPath, externalBytes);
+
+    let thrown: unknown;
+    try {
+      await recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken(pid) {
+            if (pid === 4242) {
+              await link(externalPath, journalPath);
+              throw new Error("primary hard-link poison error");
+            }
+            return "darwin:self";
+          },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: pid => pid === 4242,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const errors = (thrown as AggregateError).errors as unknown[];
+    expect(errors).toHaveLength(2);
+    expect(String(errors[0])).toContain("primary hard-link poison error");
+    expect(String(errors[1])).toMatch(/recovery quarantine journal changed during append/i);
+    await expect(readFile(externalPath, "utf8")).resolves.toBe(externalBytes);
+    await expect(access(store.runDirectory)).resolves.toBeUndefined();
+    await expectMissing(path.join(runsRoot, `.poisoned-${runId}`));
+  });
+
+  it("rejects a symlinked quarantine journal without mutating its external target", async ({
+    skip,
+  }) => {
+    const runId = "run-symlinked-journal";
+    const repo = await initRepo();
+    const store = await createUnfinishedRun(runId, repo.commonDir, 4242, "darwin:recorded");
+    const runsRoot = path.dirname(store.runDirectory);
+    const externalPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "external-target");
+    const journalPath = path.join(runsRoot, "recovery-quarantine.ndjson");
+    const externalBytes = "external target must remain unchanged\n";
+    await writeFile(externalPath, externalBytes);
+
+    let thrown: unknown;
+    try {
+      await recoverStaleRuns({
+        platformServices: {
+          os: "darwin",
+          async getProcessStartToken(pid) {
+            if (pid === 4242) {
+              try {
+                await symlink(externalPath, journalPath, "file");
+              } catch (error) {
+                if (["EACCES", "EPERM", "ENOSYS"].includes(
+                  (error as NodeJS.ErrnoException).code ?? "",
+                )) {
+                  skip();
+                  return "darwin:recorded";
+                }
+                throw error;
+              }
+              throw new Error("primary symlink poison error");
+            }
+            return "darwin:self";
+          },
+          async terminateProcessTreeByPid() {},
+        },
+        isProcessAlive: pid => pid === 4242,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const errors = (thrown as AggregateError).errors as unknown[];
+    expect(errors).toHaveLength(2);
+    expect(String(errors[0])).toContain("primary symlink poison error");
+    expect(String(errors[1])).toMatch(/ELOOP|symbolic link|changed during append/i);
+    await expect(readFile(externalPath, "utf8")).resolves.toBe(externalBytes);
     await expect(access(store.runDirectory)).resolves.toBeUndefined();
     await expectMissing(path.join(runsRoot, `.poisoned-${runId}`));
   });

@@ -448,11 +448,72 @@ function parseRecoveryQuarantineRecord(line: string): RecoveryQuarantineRecord {
 }
 
 async function readRecoveryQuarantineJournal(runsRoot: string): Promise<Set<string>> {
-  const text = await readBoundedRegularFile(
-    path.join(runsRoot, "recovery-quarantine.ndjson"),
-  );
+  const rootIdentity = await plainDirectoryIdentity(runsRoot);
+  if (rootIdentity === null) {
+    throw new RuntimeError("recovery quarantine journal root disappeared");
+  }
+  const filename = path.join(runsRoot, "recovery-quarantine.ndjson");
+  let handle;
+  try {
+    handle = await open(filename, constants.O_RDONLY | NO_FOLLOW);
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+    const currentRoot = await lstat(runsRoot);
+    if (!isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, rootIdentity)) {
+      throw new RuntimeError("recovery quarantine journal root changed during missing read");
+    }
+    return new Set<string>();
+  }
+  let text: string | undefined;
+  let primaryError: unknown;
+  try {
+    const metadata = await handle.stat();
+    const namedMetadata = await lstat(filename);
+    const currentRoot = await lstat(runsRoot);
+    if (!metadata.isFile()
+      || metadata.size > MAX_STATE_FILE_BYTES
+      || metadata.nlink !== 1
+      || !namedMetadata.isFile()
+      || namedMetadata.isSymbolicLink()
+      || namedMetadata.nlink !== 1
+      || namedMetadata.dev !== metadata.dev
+      || namedMetadata.ino !== metadata.ino
+      || !isPlainDirectory(currentRoot)
+      || !sameIdentity(currentRoot, rootIdentity)) {
+      throw new RuntimeError("recovery quarantine journal changed during read");
+    }
+    text = await handle.readFile({ encoding: "utf8" });
+    const settledMetadata = await lstat(filename);
+    const settledRoot = await lstat(runsRoot);
+    if (!settledMetadata.isFile()
+      || settledMetadata.isSymbolicLink()
+      || settledMetadata.nlink !== 1
+      || settledMetadata.dev !== metadata.dev
+      || settledMetadata.ino !== metadata.ino
+      || !isPlainDirectory(settledRoot)
+      || !sameIdentity(settledRoot, rootIdentity)) {
+      throw new RuntimeError("recovery quarantine journal changed after read");
+    }
+  } catch (error) {
+    primaryError = error;
+  }
+  try {
+    await handle.close();
+  } catch (closeError) {
+    if (primaryError !== undefined) {
+      throw new AggregateError(
+        [primaryError, closeError],
+        "recovery quarantine journal read failed and its handle could not be closed",
+      );
+    }
+    throw closeError;
+  }
+  if (primaryError !== undefined) throw primaryError;
+  if (text === undefined) {
+    throw new RuntimeError("recovery quarantine journal read produced no content");
+  }
   const runIds = new Set<string>();
-  if (text === null || text === "") return runIds;
+  if (text === "") return runIds;
   if (!text.endsWith("\n")) {
     throw new RuntimeError("recovery quarantine journal has a torn final record");
   }
@@ -475,29 +536,59 @@ async function appendRecoveryQuarantineRecord(
     throw new RuntimeError("recovery quarantine record exceeds its size limit");
   }
   const filename = path.join(runsRoot, "recovery-quarantine.ndjson");
-  const handle = await open(
-    filename,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | NO_FOLLOW,
-    0o600,
-  );
+  let handle;
+  let primaryError: unknown;
   try {
+    handle = await open(
+      filename,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | NO_FOLLOW,
+      0o600,
+    );
     const metadata = await handle.stat();
+    const namedMetadata = await lstat(filename);
     const currentRoot = await lstat(runsRoot);
     if (!metadata.isFile()
       || metadata.size + lineBytes > MAX_STATE_FILE_BYTES
+      || metadata.nlink !== 1
+      || !namedMetadata.isFile()
+      || namedMetadata.isSymbolicLink()
+      || namedMetadata.nlink !== 1
+      || namedMetadata.dev !== metadata.dev
+      || namedMetadata.ino !== metadata.ino
       || !isPlainDirectory(currentRoot)
       || !sameIdentity(currentRoot, identity)) {
       throw new RuntimeError("recovery quarantine journal changed during append");
     }
     await handle.writeFile(line, "utf8");
     await handle.sync();
-  } finally {
-    await handle.close();
+    const settledMetadata = await lstat(filename);
+    const settledRoot = await lstat(runsRoot);
+    if (!settledMetadata.isFile()
+      || settledMetadata.isSymbolicLink()
+      || settledMetadata.nlink !== 1
+      || settledMetadata.dev !== metadata.dev
+      || settledMetadata.ino !== metadata.ino
+      || !isPlainDirectory(settledRoot)
+      || !sameIdentity(settledRoot, identity)) {
+      throw new RuntimeError("recovery quarantine journal changed after append");
+    }
+  } catch (error) {
+    primaryError = error;
   }
-  const currentRoot = await lstat(runsRoot);
-  if (!isPlainDirectory(currentRoot) || !sameIdentity(currentRoot, identity)) {
-    throw new RuntimeError("recovery quarantine journal root changed after append");
+  if (handle !== undefined) {
+    try {
+      await handle.close();
+    } catch (closeError) {
+      if (primaryError !== undefined) {
+        throw new AggregateError(
+          [primaryError, closeError],
+          "recovery quarantine journal append failed and its handle could not be closed",
+        );
+      }
+      throw closeError;
+    }
   }
+  if (primaryError !== undefined) throw primaryError;
 }
 
 async function quarantineRun(
