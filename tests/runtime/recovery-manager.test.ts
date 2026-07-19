@@ -115,6 +115,33 @@ async function createUnfinishedRun(
   return store;
 }
 
+async function createTerminalRun(
+  runId: string,
+  commonDir: string,
+): Promise<ArtifactStore> {
+  const store = await createUnfinishedRun(runId, commonDir, null);
+  await store.writeResult({
+    resultVersion: "1",
+    runId,
+    status: "failed",
+    failure: "producer-failure",
+    summary: "pipeline failed",
+    producerSummary: null,
+    candidate: null,
+    requestedVerification: [],
+    executedVerification: [],
+    unresolvedIssues: [],
+    evidence: {},
+    logsRef: "logs/producer.log",
+    producerId: null,
+    producerVersion: null,
+    producerModel: null,
+    durationMs: 1,
+    sessionId: null,
+  });
+  return store;
+}
+
 beforeEach(async () => {
   previousPluginData = process.env.CLAUDE_PLUGIN_DATA;
   previousDelegated = process.env.CLAUDE_ARCHITECT_DELEGATED;
@@ -369,6 +396,185 @@ describe("recoverStaleRuns", () => {
     await expect(readFile(lockPath, "utf8"))
       .resolves.toBe(JSON.stringify(replacementOwner));
   });
+
+  it.each([
+    {
+      ownerDescription: "a live matching-token owner",
+      lockBytes: Buffer.from(JSON.stringify({
+        pid: 9301,
+        processToken: "darwin:live-checkout",
+      })),
+      ownerIsLive: true,
+    },
+    {
+      ownerDescription: "an incomplete empty owner",
+      lockBytes: Buffer.alloc(0),
+      ownerIsLive: false,
+    },
+  ])("defers terminal pipeline cleanup while checkout lock has $ownerDescription", async ({
+    lockBytes,
+    ownerIsLive,
+  }) => {
+    const repo = await initRepo();
+    const runId = ownerIsLive
+      ? "run-terminal-live-checkout"
+      : "run-terminal-incomplete-checkout";
+    const store = await createTerminalRun(runId, repo.commonDir);
+    const pipelineWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-pipeline`,
+    ).create(repo.head);
+    const verifyWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-verify`,
+    ).create(repo.head);
+    const pipelineSentinelPath = path.join(pipelineWorktree.path, "pipeline-sentinel.bin");
+    const verifySentinelPath = path.join(verifyWorktree.path, "verify-sentinel.bin");
+    await writeFile(pipelineSentinelPath, Buffer.from([0x00, 0x50, 0xff, 0x0a]));
+    await writeFile(verifySentinelPath, Buffer.from([0x00, 0x56, 0xfe, 0x0a]));
+    await store.writePipelineActiveMarker({
+      pid: 4242,
+      processToken: "darwin:dead-pipeline",
+      startedAt: "2026-07-18T12:00:00.000Z",
+    });
+
+    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
+    const checkoutLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      `${lockKey}.lock`,
+    );
+    await mkdir(path.dirname(checkoutLockPath), { recursive: true });
+    await writeFile(checkoutLockPath, lockBytes);
+
+    const resultPath = path.join(store.runDirectory, "result.json");
+    const markerPath = path.join(store.runDirectory, "pipeline-active.json");
+    const [
+      resultBefore,
+      markerBefore,
+      pipelineSentinelBefore,
+      verifySentinelBefore,
+      checkoutLockBefore,
+      pipelineIdentityBefore,
+      verifyIdentityBefore,
+    ] = await Promise.all([
+      readFile(resultPath),
+      readFile(markerPath),
+      readFile(pipelineSentinelPath),
+      readFile(verifySentinelPath),
+      readFile(checkoutLockPath),
+      lstat(pipelineWorktree.path),
+      lstat(verifyWorktree.path),
+    ]);
+
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          return pid === 9301 ? "darwin:live-checkout" : "darwin:self";
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: pid => ownerIsLive && pid === 9301,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    const [pipelineIdentityAfter, verifyIdentityAfter] = await Promise.all([
+      lstat(pipelineWorktree.path),
+      lstat(verifyWorktree.path),
+    ]);
+    expect({ dev: pipelineIdentityAfter.dev, ino: pipelineIdentityAfter.ino }).toEqual({
+      dev: pipelineIdentityBefore.dev,
+      ino: pipelineIdentityBefore.ino,
+    });
+    expect({ dev: verifyIdentityAfter.dev, ino: verifyIdentityAfter.ino }).toEqual({
+      dev: verifyIdentityBefore.dev,
+      ino: verifyIdentityBefore.ino,
+    });
+    await expect(readFile(resultPath)).resolves.toEqual(resultBefore);
+    await expect(readFile(markerPath)).resolves.toEqual(markerBefore);
+    await expect(readFile(pipelineSentinelPath)).resolves.toEqual(pipelineSentinelBefore);
+    await expect(readFile(verifySentinelPath)).resolves.toEqual(verifySentinelBefore);
+    await expect(readFile(checkoutLockPath)).resolves.toEqual(checkoutLockBefore);
+  }, { timeout: 120_000 });
+
+  it("revalidates a dead pipeline marker after reclaiming its checkout lock", async () => {
+    const repo = await initRepo();
+    const runId = "run-terminal-marker-revalidated";
+    const store = await createTerminalRun(runId, repo.commonDir);
+    const pipelineWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-pipeline`,
+    ).create(repo.head);
+    const verifyWorktree = await new WorktreeManager(
+      repo.directory,
+      `${runId}-verify`,
+    ).create(repo.head);
+    const markerPath = path.join(store.runDirectory, "pipeline-active.json");
+    await store.writePipelineActiveMarker({
+      pid: 4242,
+      processToken: "darwin:dead-pipeline",
+      startedAt: "2026-07-18T12:00:00.000Z",
+    });
+    const resultPath = path.join(store.runDirectory, "result.json");
+    const resultBefore = await readFile(resultPath);
+
+    const checkoutOwner = { pid: 9401, processToken: "darwin:stale-checkout" };
+    const livePipelineOwner = {
+      pid: 9402,
+      processToken: "darwin:live-pipeline",
+      startedAt: "2026-07-18T12:01:00.000Z",
+    };
+    const lockKey = createHash("sha256").update(repo.commonDir).digest("hex");
+    const checkoutLockPath = path.join(
+      process.env.CLAUDE_PLUGIN_DATA!,
+      "locks",
+      `${lockKey}.lock`,
+    );
+    await mkdir(path.dirname(checkoutLockPath), { recursive: true });
+    await writeFile(checkoutLockPath, JSON.stringify(checkoutOwner));
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
+
+    let checkoutOwnerProbes = 0;
+    let worktreesPresentDuringCheckoutProbe: boolean | undefined;
+    let replacementMarkerBytes: Buffer | undefined;
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken(pid) {
+          if (pid === checkoutOwner.pid) {
+            checkoutOwnerProbes += 1;
+            await store.writePipelineActiveMarker(livePipelineOwner);
+            replacementMarkerBytes = await readFile(markerPath);
+            try {
+              await Promise.all([
+                access(pipelineWorktree.path),
+                access(verifyWorktree.path),
+              ]);
+              worktreesPresentDuringCheckoutProbe = true;
+            } catch {
+              worktreesPresentDuringCheckoutProbe = false;
+            }
+            return "darwin:replacement-checkout";
+          }
+          if (pid === livePipelineOwner.pid) return livePipelineOwner.processToken;
+          return "darwin:self";
+        },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: pid => pid === checkoutOwner.pid || pid === livePipelineOwner.pid,
+    })).resolves.toEqual({ recovered: [], quarantined: [] });
+
+    expect(checkoutOwnerProbes).toBe(1);
+    expect(worktreesPresentDuringCheckoutProbe).toBe(true);
+    expect(replacementMarkerBytes).toBeDefined();
+    await expect(readFile(markerPath)).resolves.toEqual(replacementMarkerBytes);
+    await expect(readFile(resultPath)).resolves.toEqual(resultBefore);
+    await expect(access(pipelineWorktree.path)).resolves.toBeUndefined();
+    await expect(access(verifyWorktree.path)).resolves.toBeUndefined();
+    await expectMissing(checkoutLockPath);
+    expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
+  }, { timeout: 120_000 });
 
   it("cleans dead-owner pipeline worktrees for a terminal run", async () => {
     const repo = await initRepo();

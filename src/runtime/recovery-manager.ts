@@ -1713,17 +1713,70 @@ export async function recoverStaleRuns(
               isProcessAlive,
               pid => ps.getProcessStartToken(pid),
             )) {
-              const commonDir = await validateGitCommonDir(record.canonicalCommonDir);
-              for (const managedId of [
-                `${entry.name}-pipeline`,
-                `${entry.name}-verify`,
-              ]) {
-                const worktreePath = path.join(root, "worktrees", managedId);
-                if (await plainDirectoryIdentity(worktreePath) !== null) {
-                  await new WorktreeManager(commonDir, managedId, ps).remove(worktreePath);
+              const checkoutLock = await acquireOwnedLock(
+                path.join(locksRoot, `${record.lockKey}.lock`),
+                ownerContents,
+                isProcessAlive,
+                pid => ps.getProcessStartToken(pid),
+              );
+              if (checkoutLock === null) continue;
+              let cleanupError: unknown;
+              let cleanupFailed = false;
+              try {
+                const lockedRunStartText = await readBoundedRegularFile(
+                  path.join(runDirectory, "run-start.json"),
+                );
+                if (lockedRunStartText === null) {
+                  throw new RuntimeError("run-start recovery record disappeared during recovery");
+                }
+                const lockedRecord = parseRunStart(lockedRunStartText, entry.name);
+                if (lockedRunStartText !== runStartText
+                  || lockedRecord.runId !== record.runId
+                  || lockedRecord.lockKey !== record.lockKey
+                  || lockedRecord.canonicalCommonDir !== record.canonicalCommonDir
+                  || lockedRecord.pid !== record.pid
+                  || lockedRecord.processToken !== record.processToken
+                  || lockedRecord.startedAt !== record.startedAt) {
+                  throw new RuntimeError("run-start recovery record changed during recovery");
+                }
+                const lockedResult = await store.readResult(entry.name);
+                if (lockedResult === null) {
+                  throw new RuntimeError("terminal attempt result disappeared during recovery");
+                }
+                validateTerminalResult(lockedResult, entry.name);
+                const lockedMarker = await store.readPipelineActiveMarker(entry.name);
+                if (lockedMarker !== null && !await lockOwnerIsLive(
+                  { pid: lockedMarker.pid, processToken: lockedMarker.processToken },
+                  isProcessAlive,
+                  pid => ps.getProcessStartToken(pid),
+                )) {
+                  const commonDir = await validateGitCommonDir(lockedRecord.canonicalCommonDir);
+                  for (const managedId of [
+                    `${entry.name}-pipeline`,
+                    `${entry.name}-verify`,
+                  ]) {
+                    const worktreePath = path.join(root, "worktrees", managedId);
+                    if (await plainDirectoryIdentity(worktreePath) !== null) {
+                      await new WorktreeManager(commonDir, managedId, ps).remove(worktreePath);
+                    }
+                  }
+                  await store.clearPipelineActiveMarker();
+                }
+              } catch (error) {
+                cleanupError = error;
+                cleanupFailed = true;
+              } finally {
+                try {
+                  await releaseOwnedLock(checkoutLock);
+                } catch (releaseError) {
+                  if (!cleanupFailed) throw releaseError;
+                  throw new AggregateError(
+                    [cleanupError, releaseError],
+                    "terminal pipeline cleanup failed and its checkout lock could not be released",
+                  );
                 }
               }
-              await store.clearPipelineActiveMarker();
+              if (cleanupFailed) throw cleanupError;
             }
             continue;
           }
