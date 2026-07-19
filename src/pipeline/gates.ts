@@ -1,6 +1,8 @@
 // src/pipeline/gates.ts
 import type { Disposition, Finding, VerificationReport } from "./report-types.js";
 
+export type IncrementOutcome = "complete" | "budget-exhausted" | "stalled" | "blocked";
+
 export interface GateInput {
   findings: Finding[];
   dispositions: Disposition[];
@@ -10,6 +12,7 @@ export interface GateInput {
   finalRoundReviewed: boolean;
   artifactsValid: boolean;
   baselineDrift: boolean;
+  incrementOutcome?: IncrementOutcome;
 }
 
 export interface GateResult {
@@ -60,6 +63,10 @@ export function evaluateGates(input: GateInput): GateResult {
   if (input.baselineDrift) reasons.push("candidate no longer based on approved baseline");
   if (!input.finalRoundReviewed) {
     reasons.push("final fix was not re-reviewed");
+    requiresHumanDecision = true;
+  }
+  if (input.incrementOutcome !== undefined && input.incrementOutcome !== "complete") {
+    reasons.push(`increment loop ended '${input.incrementOutcome}' without completion`);
     requiresHumanDecision = true;
   }
   if (input.roundsUsed > input.maxRounds) {

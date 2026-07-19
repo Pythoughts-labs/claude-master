@@ -1,6 +1,10 @@
 // tests/runtime/gates.test.ts
 import { describe, expect, it } from "vitest";
-import { evaluateGates, type GateInput } from "../../src/pipeline/gates.js";
+import {
+  evaluateGates,
+  type GateInput,
+  type IncrementOutcome,
+} from "../../src/pipeline/gates.js";
 import type { Disposition, Finding, VerificationReport } from "../../src/pipeline/report-types.js";
 
 const OID = "a".repeat(40);
@@ -25,6 +29,31 @@ function base(overrides: Partial<GateInput> = {}): GateInput {
 describe("evaluateGates", () => {
   it("clean run is decision-ready", () => {
     expect(evaluateGates(base())).toEqual({ decisionReady: true, requiresHumanDecision: false, reasons: [] });
+  });
+
+  it("keeps the gate result byte-identical when incrementOutcome is absent", () => {
+    const beforeIncrementOutcome = { decisionReady: true, requiresHumanDecision: false, reasons: [] };
+    expect(JSON.stringify(evaluateGates(base()))).toBe(JSON.stringify(beforeIncrementOutcome));
+  });
+
+  it("does not add a gate reason when the increment loop completes", () => {
+    expect(evaluateGates(base({ incrementOutcome: "complete" }))).toEqual({
+      decisionReady: true,
+      requiresHumanDecision: false,
+      reasons: [],
+    });
+  });
+
+  it.each<Exclude<IncrementOutcome, "complete">>([
+    "budget-exhausted",
+    "stalled",
+    "blocked",
+  ])("routes a %s increment outcome to human decision", (incrementOutcome) => {
+    expect(evaluateGates(base({ incrementOutcome }))).toEqual({
+      decisionReady: false,
+      requiresHumanDecision: true,
+      reasons: [`increment loop ended '${incrementOutcome}' without completion`],
+    });
   });
 
   it("requires human decision when a fixed disposition was not re-reviewed", () => {

@@ -12,6 +12,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git } from "../../src/git/git-exec.js";
 import { applyCandidateTree } from "../../src/integrate/controlled-integrator.js";
+import { delegatePipelineOutput } from "../../src/mcp/server.js";
 import { getPlatformServices } from "../../src/platform/select-platform.js";
 import type {
   AttemptResult,
@@ -425,6 +426,11 @@ describe("runPipeline", () => {
     );
 
     expect(result.status).toBe("decision-ready");
+    expect(result.gate).toEqual({
+      decisionReady: true,
+      requiresHumanDecision: false,
+      reasons: [],
+    });
     expect(result.increments).toHaveLength(1);
     expect(result.increments[0]).toMatchObject({
       increment: 2,
@@ -435,6 +441,11 @@ describe("runPipeline", () => {
     const store = new ArtifactStore("pipeline-increment-complete");
     await expect(store.readPipelineArtifact("pipeline-increment-complete", "increment-2"))
       .resolves.toMatchObject({ status: "complete", summary: "completed with [s]" });
+    expect(delegatePipelineOutput.parse({ ok: true, result })).toMatchObject({
+      result: { increments: [{ increment: 2, report: { status: "complete" } }] },
+    });
+    expect(delegatePipelineOutput.parse({ ok: true, result: { ...result, increments: [] } }))
+      .toMatchObject({ result: { increments: [] } });
   }, { timeout: 120_000 });
 
   it("exhausts the increment budget after continued real progress and still reviews", async () => {
@@ -464,6 +475,12 @@ describe("runPipeline", () => {
     expect(result.increments).toHaveLength(2);
     expect(result.increments.map(entry => entry.increment)).toEqual([2, 3]);
     expect(reviewerCalls).toBe(1);
+    expect(result.status).toBe("human-decision-required");
+    expect(result.gate).toMatchObject({
+      decisionReady: false,
+      requiresHumanDecision: true,
+      reasons: ["increment loop ended 'budget-exhausted' without completion"],
+    });
   }, { timeout: 120_000 });
 
   it("stops incrementing when blocked and still reviews", async () => {
@@ -490,6 +507,12 @@ describe("runPipeline", () => {
     expect(result.increments).toHaveLength(1);
     expect(result.increments[0]?.report.status).toBe("blocked");
     expect(reviewerCalls).toBe(1);
+    expect(result.status).toBe("human-decision-required");
+    expect(result.gate).toMatchObject({
+      decisionReady: false,
+      requiresHumanDecision: true,
+      reasons: ["increment loop ended 'blocked' without completion"],
+    });
   }, { timeout: 120_000 });
 
   it("treats an allow-empty continuing increment as stalled", async () => {
@@ -517,6 +540,12 @@ describe("runPipeline", () => {
 
     expect(result.increments).toHaveLength(2);
     expect(result.increments.map(entry => entry.increment)).toEqual([2, 3]);
+    expect(result.status).toBe("human-decision-required");
+    expect(result.gate).toMatchObject({
+      decisionReady: false,
+      requiresHumanDecision: true,
+      reasons: ["increment loop ended 'stalled' without completion"],
+    });
     const store = new ArtifactStore("pipeline-increment-stalled");
     await expect(store.readPipelineArtifact("pipeline-increment-stalled", "increment-2"))
       .resolves.toMatchObject({ summary: "increment 1" });
@@ -646,6 +675,13 @@ describe("runPipeline", () => {
 
     expect(result.increments).toEqual([]);
     expect(roles).toEqual(["reviewer-correctness"]);
+    const preIncrementGate = {
+      decisionReady: true,
+      requiresHumanDecision: false,
+      reasons: [],
+    };
+    expect(result.status).toBe("decision-ready");
+    expect(JSON.stringify(result.gate)).toBe(JSON.stringify(preIncrementGate));
   }, { timeout: 120_000 });
 
   it("returns decision-ready after a clean review round without fixing", async () => {

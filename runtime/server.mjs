@@ -28390,6 +28390,10 @@ function evaluateGates(input) {
     reasons.push("final fix was not re-reviewed");
     requiresHumanDecision = true;
   }
+  if (input.incrementOutcome !== void 0 && input.incrementOutcome !== "complete") {
+    reasons.push(`increment loop ended '${input.incrementOutcome}' without completion`);
+    requiresHumanDecision = true;
+  }
   if (input.roundsUsed > input.maxRounds) {
     reasons.push(`round cap exceeded (${input.roundsUsed} > ${input.maxRounds})`);
     requiresHumanDecision = true;
@@ -29427,6 +29431,7 @@ async function runPipeline(checkoutPath, spec, deps) {
   const store = new ArtifactStore(attempt.runId);
   let finalAttempt = attempt;
   const increments = [];
+  let incrementOutcome;
   const rounds = [];
   const baselineCommit = attempt.candidate.baseCommitOid;
   let currentCandidateCommit = attempt.candidate.candidateCommitOid;
@@ -29544,9 +29549,20 @@ async function runPipeline(checkoutPath, spec, deps) {
             report,
             roleLogRefs: incrementRun.roleLogRefs
           });
-          if (report.status === "complete" || report.status === "blocked") break;
-          if (!progressed) break;
+          if (report.status === "complete") {
+            incrementOutcome = "complete";
+            break;
+          }
+          if (report.status === "blocked") {
+            incrementOutcome = "blocked";
+            break;
+          }
+          if (!progressed) {
+            incrementOutcome = "stalled";
+            break;
+          }
         }
+        incrementOutcome ??= "budget-exhausted";
       } catch {
         return failedResult(
           attempt,
@@ -29770,7 +29786,8 @@ async function runPipeline(checkoutPath, spec, deps) {
     maxRounds,
     finalRoundReviewed: (lastRound?.fix ?? null) === null,
     artifactsValid: true,
-    baselineDrift: verified.baselineDrift
+    baselineDrift: verified.baselineDrift,
+    ...incrementOutcome === void 0 ? {} : { incrementOutcome }
   });
   const result = {
     runId: attempt.runId,
@@ -30726,6 +30743,18 @@ var delegatePipelineOutput = external_exports.object({
     runId: external_exports.string(),
     status: external_exports.enum(["decision-ready", "human-decision-required", "failed"]),
     attempt: external_exports.record(external_exports.string(), external_exports.unknown()),
+    increments: external_exports.array(external_exports.object({
+      increment: external_exports.number(),
+      report: external_exports.object({
+        reportVersion: external_exports.literal("1"),
+        candidateCommit: external_exports.string(),
+        status: external_exports.enum(["complete", "continue", "blocked"]),
+        summary: external_exports.string(),
+        nextSteps: external_exports.string().optional(),
+        blockers: external_exports.string().optional()
+      }),
+      roleLogRefs: external_exports.array(external_exports.string())
+    })),
     rounds: external_exports.array(external_exports.record(external_exports.string(), external_exports.unknown())),
     verification: external_exports.record(external_exports.string(), external_exports.unknown()).nullable(),
     gate: external_exports.record(external_exports.string(), external_exports.unknown()),

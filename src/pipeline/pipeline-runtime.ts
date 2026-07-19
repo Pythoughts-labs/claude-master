@@ -31,7 +31,7 @@ import {
   type StructuralFailure,
 } from "../verify/structural-verifier.js";
 import { consolidate, type ConsolidationResult } from "./consolidator.js";
-import { evaluateGates, type GateResult } from "./gates.js";
+import { evaluateGates, type GateResult, type IncrementOutcome } from "./gates.js";
 import type {
   FixReport,
   IncrementReport,
@@ -775,6 +775,7 @@ export async function runPipeline(
   const store = new ArtifactStore(attempt.runId);
   let finalAttempt = attempt;
   const increments: PipelineIncrement[] = [];
+  let incrementOutcome: IncrementOutcome | undefined;
   const rounds: PipelineRound[] = [];
   const baselineCommit = attempt.candidate.baseCommitOid;
   let currentCandidateCommit = attempt.candidate.candidateCommitOid;
@@ -896,9 +897,20 @@ export async function runPipeline(
             roleLogRefs: incrementRun.roleLogRefs,
           });
 
-          if (report.status === "complete" || report.status === "blocked") break;
-          if (!progressed) break;
+          if (report.status === "complete") {
+            incrementOutcome = "complete";
+            break;
+          }
+          if (report.status === "blocked") {
+            incrementOutcome = "blocked";
+            break;
+          }
+          if (!progressed) {
+            incrementOutcome = "stalled";
+            break;
+          }
         }
+        incrementOutcome ??= "budget-exhausted";
       } catch {
         return failedResult(
           attempt,
@@ -1130,6 +1142,7 @@ export async function runPipeline(
     finalRoundReviewed: (lastRound?.fix ?? null) === null,
     artifactsValid: true,
     baselineDrift: verified.baselineDrift,
+    ...(incrementOutcome === undefined ? {} : { incrementOutcome }),
   });
   const result: PipelineResult = {
     runId: attempt.runId,

@@ -32,12 +32,24 @@ const delegateOutput = z.object({
   diagnostic: z.string().optional(),
   error: z.string().optional(),
 });
-const delegatePipelineOutput = z.object({
+export const delegatePipelineOutput = z.object({
   ok: z.boolean(),
   result: z.object({
     runId: z.string(),
     status: z.enum(["decision-ready", "human-decision-required", "failed"]),
     attempt: z.record(z.string(), z.unknown()),
+    increments: z.array(z.object({
+      increment: z.number(),
+      report: z.object({
+        reportVersion: z.literal("1"),
+        candidateCommit: z.string(),
+        status: z.enum(["complete", "continue", "blocked"]),
+        summary: z.string(),
+        nextSteps: z.string().optional(),
+        blockers: z.string().optional(),
+      }),
+      roleLogRefs: z.array(z.string()),
+    })),
     rounds: z.array(z.record(z.string(), z.unknown())),
     verification: z.record(z.string(), z.unknown()).nullable(),
     gate: z.record(z.string(), z.unknown()),
