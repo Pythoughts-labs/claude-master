@@ -948,7 +948,7 @@ describe("runPipeline", () => {
       isProcessAlive: () => false,
     });
 
-    expect(recovery).toEqual({ recovered: [] });
+    expect(recovery).toEqual({ recovered: [], quarantined: [] });
     expect(terminated).toEqual([]);
     await expect(store.readResult(runId)).resolves.toMatchObject({
       status: "verified-candidate",
