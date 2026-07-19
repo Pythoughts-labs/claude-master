@@ -18,8 +18,11 @@ All notable changes to Claude Architect are recorded here. The format follows
   completed slice advance/repair/halt from its verification result alone. Review
   and the advisor judge the composed candidate over the whole slice branch at the
   end; per-slice review is opt-in via `review.perSlice: true`. A mid-run halt
-  yields a partial `human-decision-required` candidate carrying `haltedSliceIndex`
-  and each slice's route in `slices`, which only the human decides.
+  after at least one slice has advanced yields a partial `human-decision-required`
+  candidate — the promoted advanced-slice branch, which the human may accept,
+  reject, or revise — carrying `haltedSliceIndex` and each slice's route in
+  `slices`; a halt on the first slice with nothing advanced is reported `failed`
+  with the slice evidence retained.
 
 ### Changed
 

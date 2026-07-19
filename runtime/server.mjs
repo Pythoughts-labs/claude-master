@@ -30254,27 +30254,95 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
       if (phase.haltedSliceIndex !== null) {
         const halted = phase.slices.at(-1);
         const reason = `slice phase halted at slice ${phase.haltedSliceIndex}: ${halted?.reasons.join("; ") ?? "objective gate failed"}`;
-        const failedAttempt = await archiveSlicedFailure({
+        if (currentCandidateCommit === baselineCommit) {
+          const failedAttempt = await archiveSlicedFailure({
+            checkoutPath,
+            attempt,
+            failure: "verification-failure",
+            reason,
+            store
+          });
+          authoritySafeToRelease = true;
+          finalAttempt = failedAttempt;
+          const failed = failedResult(
+            failedAttempt,
+            rounds,
+            currentCandidateCommit,
+            reason,
+            "verification-failure",
+            increments,
+            phase.slices,
+            phase.haltedSliceIndex
+          );
+          await store.writePipelineArtifact("pipeline-result", failed);
+          return failed;
+        }
+        const promoted = await promoteFinalCandidate({
           checkoutPath,
           attempt,
-          failure: "verification-failure",
-          reason,
+          initialCandidate: attempt.candidate,
+          baselineCommit,
+          candidateCommit: currentCandidateCommit,
           store
         });
+        if (promoted === null) {
+          const promotionReason = "partial halt candidate could not be promoted from the git object store";
+          const failedAttempt = await archiveSlicedFailure({
+            checkoutPath,
+            attempt,
+            failure: "sandbox-violation",
+            reason: promotionReason,
+            store
+          });
+          authoritySafeToRelease = true;
+          finalAttempt = failedAttempt;
+          const failed = failedResult(
+            failedAttempt,
+            rounds,
+            currentCandidateCommit,
+            promotionReason,
+            "sandbox-violation",
+            increments,
+            phase.slices,
+            phase.haltedSliceIndex
+          );
+          await store.writePipelineArtifact("pipeline-result", failed);
+          return failed;
+        }
+        finalAttempt = promoted.attempt;
+        currentCandidateCommit = promoted.candidateCommit;
         authoritySafeToRelease = true;
-        finalAttempt = failedAttempt;
-        const failed = failedResult(
-          failedAttempt,
-          rounds,
-          currentCandidateCommit,
-          reason,
-          "verification-failure",
+        notePhase("partial halt verification");
+        const verified2 = await verifyCandidate({
+          checkoutPath,
+          spec,
+          deps,
+          attempt: finalAttempt,
+          baselineCommit,
+          candidateCommit: currentCandidateCommit,
+          store,
+          namespace: "final"
+        });
+        await store.writePipelineArtifact("verification", verified2.verification);
+        const haltResult = {
+          runId: attempt.runId,
+          status: "human-decision-required",
+          attempt: finalAttempt,
           increments,
-          phase.slices,
-          phase.haltedSliceIndex
-        );
-        await store.writePipelineArtifact("pipeline-result", failed);
-        return failed;
+          slices: phase.slices,
+          haltedSliceIndex: phase.haltedSliceIndex,
+          rounds,
+          verification: verified2.verification,
+          gate: {
+            decisionReady: false,
+            requiresHumanDecision: true,
+            reasons: [reason]
+          },
+          finalCandidateCommit: currentCandidateCommit,
+          failure: null
+        };
+        await store.writePipelineArtifact("pipeline-result", haltResult);
+        return haltResult;
       }
       frozenTestEvidence = sliceTestEvidence(phase.slices);
     }

@@ -1720,6 +1720,77 @@ describe("runPipeline", () => {
     });
   }, { timeout: 120_000 });
 
+  it("hands a later-slice halt to the human as an acceptable partial candidate", async () => {
+    const repo = await initSlicedRepo();
+    const runId = "pipeline-slices-partial-halt";
+    const spec = slicedSpec();
+    const initialRun = fakeAttempt(runId, async checkout => {
+      await writeFile(path.join(checkout, "slice-one.txt"), "slice one candidate\n");
+    });
+    let reviewerCalls = 0;
+    const roleRunner = async (args: RoleRunArgs): Promise<RoleRunResult> => {
+      if (args.role === "implementer") {
+        // Slice two never satisfies its verification, so it exhausts its repair
+        // budget and halts — but only after slice one has already advanced.
+        const candidateCommit = await commitRoleFile(
+          args,
+          "slice-two.txt",
+          "wrong slice two\n",
+        );
+        return success(fenced({
+          reportVersion: "1",
+          candidateCommit,
+          status: "complete",
+          summary: "Producer claim is not objective evidence.",
+        }));
+      }
+      reviewerCalls += 1;
+      return success(fenced(approve));
+    };
+    const deps = dependencies({ runId, roleRunner });
+    deps.runAttempt = initialRun;
+    const baselineCommit = await runGit(repo, ["rev-parse", "HEAD"]);
+
+    const result = await runPipeline(repo, spec, deps);
+
+    // A halt after at least one advance is handed to the human, not reported
+    // failed: the design routes it to human-decision-required with the partial
+    // branch promoted for a decision.
+    expect(result).toMatchObject({
+      status: "human-decision-required",
+      haltedSliceIndex: 2,
+      failure: null,
+      increments: [],
+      rounds: [],
+    });
+    expect(result.slices.map(slice => slice.route)).toEqual(["advance", "halt"]);
+    expect(result.slices[1]?.attempts).toHaveLength(2);
+    expect(reviewerCalls).toBe(0);
+    expect(result.gate).toMatchObject({ decisionReady: false, requiresHumanDecision: true });
+    expect(result.finalCandidateCommit).not.toBe(baselineCommit);
+
+    // The partial branch keeps slice one's advance and leaves slice two at its
+    // baseline; the composed verification honestly fails on the unbuilt slice.
+    expect(await runGit(repo, ["show", `${result.finalCandidateCommit}:slice-one.txt`]))
+      .toBe("slice one candidate");
+    expect(await runGit(repo, ["show", `${result.finalCandidateCommit}:slice-two.txt`]))
+      .toBe("slice two base");
+    expect(result.verification?.pass).toBe(false);
+
+    // The promoted partial is a real verified-candidate anchored at the partial
+    // branch, so the human can accept it — the crux of a human-decision halt.
+    const store = new ArtifactStore(runId);
+    await expect(store.readResult(runId)).resolves.toMatchObject({
+      status: "verified-candidate",
+      failure: null,
+      candidate: { candidateCommitOid: result.finalCandidateCommit },
+    });
+    expect(await runGit(repo, ["rev-parse", result.attempt.candidate!.anchorRef]))
+      .toBe(result.finalCandidateCommit);
+    await expect(handleDecideCandidate(repo, runId, "accepted"))
+      .resolves.toEqual({ recorded: true });
+  }, { timeout: 120_000 });
+
   it("archives a SliceExecutionError as the returned non-integrable attempt", async () => {
     const repo = await initSlicedRepo();
     const runId = "pipeline-slices-role-failure";

@@ -149,17 +149,23 @@ Slice rules and guarantees:
   own `verification`. Each slice's `writeAllowlist` must be a subset of the
   spec's, and its verification `cwd` must stay inside the candidate root.
 - A deterministic wayfinder routes each completed slice **advance / repair /
-  halt** from its verification result alone — no model judgment. A slice that
-  passes advances; a slice that fails is repaired within its round budget; a
-  slice that cannot be made to pass halts the run.
+  halt** from objective gate results — the slice's own `verification`, plus its
+  independent per-slice review findings when `review.perSlice` is enabled —
+  never from model judgment or a Producer's self-report. A slice that passes
+  advances; a slice that fails is repaired within its round budget; a slice that
+  cannot be made to pass halts the run.
 - Review and the advisor judge the **composed candidate** at the end, over the
   whole slice branch. Per-slice review is off by default; opt in with
   `review.perSlice: true` to review each slice as it lands.
-- A mid-run halt yields a **partial** candidate with
-  `status: "human-decision-required"`, the halted slice index in
-  `haltedSliceIndex`, and each slice's route in `slices`. Present the completed
-  slices, the halt reason, and the partial candidate to the human; never accept
-  or continue past a halt on their behalf.
+- A mid-run halt **after at least one slice has advanced** yields a **partial**
+  candidate with `status: "human-decision-required"`, the halted slice index in
+  `haltedSliceIndex`, and each slice's route in `slices`; the promoted partial
+  branch (the advanced slices) is a real candidate the human may accept, reject,
+  or revise, and the halted slice's attempts stay in `slices` as evidence. A
+  halt on the very first slice, with nothing advanced, is reported `failed` with
+  the slice evidence retained — there is no partial branch to accept. Present
+  the completed slices, the halt reason, and the partial candidate to the human;
+  never accept or continue past a halt on their behalf.
 
 ## Monitoring a backgrounded delegation
 
