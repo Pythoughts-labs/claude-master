@@ -2030,6 +2030,16 @@ describe("runPipeline", () => {
     });
     expect(delegatePipelineOutput.parse({ ok: true, result: { ...result, increments: [] } }))
       .toMatchObject({ result: { increments: [] } });
+    // The wire schema must carry the sliced-pipeline fields through, not strip them.
+    const parsed = delegatePipelineOutput.parse({ ok: true, result });
+    expect(parsed.result).toHaveProperty("slices", []);
+    expect(parsed.result).toHaveProperty("haltedSliceIndex", null);
+    const sliced = delegatePipelineOutput.parse({
+      ok: true,
+      result: { ...result, slices: [{ index: 1, route: "advance" }], haltedSliceIndex: 2 },
+    });
+    expect(sliced.result?.slices).toEqual([{ index: 1, route: "advance" }]);
+    expect(sliced.result?.haltedSliceIndex).toBe(2);
   }, { timeout: 120_000 });
 
   it("exhausts the increment budget after continued real progress and still reviews", async () => {

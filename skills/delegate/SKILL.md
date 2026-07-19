@@ -6,7 +6,7 @@ description: Let Claude Architect route a versioned implementation spec through 
 # Delegate
 
 ```claude-architect-protocol
-PROTOCOL_VERSION: 1.2.0
+PROTOCOL_VERSION: 1.3.0
 ```
 
 The current session is the architect. It owns requirements, the Delegation Spec, Producer selection, review, and acceptance. Producers are untrusted: their output is only a candidate until the runtime freezes it, independently verifies it, and the architect reviews the exact anchored bytes.
@@ -68,7 +68,7 @@ When running multiple delegations, normalize reported blockers by phase, command
 
 The `delegate` and `delegatePipeline` MCP calls are synchronous. Keep each call in the foreground until it returns; never hand it to Monitor or background execution.
 
-1. Call `delegate` through `mcp__plugin_claude-architect_runtime__delegate` with `checkoutPath`, the candidate spec, and `protocolVersion: "1.2.0"` copied from this skill's `PROTOCOL_VERSION` marker.
+1. Call `delegate` through `mcp__plugin_claude-architect_runtime__delegate` with `checkoutPath`, the candidate spec, and `protocolVersion: "1.3.0"` copied from this skill's `PROTOCOL_VERSION` marker.
 2. When it returns `ok:false` with `validationErrors`, repair only the reported spec defects and resubmit. This repair loop must not touch a Producer.
 3. When it returns a protocol/schema diagnostic, stop and tell the user to update the installed marketplace copy and reload Claude Code. Never guess across a version mismatch.
 4. When the result is `unavailable`, `failed`, or `cancelled`, report the structured classification and evidence. Do not claim a candidate exists. A Codex report with `laneEligibility.edit=false`, a missing `codex-native-sandbox`, or an unsupported Host is diagnostics-only and must not enter any legacy implementation lane.
@@ -99,7 +99,7 @@ edits).
    ```
 
 2. Call `mcp__plugin_claude-architect_runtime__delegatePipeline` with
-   `checkoutPath`, `spec`, `protocolVersion: "1.2.0"`.
+   `checkoutPath`, `spec`, `protocolVersion: "1.3.0"`.
 3. Read the returned evidence bundle: attempt result, per-round review
    reports and consolidated findings, fix dispositions, verification report,
    and gate reasons.

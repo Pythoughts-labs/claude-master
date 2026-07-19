@@ -21927,7 +21927,7 @@ var StdioServerTransport = class {
 };
 
 // src/protocol/versions.ts
-var PROTOCOL_VERSION = "1.2.0";
+var PROTOCOL_VERSION = "1.3.0";
 var DELEGATION_SPEC_VERSION = "1";
 var ATTEMPT_RESULT_VERSION = "1";
 var RUNTIME_VERSION = "0.20.0";
@@ -31914,7 +31914,9 @@ var delegatePipelineOutput = external_exports.object({
     rounds: external_exports.array(external_exports.record(external_exports.string(), external_exports.unknown())),
     verification: external_exports.record(external_exports.string(), external_exports.unknown()).nullable(),
     gate: external_exports.record(external_exports.string(), external_exports.unknown()),
-    finalCandidateCommit: external_exports.string()
+    finalCandidateCommit: external_exports.string(),
+    slices: external_exports.array(external_exports.record(external_exports.string(), external_exports.unknown())),
+    haltedSliceIndex: external_exports.number().nullable()
   }).optional(),
   validationErrors: external_exports.array(external_exports.object({ path: external_exports.string(), message: external_exports.string() })).optional(),
   diagnostic: external_exports.string().optional(),

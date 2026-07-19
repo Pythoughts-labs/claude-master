@@ -335,6 +335,32 @@ describe("handleDelegatePipeline", () => {
 
     expect(output).toEqual({ ok: true, result: pipelineResult });
   });
+
+  it("passes a sliced spec through validation to the pipeline unstripped", async () => {
+    const slicedSpec: DelegationSpec = {
+      ...validSpec,
+      slices: [{
+        objective: "slice one",
+        context: "test",
+        writeAllowlist: ["src/**"],
+        forbiddenScope: [],
+        successCriteria: ["tests pass"],
+        verification: validSpec.verification,
+      }],
+    };
+    const deps = dependencies();
+    let seenSlices: unknown;
+    deps.runPipeline = async (_checkout, spec) => {
+      seenSlices = (spec as DelegationSpec).slices;
+      return pipelineResult;
+    };
+
+    const output = await handleDelegatePipeline("/repo", slicedSpec, deps);
+
+    expect(output).toMatchObject({ ok: true });
+    expect(Array.isArray(seenSlices)).toBe(true);
+    expect((seenSlices as Array<{ objective: string }>)[0]).toMatchObject({ objective: "slice one" });
+  });
 });
 
 describe("MCP tool handlers", () => {
