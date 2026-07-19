@@ -15,6 +15,7 @@ import nodeProcess from "node:process";
 import { git, type GitResult } from "../git/git-exec.js";
 import { WorktreeManager } from "../git/worktree-manager.js";
 import type { PlatformServices } from "../platform/platform-services.js";
+import { CLEANUP_JOURNAL_LOCK_KEY } from "../platform/posix-platform-services.js";
 import { getPlatformServices } from "../platform/select-platform.js";
 import type { AttemptResult } from "../protocol/attempt-result.js";
 import { RuntimeError } from "../util/errors.js";
@@ -2010,7 +2011,19 @@ export async function recoverStaleRuns(
     const runsIdentity = await plainDirectoryIdentity(runsRoot);
     // The reconciler completes interrupted prunes under a per-repo checkout lease
     // rather than deferring them, so no run is skipped for a pending prune.
-    if (runsIdentity !== null) await replayInterruptedPrunes(runsRoot, ps);
+    if (runsIdentity !== null) {
+      // A crash can leave the cleanup-journal mutex held by a dead owner. That lock
+      // is a 64-hex leaf reclaimed by reclaimLocks() near the end of this body, but
+      // replayInterruptedPrunes acquires it first — so without an up-front reclaim a
+      // stale lock would make replay spin to its deadline and throw, aborting recovery
+      // before reclaimLocks ever runs and permanently blocking every future pass.
+      await reclaimDeadLock(
+        path.join(locksRoot, `${CLEANUP_JOURNAL_LOCK_KEY}.lock`),
+        isProcessAlive,
+        pid => ps.getProcessStartToken(pid),
+      );
+      await replayInterruptedPrunes(runsRoot, ps);
+    }
     const journaledQuarantines = runsIdentity === null
       ? new Set<string>()
       : (await readRecoveryQuarantineJournal(runsRoot)).runIds;

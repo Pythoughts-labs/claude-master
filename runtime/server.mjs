@@ -32717,7 +32717,14 @@ async function recoverStaleRuns(dependencies = {}) {
   try {
     const runsRoot = path14.join(root, "runs");
     const runsIdentity = await plainDirectoryIdentity(runsRoot);
-    if (runsIdentity !== null) await replayInterruptedPrunes(runsRoot, ps);
+    if (runsIdentity !== null) {
+      await reclaimDeadLock(
+        path14.join(locksRoot, `${CLEANUP_JOURNAL_LOCK_KEY}.lock`),
+        isProcessAlive,
+        (pid) => ps.getProcessStartToken(pid)
+      );
+      await replayInterruptedPrunes(runsRoot, ps);
+    }
     const journaledQuarantines = runsIdentity === null ? /* @__PURE__ */ new Set() : (await readRecoveryQuarantineJournal(runsRoot)).runIds;
     const stale = [];
     const recovered = [];
