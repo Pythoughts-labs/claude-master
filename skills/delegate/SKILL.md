@@ -93,7 +93,7 @@ Surface every delegation in the Claude Code subagent look & feel. This is presen
 
 **Dispatch card** — emit when you call `delegate`/`delegatePipeline`, so the run reads like an `Agent` launch:
 
-```
+```text
 ▸ Agent · codex-implementer          edit · worktree-isolated
   Task    <3–5 word description>
   Model   GPT-5.6 Sol · reasoning low
@@ -102,7 +102,7 @@ Surface every delegation in the Claude Code subagent look & feel. This is presen
 
 **Live status** — one FleetView-style line while the call runs and after the host collapses it to background. Derive it only from the run's durable artifacts using the rules in *Monitoring a backgrounded delegation*; never invent progress.
 
-```
+```text
 ● running · codex-implementer · verification · 4m12s
 ```
 
@@ -110,7 +110,7 @@ Status glyphs: `●` running · `◑` decision-ready / human-decision-required �
 
 **Completion notification** — when the call returns, render one compact box populated from the `reviewCandidate` evidence and verification report (mirrors a background subagent's completion notice):
 
-```
+```text
 ┌ ✓ codex-implementer · verified-candidate ───────────────
 │ 6 files · verification 5/5 pass
 │ findings 1 major (fixed in-pipeline) · 0 open
