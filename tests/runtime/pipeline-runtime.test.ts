@@ -5,6 +5,7 @@ import {
   readFile,
   realpath,
   rm,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -76,6 +77,11 @@ async function runGit(
   const result = await git(cwd, args, env === undefined ? undefined : { env });
   expect(result.exitCode, result.stderr).toBe(0);
   return result.stdout.trim();
+}
+
+async function expectRefMissing(repo: string, ref: string): Promise<void> {
+  const result = await git(repo, ["rev-parse", "--verify", "--quiet", ref]);
+  expect(result.exitCode).not.toBe(0);
 }
 
 async function initRepo(): Promise<string> {
@@ -238,10 +244,11 @@ function fakeAttempt(runId: string, edit: (repo: string) => Promise<void>) {
   ): Promise<AttemptResult> => {
     const baselineCommit = await runGit(repo, ["rev-parse", "HEAD"]);
     const store = new ArtifactStore(runId);
+    const canonicalCommonDir = await realpath(path.join(repo, ".git"));
     const runStart = await initializeRunStart(store, {
       runId,
-      lockKey: createHash("sha256").update(repo).digest("hex"),
-      canonicalCommonDir: await realpath(path.join(repo, ".git")),
+      lockKey: createHash("sha256").update(canonicalCommonDir).digest("hex"),
+      canonicalCommonDir,
       pid: null,
       processToken: null,
       startedAt: new Date().toISOString(),
@@ -1039,22 +1046,156 @@ describe("runPipeline", () => {
       },
     });
     deps.runAttempt = initialRun;
-    vi.spyOn(ArtifactStore.prototype, "promoteTerminalArtifacts")
-      .mockRejectedValue(new Error("terminal archive failed"));
+    const promotion = vi.spyOn(ArtifactStore.prototype, "promoteTerminalArtifacts")
+      .mockRejectedValueOnce(new Error("terminal archive failed"));
 
     await expect(runPipeline(repo, spec, deps)).rejects.toThrow(
       "sliced pipeline failed and its attempt result could not be archived",
     );
 
     const store = new ArtifactStore(runId);
+    expect(promotion).toHaveBeenCalledOnce();
     await expect(store.readPipelineActiveMarker(runId)).resolves.toMatchObject({ sliced: true });
     const archived = await store.readResult(runId);
     expect(archived).toMatchObject({ status: "verified-candidate" });
+    await expectRefMissing(repo, archived!.candidate!.anchorRef);
     await expectPipelineAuthorityBlocksTools(
       repo,
       runId,
       archived!.candidate!.manifestHash,
     );
+
+    promotion.mockRestore();
+    await expect(recoverStaleRuns({
+      platformServices: {
+        os: "darwin",
+        async getProcessStartToken() { return null; },
+        async terminateProcessTreeByPid() {},
+      },
+      isProcessAlive: () => false,
+    })).resolves.toEqual({ recovered: [] });
+
+    await expect(store.readResult(runId)).resolves.toMatchObject({
+      status: "failed",
+      failure: "verification-failure",
+      candidate: expect.any(Object),
+    });
+    await expect(store.readPipelineActiveMarker(runId)).resolves.toBeNull();
+    await expectRefMissing(repo, archived!.candidate!.anchorRef);
+    const oldTime = new Date(Date.now() - 60_000);
+    await utimes(store.runDirectory, oldTime, oldTime);
+    await expect(store.prune({
+      maxAgeMs: 1_000,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+    })).resolves.toMatchObject({ removed: [runId] });
+    await expect(store.readResult(runId)).resolves.toBeNull();
+  }, { timeout: 120_000 });
+
+  it("refuses candidate-null archival when the exact run anchor moved", async () => {
+    const repo = await initSlicedRepo();
+    const runId = "pipeline-slices-moved-failure-anchor";
+    const spec = slicedSpec(true);
+    const initialRun = fakeAttempt(runId, async checkout => {
+      await writeFile(path.join(checkout, "slice-one.txt"), "slice one candidate\n");
+    });
+    const movedOid = await runGit(repo, ["rev-parse", "HEAD"]);
+    const anchorRef = `refs/claude-architect/candidates/${runId}`;
+    const deps = dependencies({
+      runId,
+      roleRunner: async args => {
+        if (args.role === "reviewer-correctness") {
+          const expectedOid = await runGit(repo, ["rev-parse", anchorRef]);
+          await runGit(repo, ["update-ref", anchorRef, movedOid, expectedOid]);
+          return {
+            ok: false,
+            rawOutput: "",
+            failure: "timeout",
+            producerId: "stub",
+          };
+        }
+        throw new Error(`unexpected role ${args.role}`);
+      },
+    });
+    deps.runAttempt = initialRun;
+
+    let thrown: unknown;
+    try {
+      await runPipeline(repo, spec, deps);
+    } catch (error) {
+      thrown = error;
+    }
+
+    const messages: string[] = [];
+    const collectMessages = (error: unknown): void => {
+      if (error instanceof Error) messages.push(error.message);
+      if (error instanceof AggregateError) error.errors.forEach(collectMessages);
+    };
+    collectMessages(thrown);
+    expect(messages.some(message => message.includes("delete sliced candidate anchor"))).toBe(true);
+    expect(await runGit(repo, ["rev-parse", anchorRef])).toBe(movedOid);
+    const store = new ArtifactStore(runId);
+    const archived = await store.readResult(runId);
+    expect(archived).toMatchObject({ status: "verified-candidate" });
+    await expect(store.readPipelineActiveMarker(runId)).resolves.toMatchObject({ sliced: true });
+    await expectPipelineAuthorityBlocksTools(
+      repo,
+      runId,
+      archived!.candidate!.manifestHash,
+    );
+  }, { timeout: 120_000 });
+
+  it("refuses candidate-null archival for a noncanonical candidate anchor", async () => {
+    const repo = await initSlicedRepo();
+    const runId = "pipeline-slices-noncanonical-failure-anchor";
+    const spec = slicedSpec(true);
+    const initialRun = fakeAttempt(runId, async checkout => {
+      await writeFile(path.join(checkout, "slice-one.txt"), "slice one candidate\n");
+    });
+    const canonicalRef = `refs/claude-architect/candidates/${runId}`;
+    const foreignRef = `${canonicalRef}-foreign`;
+    const deps = dependencies({
+      runId,
+      roleRunner: async args => {
+        if (args.role === "reviewer-correctness") {
+          return {
+            ok: false,
+            rawOutput: "",
+            failure: "timeout",
+            producerId: "stub",
+          };
+        }
+        throw new Error(`unexpected role ${args.role}`);
+      },
+    });
+    deps.runAttempt = async (checkoutPath, receivedSpec, attemptDeps) => {
+      const result = await initialRun(checkoutPath, receivedSpec, attemptDeps);
+      await runGit(repo, ["update-ref", foreignRef, result.candidate!.candidateCommitOid]);
+      return {
+        ...result,
+        candidate: { ...result.candidate!, anchorRef: foreignRef },
+      };
+    };
+
+    let thrown: unknown;
+    try {
+      await runPipeline(repo, spec, deps);
+    } catch (error) {
+      thrown = error;
+    }
+
+    const messages: string[] = [];
+    const collectMessages = (error: unknown): void => {
+      if (error instanceof Error) messages.push(error.message);
+      if (error instanceof AggregateError) error.errors.forEach(collectMessages);
+    };
+    collectMessages(thrown);
+    expect(messages).toContain("sliced candidate anchor does not match run id");
+
+    const canonicalOid = await runGit(repo, ["rev-parse", canonicalRef]);
+    expect(await runGit(repo, ["rev-parse", foreignRef])).toBe(canonicalOid);
+    const store = new ArtifactStore(runId);
+    await expect(store.readResult(runId)).resolves.toMatchObject({ status: "verified-candidate" });
+    await expect(store.readPipelineActiveMarker(runId)).resolves.toMatchObject({ sliced: true });
   }, { timeout: 120_000 });
 
   it("runs independent per-slice reviewers with slice-local evidence and logs", async () => {
@@ -1191,6 +1332,8 @@ describe("runPipeline", () => {
       candidate: result.attempt.candidate,
     });
     expect(result.attempt).toEqual(archived);
+    expect(await runGit(repo, ["rev-parse", result.attempt.candidate!.anchorRef]))
+      .toBe(result.attempt.candidate!.candidateCommitOid);
     await store.writeDecision({
       decision: "accepted",
       recordedAt: "2026-07-19T12:00:00.000Z",
@@ -1242,6 +1385,7 @@ describe("runPipeline", () => {
     });
     const store = new ArtifactStore(runId);
     await expect(store.readResult(runId)).resolves.toEqual(result.attempt);
+    await expectRefMissing(repo, `refs/claude-architect/candidates/${runId}`);
     await expect(readFile(
       path.join(store.runDirectory, "pipeline-active.json"),
       "utf8",
@@ -1312,6 +1456,7 @@ describe("runPipeline", () => {
       },
     });
     await expect(new ArtifactStore(runId).readResult(runId)).resolves.toEqual(result.attempt);
+    await expectRefMissing(repo, `refs/claude-architect/candidates/${runId}`);
   }, { timeout: 120_000 });
 
   it("archives a composed-review failure as the returned non-integrable attempt", async () => {
@@ -1466,6 +1611,7 @@ describe("runPipeline", () => {
       },
     });
     await expect(new ArtifactStore(runId).readResult(runId)).resolves.toEqual(result.attempt);
+    await expectRefMissing(repo, `refs/claude-architect/candidates/${runId}`);
   }, { timeout: 120_000 });
 
   it("runs a completed increment, redacts and archives it, then reviews its diff", async () => {

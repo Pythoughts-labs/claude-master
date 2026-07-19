@@ -139,6 +139,7 @@ const IGNORED_STRUCTURAL_FAILURES = new Set<StructuralFailure>([
   "artifact-divergence",
   "base-changed",
 ]);
+const CANDIDATE_REF_PREFIX = "refs/claude-architect/candidates/";
 const SLICE_REF_PREFIX = "refs/claude-architect/slices/";
 
 interface TemporarySliceRef {
@@ -440,6 +441,13 @@ class SliceExecutionError extends RuntimeError {
   }
 }
 
+class SlicedFailureArchiveError extends RuntimeError {
+  constructor(readonly cause: unknown) {
+    super(cause instanceof Error ? cause.message : "sliced failure archival failed");
+    this.name = "SlicedFailureArchiveError";
+  }
+}
+
 function findSliceExecutionError(error: unknown): SliceExecutionError | null {
   if (error instanceof SliceExecutionError) return error;
   if (!(error instanceof AggregateError)) return null;
@@ -450,6 +458,12 @@ function findSliceExecutionError(error: unknown): SliceExecutionError | null {
   return null;
 }
 
+function containsSlicedFailureArchiveError(error: unknown): boolean {
+  if (error instanceof SlicedFailureArchiveError) return true;
+  if (!(error instanceof AggregateError)) return false;
+  return error.errors.some(containsSlicedFailureArchiveError);
+}
+
 function failedAttemptStatus(failure: FailureClassification): AttemptResult["status"] {
   if (failure === "unavailable" || failure === "authentication-required") return "unavailable";
   if (failure === "cancelled") return "cancelled";
@@ -457,32 +471,55 @@ function failedAttemptStatus(failure: FailureClassification): AttemptResult["sta
 }
 
 async function archiveSlicedFailure(args: {
+  checkoutPath: string;
   attempt: AttemptResult;
   failure: FailureClassification;
   reason: string;
   store: ArtifactStore;
 }): Promise<AttemptResult> {
-  const failedAttempt: AttemptResult = {
-    ...args.attempt,
-    status: failedAttemptStatus(args.failure),
-    failure: args.failure,
-    summary: args.reason,
-    candidate: args.failure === "verification-failure" ? args.attempt.candidate : null,
-    unresolvedIssues: [...args.attempt.unresolvedIssues, args.reason],
-    evidence: {
-      ...args.attempt.evidence,
-      pipelineFailure: { failure: args.failure, reason: args.reason },
-    },
-  };
-  const manifest = await args.store.readManifest(args.attempt.runId);
-  if (manifest === null) {
-    throw new RuntimeError("run manifest is missing while archiving sliced failure");
+  try {
+    const manifest = await args.store.readManifest(args.attempt.runId);
+    if (manifest === null) {
+      throw new RuntimeError("run manifest is missing while archiving sliced failure");
+    }
+    const retainCandidate = args.failure === "verification-failure";
+    if (!retainCandidate && args.attempt.candidate !== null) {
+      const candidate = args.attempt.candidate;
+      const expectedRef = `${CANDIDATE_REF_PREFIX}${args.attempt.runId}`;
+      if (candidate.anchorRef !== expectedRef) {
+        throw new RuntimeError("sliced candidate anchor does not match run id");
+      }
+      const deleted = await git(args.checkoutPath, [
+        "update-ref",
+        "--no-deref",
+        "-d",
+        candidate.anchorRef,
+        candidate.candidateCommitOid,
+      ]);
+      if (deleted.exitCode !== 0) throw gitFailure("delete sliced candidate anchor", deleted);
+    }
+    const failedAttempt: AttemptResult = {
+      ...args.attempt,
+      status: failedAttemptStatus(args.failure),
+      failure: args.failure,
+      summary: args.reason,
+      candidate: retainCandidate ? args.attempt.candidate : null,
+      unresolvedIssues: [...args.attempt.unresolvedIssues, args.reason],
+      evidence: {
+        ...args.attempt.evidence,
+        pipelineFailure: { failure: args.failure, reason: args.reason },
+      },
+    };
+    await args.store.promoteTerminalArtifacts({ result: failedAttempt, manifest });
+    return failedAttempt;
+  } catch (error) {
+    if (error instanceof SlicedFailureArchiveError) throw error;
+    throw new SlicedFailureArchiveError(error);
   }
-  await args.store.promoteTerminalArtifacts({ result: failedAttempt, manifest });
-  return failedAttempt;
 }
 
 async function archiveSliceExecutionError(args: {
+  checkoutPath: string;
   error: unknown;
   attempt: AttemptResult;
   store: ArtifactStore;
@@ -493,6 +530,7 @@ async function archiveSliceExecutionError(args: {
     return {
       sliceError,
       failedAttempt: await archiveSlicedFailure({
+        checkoutPath: args.checkoutPath,
         attempt: args.attempt,
         failure: sliceError.failure,
         reason: sliceError.message,
@@ -1157,6 +1195,7 @@ export async function runPipeline(
       const failedAttempt = slices.length === 0
         ? attempt
         : await archiveSlicedFailure({
+          checkoutPath,
           attempt,
           failure: args.failure,
           reason: args.reason,
@@ -1206,7 +1245,12 @@ export async function runPipeline(
             store,
           });
         } catch (error) {
-          const archived = await archiveSliceExecutionError({ error, attempt, store });
+          const archived = await archiveSliceExecutionError({
+            checkoutPath,
+            error,
+            attempt,
+            store,
+          });
           authoritySafeToRelease = true;
           finalAttempt = archived.failedAttempt;
           if (error !== archived.sliceError) throw error;
@@ -1375,7 +1419,12 @@ export async function runPipeline(
           },
         });
       } catch (error) {
-        const archived = await archiveSliceExecutionError({ error, attempt, store });
+        const archived = await archiveSliceExecutionError({
+          checkoutPath,
+          error,
+          attempt,
+          store,
+        });
         authoritySafeToRelease = true;
         finalAttempt = archived.failedAttempt;
         if (error !== archived.sliceError) throw error;
@@ -1397,6 +1446,7 @@ export async function runPipeline(
         const halted = phase.slices.at(-1);
         const reason = `slice phase halted at slice ${phase.haltedSliceIndex}: ${halted?.reasons.join("; ") ?? "objective gate failed"}`;
         const failedAttempt = await archiveSlicedFailure({
+          checkoutPath,
           attempt,
           failure: "verification-failure",
           reason,
@@ -1766,9 +1816,12 @@ export async function runPipeline(
     return result;
   } catch (error) {
     let terminalError = error;
-    if (slices.length > 0 && finalAttempt.status === "verified-candidate") {
+    if (slices.length > 0
+      && finalAttempt.status === "verified-candidate"
+      && !containsSlicedFailureArchiveError(error)) {
       try {
         finalAttempt = await archiveSlicedFailure({
+          checkoutPath,
           attempt: finalAttempt,
           failure: "verification-failure",
           reason: "sliced pipeline terminated before completing trusted gates",
@@ -1788,9 +1841,11 @@ export async function runPipeline(
     const cleanupErrors = await cleanupTemporarySliceRefs(checkoutPath, temporarySliceRefs);
     if (cleanupErrors.length > 0
       && slices.length > 0
-      && finalAttempt.status === "verified-candidate") {
+      && finalAttempt.status === "verified-candidate"
+      && !containsSlicedFailureArchiveError(pipelinePrimaryError)) {
       try {
         finalAttempt = await archiveSlicedFailure({
+          checkoutPath,
           attempt: finalAttempt,
           failure: "verification-failure",
           reason: "temporary slice ref cleanup did not complete",

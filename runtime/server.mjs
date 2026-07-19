@@ -29089,6 +29089,7 @@ var IGNORED_STRUCTURAL_FAILURES = /* @__PURE__ */ new Set([
   "artifact-divergence",
   "base-changed"
 ]);
+var CANDIDATE_REF_PREFIX2 = "refs/claude-architect/candidates/";
 var SLICE_REF_PREFIX = "refs/claude-architect/slices/";
 function scopeSpecToSlice(spec, slice) {
   const scoped = structuredClone({ ...spec, ...slice });
@@ -29307,6 +29308,13 @@ var SliceExecutionError = class extends RuntimeError {
     this.name = "SliceExecutionError";
   }
 };
+var SlicedFailureArchiveError = class extends RuntimeError {
+  constructor(cause) {
+    super(cause instanceof Error ? cause.message : "sliced failure archival failed");
+    this.cause = cause;
+    this.name = "SlicedFailureArchiveError";
+  }
+};
 function findSliceExecutionError(error2) {
   if (error2 instanceof SliceExecutionError) return error2;
   if (!(error2 instanceof AggregateError)) return null;
@@ -29316,30 +29324,56 @@ function findSliceExecutionError(error2) {
   }
   return null;
 }
+function containsSlicedFailureArchiveError(error2) {
+  if (error2 instanceof SlicedFailureArchiveError) return true;
+  if (!(error2 instanceof AggregateError)) return false;
+  return error2.errors.some(containsSlicedFailureArchiveError);
+}
 function failedAttemptStatus(failure2) {
   if (failure2 === "unavailable" || failure2 === "authentication-required") return "unavailable";
   if (failure2 === "cancelled") return "cancelled";
   return "failed";
 }
 async function archiveSlicedFailure(args) {
-  const failedAttempt = {
-    ...args.attempt,
-    status: failedAttemptStatus(args.failure),
-    failure: args.failure,
-    summary: args.reason,
-    candidate: args.failure === "verification-failure" ? args.attempt.candidate : null,
-    unresolvedIssues: [...args.attempt.unresolvedIssues, args.reason],
-    evidence: {
-      ...args.attempt.evidence,
-      pipelineFailure: { failure: args.failure, reason: args.reason }
+  try {
+    const manifest = await args.store.readManifest(args.attempt.runId);
+    if (manifest === null) {
+      throw new RuntimeError("run manifest is missing while archiving sliced failure");
     }
-  };
-  const manifest = await args.store.readManifest(args.attempt.runId);
-  if (manifest === null) {
-    throw new RuntimeError("run manifest is missing while archiving sliced failure");
+    const retainCandidate = args.failure === "verification-failure";
+    if (!retainCandidate && args.attempt.candidate !== null) {
+      const candidate = args.attempt.candidate;
+      const expectedRef = `${CANDIDATE_REF_PREFIX2}${args.attempt.runId}`;
+      if (candidate.anchorRef !== expectedRef) {
+        throw new RuntimeError("sliced candidate anchor does not match run id");
+      }
+      const deleted = await git(args.checkoutPath, [
+        "update-ref",
+        "--no-deref",
+        "-d",
+        candidate.anchorRef,
+        candidate.candidateCommitOid
+      ]);
+      if (deleted.exitCode !== 0) throw gitFailure5("delete sliced candidate anchor", deleted);
+    }
+    const failedAttempt = {
+      ...args.attempt,
+      status: failedAttemptStatus(args.failure),
+      failure: args.failure,
+      summary: args.reason,
+      candidate: retainCandidate ? args.attempt.candidate : null,
+      unresolvedIssues: [...args.attempt.unresolvedIssues, args.reason],
+      evidence: {
+        ...args.attempt.evidence,
+        pipelineFailure: { failure: args.failure, reason: args.reason }
+      }
+    };
+    await args.store.promoteTerminalArtifacts({ result: failedAttempt, manifest });
+    return failedAttempt;
+  } catch (error2) {
+    if (error2 instanceof SlicedFailureArchiveError) throw error2;
+    throw new SlicedFailureArchiveError(error2);
   }
-  await args.store.promoteTerminalArtifacts({ result: failedAttempt, manifest });
-  return failedAttempt;
 }
 async function archiveSliceExecutionError(args) {
   const sliceError = findSliceExecutionError(args.error);
@@ -29348,6 +29382,7 @@ async function archiveSliceExecutionError(args) {
     return {
       sliceError,
       failedAttempt: await archiveSlicedFailure({
+        checkoutPath: args.checkoutPath,
         attempt: args.attempt,
         failure: sliceError.failure,
         reason: sliceError.message,
@@ -29875,6 +29910,7 @@ async function runPipeline(checkoutPath, spec, deps) {
     let pipelineSlices = [];
     const archivePipelineFailure = async (args) => {
       const failedAttempt = slices.length === 0 ? attempt : await archiveSlicedFailure({
+        checkoutPath,
         attempt,
         failure: args.failure,
         reason: args.reason,
@@ -29923,7 +29959,12 @@ async function runPipeline(checkoutPath, spec, deps) {
             store
           });
         } catch (error2) {
-          const archived = await archiveSliceExecutionError({ error: error2, attempt, store });
+          const archived = await archiveSliceExecutionError({
+            checkoutPath,
+            error: error2,
+            attempt,
+            store
+          });
           authoritySafeToRelease = true;
           finalAttempt = archived.failedAttempt;
           if (error2 !== archived.sliceError) throw error2;
@@ -30086,7 +30127,12 @@ async function runPipeline(checkoutPath, spec, deps) {
           }
         });
       } catch (error2) {
-        const archived = await archiveSliceExecutionError({ error: error2, attempt, store });
+        const archived = await archiveSliceExecutionError({
+          checkoutPath,
+          error: error2,
+          attempt,
+          store
+        });
         authoritySafeToRelease = true;
         finalAttempt = archived.failedAttempt;
         if (error2 !== archived.sliceError) throw error2;
@@ -30108,6 +30154,7 @@ async function runPipeline(checkoutPath, spec, deps) {
         const halted = phase.slices.at(-1);
         const reason = `slice phase halted at slice ${phase.haltedSliceIndex}: ${halted?.reasons.join("; ") ?? "objective gate failed"}`;
         const failedAttempt = await archiveSlicedFailure({
+          checkoutPath,
           attempt,
           failure: "verification-failure",
           reason,
@@ -30463,9 +30510,10 @@ async function runPipeline(checkoutPath, spec, deps) {
     return result;
   } catch (error2) {
     let terminalError = error2;
-    if (slices.length > 0 && finalAttempt.status === "verified-candidate") {
+    if (slices.length > 0 && finalAttempt.status === "verified-candidate" && !containsSlicedFailureArchiveError(error2)) {
       try {
         finalAttempt = await archiveSlicedFailure({
+          checkoutPath,
           attempt: finalAttempt,
           failure: "verification-failure",
           reason: "sliced pipeline terminated before completing trusted gates",
@@ -30483,9 +30531,10 @@ async function runPipeline(checkoutPath, spec, deps) {
     throw terminalError;
   } finally {
     const cleanupErrors = await cleanupTemporarySliceRefs(checkoutPath, temporarySliceRefs2);
-    if (cleanupErrors.length > 0 && slices.length > 0 && finalAttempt.status === "verified-candidate") {
+    if (cleanupErrors.length > 0 && slices.length > 0 && finalAttempt.status === "verified-candidate" && !containsSlicedFailureArchiveError(pipelinePrimaryError)) {
       try {
         finalAttempt = await archiveSlicedFailure({
+          checkoutPath,
           attempt: finalAttempt,
           failure: "verification-failure",
           reason: "temporary slice ref cleanup did not complete",
@@ -30952,7 +31001,7 @@ var MAX_STATE_FILE_BYTES = 8e6;
 var SAFE_RUN_ID = /^[a-z0-9][a-z0-9._-]*$/;
 var LOCK_NAME = /^([0-9a-f]{64})\.lock$/;
 var OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
-var CANDIDATE_REF_PREFIX2 = "refs/claude-architect/candidates/";
+var CANDIDATE_REF_PREFIX3 = "refs/claude-architect/candidates/";
 var BACKUP_REF_PREFIX = "refs/claude-architect/prune-backups/";
 var SLICE_REF_PREFIX2 = "refs/claude-architect/slices/";
 function errorCode4(error2) {
@@ -31139,7 +31188,7 @@ async function createExactRef(repoRoot, ref, oid) {
   if (result.exitCode !== 0) throw runGitError("create recovery Git ref", result);
 }
 async function removeStaleCandidateAnchor(repoRoot, runId) {
-  const ref = `${CANDIDATE_REF_PREFIX2}${runId}`;
+  const ref = `${CANDIDATE_REF_PREFIX3}${runId}`;
   const oid = await readDirectRef(repoRoot, ref);
   if (oid !== null) await deleteExactRef(repoRoot, ref, oid);
 }
@@ -31270,7 +31319,7 @@ function parseCleanupRecord(line) {
   }
   const hasRepository = typeof record2.repoRoot === "string" && typeof record2.anchorRef === "string" && typeof record2.candidateCommitOid === "string";
   const noRepository = record2.repoRoot === null && record2.anchorRef === null && record2.backupRef === null && record2.candidateCommitOid === null;
-  if (!noRepository && (!hasRepository || record2.anchorRef !== `${CANDIDATE_REF_PREFIX2}${record2.runId}` || !OID.test(record2.candidateCommitOid) || record2.backupRef !== null && record2.backupRef !== `${BACKUP_REF_PREFIX}${record2.runId}`)) {
+  if (!noRepository && (!hasRepository || record2.anchorRef !== `${CANDIDATE_REF_PREFIX3}${record2.runId}` || !OID.test(record2.candidateCommitOid) || record2.backupRef !== null && record2.backupRef !== `${BACKUP_REF_PREFIX}${record2.runId}`)) {
     throw new RuntimeError("cleanup journal Git metadata is malformed");
   }
   return record2;
