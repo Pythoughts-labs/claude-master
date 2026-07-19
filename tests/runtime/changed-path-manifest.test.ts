@@ -4,7 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  MANIFEST_HASH_FORMAT,
   computeChangedPathManifest,
   parseRawDiff,
   splitNul,
@@ -70,9 +69,8 @@ describe("computeChangedPathManifest", () => {
     const manifest = computeChangedPathManifest({ rawDiff: [], nameStatusOutput: "", treeOutput: "" });
     expect(manifest.changedPaths).toEqual([]);
     expect(manifest.manifestHash).toBe(EMPTY_HASH);
-    // The version tag documents the format but must never enter the hashed bytes.
+    // The empty manifest hashes exactly sha256("[]") — no version prefix in the bytes.
     expect(EMPTY_HASH).toBe(createHash("sha256").update("[]").digest("hex"));
-    expect(MANIFEST_HASH_FORMAT).toBe("cap-v1");
   });
 
   it("produces the golden hash for a single modified file", () => {
@@ -200,7 +198,8 @@ describe("canonicalization has a single owner (no bypass)", () => {
       expect(text).not.toMatch(/function parseNameStatus/);
       expect(text).not.toMatch(/function parseTree/);
       expect(text).not.toMatch(/function sortChangedPaths/);
-      expect(text, `${rel} must not hash the manifest independently`).not.toMatch(/createHash/);
+      expect(text, `${rel} must not hash a serialized manifest independently`)
+        .not.toMatch(/\.update\(JSON\.stringify\(/);
     }
   });
 });

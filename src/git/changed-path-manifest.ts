@@ -17,10 +17,8 @@ import { RuntimeError } from "../util/errors.js";
  * The hashed bytes are `JSON.stringify` of the sorted `ChangedPath[]` with the
  * fixed key order {path, changeType, mode, contentHash}. Changing that
  * serialization changes every frozen candidate's hash and is therefore a
- * deliberate artifact-format migration, not a refactor. `MANIFEST_HASH_FORMAT`
- * documents the current format for telemetry; it is never part of the hash.
+ * deliberate artifact-format migration, not a refactor.
  */
-export const MANIFEST_HASH_FORMAT = "cap-v1";
 
 export interface RawDiffEntry {
   path: string;
