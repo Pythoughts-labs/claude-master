@@ -6,6 +6,15 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-19
+
+### Changed
+
+- Toolchain to latest: TypeScript 7.0.2 (stable native Go compiler), Vitest 4,
+  esbuild 0.28. `zod` deliberately stays on latest v3 while the runtime uses
+  `@modelcontextprotocol/sdk` v1.x (which pins `zod ^3`); see the dependency
+  version policy in `AGENTS.md`.
+
 ## [0.25.0] - 2026-07-19
 
 ### Removed
