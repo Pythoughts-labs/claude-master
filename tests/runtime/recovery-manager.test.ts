@@ -293,7 +293,7 @@ describe("recoverStaleRuns", () => {
     expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
     await expect(readFile(recoveryLockPath, "utf8"))
       .resolves.toBe(JSON.stringify(owner));
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("defers recovery when a live recovery mutex token cannot be probed", async () => {
     const repo = await initRepo();
@@ -330,7 +330,7 @@ describe("recoverStaleRuns", () => {
     await expect(access(worktree.path)).resolves.toBeUndefined();
     expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
     await expect(store.readResult(runId)).resolves.toBeNull();
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   // POSIX-only: the release failure is forced by rm-ing the locks directory while
   // recovery holds recovery.lock open. Windows blocks removing a directory that
@@ -370,7 +370,7 @@ describe("recoverStaleRuns", () => {
       ? error.errors.flatMap(containedErrors)
       : [error];
     expect(containedErrors(thrown)).toContain(primaryError);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("reclaims a dead recovery mutex before recovering stale runs", async () => {
     const repo = await initRepo();
@@ -399,7 +399,7 @@ describe("recoverStaleRuns", () => {
     await expect(store.readResult(runId))
       .resolves.toMatchObject({ status: "cancelled" });
     await expectMissing(recoveryLockPath);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("defers recovery rather than unlinking a hard-linked stale recovery mutex", async () => {
     const repo = await initRepo();
@@ -436,7 +436,7 @@ describe("recoverStaleRuns", () => {
     await expect(access(worktree.path)).resolves.toBeUndefined();
     expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
     await expect(store.readResult(runId)).resolves.toBeNull();
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("defers recovery when checkout ownership becomes live before mutation", async () => {
     const repo = await initRepo();
@@ -469,7 +469,7 @@ describe("recoverStaleRuns", () => {
     expect(ownerChecks).toBeGreaterThanOrEqual(2);
     await expect(store.readResult(runId)).resolves.toBeNull();
     await expect(readFile(lockPath, "utf8")).resolves.toBe(lockBytes);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   // POSIX-only: this simulates a concurrent process renaming a replacement lock onto
   // the lock file while the reclaimer holds it open for owner probing. Windows blocks
@@ -568,7 +568,7 @@ describe("recoverStaleRuns", () => {
     await expect(access(worktree.path)).resolves.toBeUndefined();
     expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
     await expectMissing(checkoutLockPath);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it.each([
     {
@@ -669,7 +669,7 @@ describe("recoverStaleRuns", () => {
     await expect(readFile(pipelineSentinelPath)).resolves.toEqual(pipelineSentinelBefore);
     await expect(readFile(verifySentinelPath)).resolves.toEqual(verifySentinelBefore);
     await expect(readFile(checkoutLockPath)).resolves.toEqual(checkoutLockBefore);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("revalidates a dead pipeline marker after reclaiming its checkout lock", async () => {
     const repo = await initRepo();
@@ -750,7 +750,7 @@ describe("recoverStaleRuns", () => {
     await expect(access(verifyWorktree.path)).resolves.toBeUndefined();
     await expectMissing(checkoutLockPath);
     expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("cleans dead-owner pipeline worktrees for a terminal run", async () => {
     const repo = await initRepo();
@@ -805,7 +805,7 @@ describe("recoverStaleRuns", () => {
     await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
     await expect(readFile(path.join(store.runDirectory, "result.json"), "utf8"))
       .resolves.toBe(resultBefore);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("preserves live-owner pipeline worktrees for a terminal run", async () => {
     const repo = await initRepo();
@@ -859,7 +859,7 @@ describe("recoverStaleRuns", () => {
     await expect(access(verifyWorktree.path)).resolves.toBeUndefined();
     const preservedMarker = JSON.parse(await readFile(markerPath, "utf8")) as { pid?: unknown };
     expect(preservedMarker.pid).toBe(4242);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("terminates and archives a stale run before removing its worktree, anchor, and lock", async () => {
     const repo = await initRepo();
@@ -1142,7 +1142,7 @@ describe("recoverStaleRuns", () => {
     await expect(access(worktree.path)).resolves.toBeUndefined();
     expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
     await expect(readFile(lockPath, "utf8")).resolves.toBe("");
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("quarantines a coercible non-string terminal status", async () => {
     const runId = "run-malformed-terminal";
@@ -1268,7 +1268,7 @@ describe("recoverStaleRuns", () => {
     await expect(healthyStore.readResult(healthyRunId))
       .resolves.toMatchObject({ status: "cancelled" });
     await expectQuarantinedRun(poisonedRunId, poisonedStore.runDirectory, [missingCommonDir]);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("restores a poisoned run and preserves both errors when quarantine persistence fails", async () => {
     const runId = "run-journal-failure";
@@ -2322,7 +2322,7 @@ describe("recoverStaleRuns", () => {
     })).resolves.toEqual({ recovered: [], quarantined: [] });
     await expect(access(neighborWorktree.path)).resolves.toBeUndefined();
     expect(await runGit(repo.directory, ["rev-parse", neighborRef])).toBe(repo.head);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("cleans every sliced worktree and ref for an unfinished run idempotently", async () => {
     const repo = await initRepo();
@@ -2358,7 +2358,7 @@ describe("recoverStaleRuns", () => {
       },
       isProcessAlive: () => false,
     })).resolves.toEqual({ recovered: [], quarantined: [] });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("fails closed on a malformed ref inside the run-specific slice namespace", async () => {
     const repo = await initRepo();

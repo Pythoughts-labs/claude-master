@@ -110,11 +110,30 @@ Exercise unhappy paths and fail-closed behavior. Save every bug discovered durin
 Primary verification commands:
 
 ```bash
-npx tsgo --noEmit   # TypeScript-Go (primary); npx tsc --noEmit remains the CI cross-check
+npx tsc --noEmit   # TypeScript 7 (native Go compiler)
 npx vitest run
 bash scripts/validate-release.sh
 claude plugin validate .
 ```
+
+### Dependency version policy (updated 2026-07-19)
+
+All dependencies track latest, with one deliberate pin. Provenance for future sessions:
+
+- `typescript` 7.x — the stable native Go compiler (successor of the `tsgo`
+  `@typescript/native-preview` line, which is no longer installed); `npx tsc --noEmit`
+  is the single type gate. tsconfig pins `types: ["node"]` because the native
+  compiler does not auto-discover `@types` packages the way tsc 5.x did.
+- `zod` is pinned to latest **v3** on purpose: `@modelcontextprotocol/sdk` v1.x
+  declares `zod ^3` as a direct dependency, and mixing zod 4 into the tree causes
+  dual-copy `TS2589` type blowups (per the SDK's own troubleshooting docs, verified
+  via Context7 against /modelcontextprotocol/typescript-sdk). Move zod to v4 only
+  together with the SDK v2 upgrade (v2 requires zod >= 4.2; it is still beta as of
+  2026-07-19 — re-check before upgrading).
+- `vitest` 4.x — the `test(name, fn, { timeout })` options-object third argument was
+  removed in v4; use a numeric third argument or options as the second argument.
+- `esbuild` tracks latest; any bump changes `runtime/server.mjs` bytes, so rebuild
+  and commit the bundle in the same change (`bash scripts/build-runtime.sh`).
 
 Run TypeScript and the full Vitest suite for executable changes. Run both release validators for release-facing work. For documentation-only changes, validate affected commands, links, examples, formatting, and contract consistency; run broader gates whenever the documentation is release-facing or a repository hook requires them.
 

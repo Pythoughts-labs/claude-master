@@ -941,7 +941,7 @@ describe("runPipeline", () => {
     expect(lease.releaseCalls()).toBe(1);
     expect(lease.held()).toBe(false);
     expect(releaseObservedLast).toBe(true);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("holds the borrowed lease through the early sliced marker and temporary-ref cleanup", async () => {
     const repo = await initSlicedRepo();
@@ -1014,7 +1014,7 @@ describe("runPipeline", () => {
     expect(lease.releaseCalls()).toBe(1);
     expect(lease.held()).toBe(false);
     expect(releaseObservedLast).toBe(true);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("releases the checkout lease after a non-verified initial result", async () => {
     const repo = await initRepo();
@@ -1137,7 +1137,7 @@ describe("runPipeline", () => {
 
     expect(result.status).toBe("decision-ready");
     expect(markerBeforeEdit).toMatchObject({ sliced: true });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("does not archive a sliced candidate when lifecycle authority cannot be established", async () => {
     const repo = await initSlicedRepo();
@@ -1302,7 +1302,7 @@ describe("runPipeline", () => {
       .toBe("slice one candidate");
     expect(await runGit(repo, ["show", `${result.finalCandidateCommit}:slice-two.txt`]))
       .toBe("slice two candidate");
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("retains lifecycle authority when a primary failure coincides with incomplete ref cleanup", async () => {
     const repo = await initSlicedRepo();
@@ -1365,7 +1365,7 @@ describe("runPipeline", () => {
     });
     expect(await runGit(repo, ["rev-parse", "--verify", temporarySliceRef]))
       .toBe(baselineCommit);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("archives a temporary-ref cleanup failure but retains lifecycle authority", async () => {
     const repo = await initSlicedRepo();
@@ -1422,7 +1422,7 @@ describe("runPipeline", () => {
       archived!.candidate!.manifestHash,
     );
     expect(await runGit(repo, ["rev-parse", temporarySliceRef])).toBe(baselineCommit);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("retains lifecycle authority when terminal failure archival does not complete", async () => {
     const repo = await initSlicedRepo();
@@ -1489,7 +1489,7 @@ describe("runPipeline", () => {
       maxBytes: Number.MAX_SAFE_INTEGER,
     })).resolves.toMatchObject({ removed: [runId] });
     await expect(store.readResult(runId)).resolves.toBeNull();
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("refuses candidate-null archival when the exact run anchor moved", async () => {
     const repo = await initSlicedRepo();
@@ -1542,7 +1542,7 @@ describe("runPipeline", () => {
       runId,
       archived!.candidate!.manifestHash,
     );
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("refuses candidate-null archival for a noncanonical candidate anchor", async () => {
     const repo = await initSlicedRepo();
@@ -1596,7 +1596,7 @@ describe("runPipeline", () => {
     const store = new ArtifactStore(runId);
     await expect(store.readResult(runId)).resolves.toMatchObject({ status: "verified-candidate" });
     await expect(store.readPipelineActiveMarker(runId)).resolves.toMatchObject({ sliced: true });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("runs independent per-slice reviewers with slice-local evidence and logs", async () => {
     const repo = await initSlicedRepo();
@@ -1665,7 +1665,7 @@ describe("runPipeline", () => {
         "logs/role-reviewer-correctness-slice-2-attempt-0-round1.log",
       ],
     ]);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("returns an explicit failed sliced result when objective routing halts", async () => {
     const repo = await initSlicedRepo();
@@ -1747,7 +1747,7 @@ describe("runPipeline", () => {
       error: "candidate-not-verified",
       diagnostic: "candidate did not complete independent verification",
     });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("hands a later-slice halt to the human as an acceptable partial candidate", async () => {
     const repo = await initSlicedRepo();
@@ -1818,7 +1818,7 @@ describe("runPipeline", () => {
       .toBe(result.finalCandidateCommit);
     await expect(handleDecideCandidate(repo, runId, "accepted"))
       .resolves.toEqual({ recorded: true });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("archives a SliceExecutionError as the returned non-integrable attempt", async () => {
     const repo = await initSlicedRepo();
@@ -1861,7 +1861,7 @@ describe("runPipeline", () => {
       path.join(store.runDirectory, "pipeline-active.json"),
       "utf8",
     )).rejects.toMatchObject({ code: "ENOENT" });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("labels sliced candidate provenance failures as slice implementer failures", async () => {
     const repo = await initSlicedRepo();
@@ -1890,7 +1890,7 @@ describe("runPipeline", () => {
 
     expect(result.gate.reasons).toContain("slice implementer reported a missing candidate commit");
     expect(result.gate.reasons.some(reason => reason.includes("fix phase"))).toBe(false);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("archives an initial per-slice review error before returning failure", async () => {
     const repo = await initSlicedRepo();
@@ -1928,7 +1928,7 @@ describe("runPipeline", () => {
     });
     await expect(new ArtifactStore(runId).readResult(runId)).resolves.toEqual(result.attempt);
     await expectRefMissing(repo, `refs/claude-architect/candidates/${runId}`);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("archives a composed-review failure as the returned non-integrable attempt", async () => {
     const repo = await initSlicedRepo();
@@ -1978,7 +1978,7 @@ describe("runPipeline", () => {
     });
     expect(result.attempt.candidate).toBeNull();
     await expect(new ArtifactStore(runId).readResult(runId)).resolves.toEqual(result.attempt);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("archives an unexpected final-verification error before clearing lifecycle authority", async () => {
     const repo = await initSlicedRepo();
@@ -2031,7 +2031,7 @@ describe("runPipeline", () => {
       path.join(store.runDirectory, "pipeline-active.json"),
       "utf8",
     )).rejects.toMatchObject({ code: "ENOENT" });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("archives a composed-fixer failure as the returned non-integrable attempt", async () => {
     const repo = await initSlicedRepo();
@@ -2083,7 +2083,7 @@ describe("runPipeline", () => {
     });
     await expect(new ArtifactStore(runId).readResult(runId)).resolves.toEqual(result.attempt);
     await expectRefMissing(repo, `refs/claude-architect/candidates/${runId}`);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("runs a completed increment, redacts and archives it, then reviews its diff", async () => {
     const repo = await initRepo();
@@ -2140,7 +2140,7 @@ describe("runPipeline", () => {
     });
     expect(sliced.result?.slices).toEqual([{ index: 1, route: "advance" }]);
     expect(sliced.result?.haltedSliceIndex).toBe(2);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("exhausts the increment budget after continued real progress and still reviews", async () => {
     const repo = await initRepo();
@@ -2175,7 +2175,7 @@ describe("runPipeline", () => {
       requiresHumanDecision: true,
       reasons: ["increment loop ended 'budget-exhausted' without completion"],
     });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("stops incrementing when blocked and still reviews", async () => {
     const repo = await initRepo();
@@ -2207,7 +2207,7 @@ describe("runPipeline", () => {
       requiresHumanDecision: true,
       reasons: ["increment loop ended 'blocked' without completion"],
     });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("treats an allow-empty continuing increment as stalled", async () => {
     const repo = await initRepo();
@@ -2245,7 +2245,7 @@ describe("runPipeline", () => {
       .resolves.toMatchObject({ summary: "increment 1" });
     await expect(store.readPipelineArtifact("pipeline-increment-stalled", "increment-3"))
       .resolves.toMatchObject({ summary: "increment 2" });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("preserves completed increments when a later implementer role fails", async () => {
     const repo = await initRepo();
@@ -2278,7 +2278,7 @@ describe("runPipeline", () => {
     expect(result.failure).toBe("timeout");
     expect(result.increments).toHaveLength(1);
     expect(result.gate.reasons[0]).toContain("logs/role-implementer-increment3.log");
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("fails invalid increment output after one archived repair", async () => {
     const repo = await initRepo();
@@ -2300,7 +2300,7 @@ describe("runPipeline", () => {
       path.join(store.runDirectory, "logs", "role-implementer-increment2-repair.log"),
       "utf8",
     )).resolves.toBe("still not json");
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("fails closed when an increment leaves the worktree dirty", async () => {
     const repo = await initRepo();
@@ -2324,7 +2324,7 @@ describe("runPipeline", () => {
     expect(result.status).toBe("failed");
     expect(result.failure).toBe("sandbox-violation");
     expect(result.increments).toEqual([]);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("rejects an increment report whose candidate does not match worktree HEAD", async () => {
     const repo = await initRepo();
@@ -2360,7 +2360,7 @@ describe("runPipeline", () => {
     expect(result.increments).toEqual([]);
     expect(result.finalCandidateCommit).toBe(result.attempt.candidate?.candidateCommitOid);
     expect(reviewerCalls).toBe(0);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("rejects an increment report whose candidate commit does not exist", async () => {
     const repo = await initRepo();
@@ -2391,7 +2391,7 @@ describe("runPipeline", () => {
     expect(result.increments).toEqual([]);
     expect(result.finalCandidateCommit).toBe(result.attempt.candidate?.candidateCommitOid);
     expect(reviewerCalls).toBe(0);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("rejects an increment HEAD that is not descended from the reviewed candidate", async () => {
     const repo = await initRepo();
@@ -2452,7 +2452,7 @@ describe("runPipeline", () => {
     expect(result.increments).toEqual([]);
     expect(result.finalCandidateCommit).toBe(result.attempt.candidate?.candidateCommitOid);
     expect(reviewerCalls).toBe(0);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("fails closed without review when implementer confinement is unavailable", async () => {
     const repo = await initRepo();
@@ -2481,7 +2481,7 @@ describe("runPipeline", () => {
     expect(result.failure).toBe("sandbox-violation");
     expect(result.increments).toEqual([]);
     expect(reviewerCalls).toBe(0);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("stops before dispatching another increment when only the commit oid changes", async () => {
     const repo = await initRepo();
@@ -2510,7 +2510,7 @@ describe("runPipeline", () => {
 
     expect(result.increments.map(entry => entry.increment)).toEqual([2, 3]);
     expect(implementerCalls).toBe(2);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("redacts increment secrets from archives, progress notes, and results", async () => {
     const repo = await initRepo();
@@ -2542,7 +2542,7 @@ describe("runPipeline", () => {
     expect(archived?.summary).toContain("[s]");
     expect(incrementThreeProgress).not.toContain(secret);
     expect(JSON.stringify(result)).not.toContain(secret);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("passes only the immediately previous increment as progress", async () => {
     const repo = await initRepo();
@@ -2568,7 +2568,7 @@ describe("runPipeline", () => {
     expect(result.increments).toHaveLength(3);
     expect(incrementFourProgress).toContain("INCREMENT_THREE_MARKER");
     expect(incrementFourProgress).not.toContain("INCREMENT_TWO_MARKER");
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("does not invoke an implementer without an implementation block", async () => {
     const repo = await initRepo();
@@ -2594,7 +2594,7 @@ describe("runPipeline", () => {
     };
     expect(result.status).toBe("decision-ready");
     expect(JSON.stringify(result.gate)).toBe(JSON.stringify(preIncrementGate));
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("preserves and skips a terminal run recovered after an increment archive", async () => {
     const repo = await initRepo();
@@ -2655,7 +2655,7 @@ describe("runPipeline", () => {
     expect(anchor.stdout.trim()).toBe(candidateCommit);
     await expect(store.readPipelineArtifact(runId, "increment-2"))
       .resolves.toMatchObject({ summary: "increment two" });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("returns decision-ready after a clean review round without fixing", async () => {
     const repo = await initRepo();
@@ -2703,7 +2703,7 @@ describe("runPipeline", () => {
       path.join(store.runDirectory, "logs", "role-reviewer-systems-round1.log"),
       "utf8",
     )).resolves.toBe(fenced(approve));
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("fixes a blocker and returns decision-ready after a clean re-review", async () => {
     const repo = await initRepo();
@@ -3142,7 +3142,7 @@ describe("runPipeline", () => {
       path.join(store.runDirectory, "pipeline-active.json"),
       "utf8",
     )).rejects.toMatchObject({ code: "ENOENT" });
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("requires human decision when the candidate adds a skipped test", async () => {
     const repo = await initRepo();
@@ -3211,7 +3211,7 @@ describe("runPipeline", () => {
     expect(result.verification?.testsDeleted).toBe(0);
     expect(result.verification?.evidence.authorizedTestDeletions)
       .toEqual(["tests/obsolete.test.ts"]);
-  }, { timeout: 120_000 });
+  }, 120_000);
 
   it("persists round and verification artifacts", async () => {
     const repo = await initRepo();

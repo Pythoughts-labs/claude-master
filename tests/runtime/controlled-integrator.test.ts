@@ -237,7 +237,7 @@ describe("applyCandidateTree", () => {
         await ownerLock.release();
       }
     }
-  }, { timeout: 10_000 });
+  }, 10_000);
 
   it("rejects a borrowed lease for another repository before integration preconditions", async () => {
     const f = await fixture();
