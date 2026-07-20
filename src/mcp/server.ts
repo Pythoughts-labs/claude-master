@@ -62,6 +62,10 @@ export const delegatePipelineOutput = z.object({
   error: z.string().optional(),
 });
 export const reviewCandidateOutputSchema = z.object({
+  runId: z.string().optional(),
+  baseCommitOid: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u).optional(),
+  candidateCommitOid: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u).optional(),
+  candidateTreeOid: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u).optional(),
   manifestHash: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
   patch: z.string().optional(),
   changedPaths: z.array(z.object({

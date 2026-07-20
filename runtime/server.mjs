@@ -24147,7 +24147,7 @@ function gitChangedFiles(checkoutPath, deps = {}) {
 }
 
 // src/mcp/tools.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 
 // src/git/repo-preconditions.ts
 import { access as access2, lstat, opendir, readlink, realpath } from "node:fs/promises";
@@ -26758,13 +26758,210 @@ import {
 } from "node:fs/promises";
 import path11 from "node:path";
 
-// src/runtime/run-manifest.ts
+// src/runtime/review-snapshot.ts
 import { createHash as createHash4 } from "node:crypto";
+var SHA256 = /^[0-9a-f]{64}$/u;
+var GIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+var REDACTION_MARKER = /\[(?:a|b|e|g|j|k|l|s)\]/u;
+var IGNORED_PATHS_LIMIT = 50;
+function reviewError(message, toolError) {
+  return new RuntimeError(message, { toolError });
+}
+function isRecord3(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function hasExactKeys(value, expected) {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]);
+}
+function assertIdentity(value, label) {
+  if (REDACTION_MARKER.test(value) || redact(value) !== value) {
+    throw reviewError(
+      `${label} cannot be reviewed without redacting its identity`,
+      "candidate-review-failed"
+    );
+  }
+}
+function canonicalJsonValue(value) {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new RuntimeError("review snapshot contains a non-JSON number");
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJsonValue(item)).join(",")}]`;
+  }
+  if (!isRecord3(value)) throw new RuntimeError("review snapshot contains a non-JSON value");
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJsonValue(value[key])}`).join(",")}}`;
+}
+function validateChangedPath(value) {
+  return isRecord3(value) && hasExactKeys(value, ["path", "changeType", "mode", "contentHash"]) && typeof value.path === "string" && ["added", "modified", "deleted"].includes(value.changeType) && typeof value.mode === "string" && (value.contentHash === null || typeof value.contentHash === "string");
+}
+function validateCommandOutcome(value) {
+  return isRecord3(value) && hasExactKeys(value, [
+    "id",
+    "executable",
+    "args",
+    "exitCode",
+    "timedOut",
+    "durationMs",
+    "stdoutRef",
+    "stderrRef"
+  ]) && typeof value.id === "string" && typeof value.executable === "string" && Array.isArray(value.args) && value.args.every((arg) => typeof arg === "string") && (value.exitCode === null || typeof value.exitCode === "number" && Number.isInteger(value.exitCode)) && typeof value.timedOut === "boolean" && typeof value.durationMs === "number" && Number.isFinite(value.durationMs) && value.durationMs >= 0 && typeof value.stdoutRef === "string" && typeof value.stderrRef === "string";
+}
+function validateReviewSnapshot(value, expectedRunId) {
+  if (!isRecord3(value) || !hasExactKeys(value, [
+    "runId",
+    "baseCommitOid",
+    "candidateCommitOid",
+    "candidateTreeOid",
+    "manifestHash",
+    "patch",
+    "changedPaths",
+    "evidence",
+    "executedVerification"
+  ]) || typeof value.runId !== "string" || expectedRunId !== void 0 && value.runId !== expectedRunId || typeof value.baseCommitOid !== "string" || !GIT_OID.test(value.baseCommitOid) || typeof value.candidateCommitOid !== "string" || !GIT_OID.test(value.candidateCommitOid) || typeof value.candidateTreeOid !== "string" || !GIT_OID.test(value.candidateTreeOid) || typeof value.manifestHash !== "string" || !SHA256.test(value.manifestHash) || typeof value.patch !== "string" || !Array.isArray(value.changedPaths) || !value.changedPaths.every(validateChangedPath) || !isRecord3(value.evidence) || !Array.isArray(value.executedVerification) || !value.executedVerification.every(validateCommandOutcome)) {
+    throw new RuntimeError("archived review snapshot is malformed");
+  }
+  const snapshot = value;
+  if (manifestHashOf(snapshot.changedPaths) !== snapshot.manifestHash) {
+    throw new RuntimeError("archived review snapshot manifest hash is inconsistent");
+  }
+  canonicalJsonValue(snapshot);
+  return snapshot;
+}
+function assertRedactionInvariants(snapshot) {
+  assertIdentity(snapshot.runId, "review run id");
+  assertIdentity(snapshot.baseCommitOid, "review base commit oid");
+  assertIdentity(snapshot.candidateCommitOid, "review candidate commit oid");
+  assertIdentity(snapshot.candidateTreeOid, "review candidate tree oid");
+  assertIdentity(snapshot.manifestHash, "review manifest hash");
+  for (const changedPath of snapshot.changedPaths) {
+    assertIdentity(changedPath.path, "review changed path");
+    assertIdentity(changedPath.mode, "review changed path mode");
+    if (changedPath.contentHash !== null) {
+      assertIdentity(changedPath.contentHash, "review changed path content hash");
+    }
+  }
+  for (const outcome of snapshot.executedVerification) {
+    assertIdentity(outcome.id, "review verification id");
+    assertIdentity(outcome.executable, "review verification executable");
+    for (const arg of outcome.args) assertIdentity(arg, "review verification argument");
+    assertIdentity(outcome.stdoutRef, "review stdout ref");
+    assertIdentity(outcome.stderrRef, "review stderr ref");
+  }
+  if (canonicalJsonValue(redactRecord(snapshot.evidence)) !== canonicalJsonValue(snapshot.evidence)) {
+    throw reviewError("review evidence violates redaction invariants", "candidate-review-failed");
+  }
+}
+function boundEvidence(evidence) {
+  const clone2 = structuredClone(evidence);
+  const ignoredPaths = clone2.ignoredPaths;
+  if (!Array.isArray(ignoredPaths) || ignoredPaths.length <= IGNORED_PATHS_LIMIT) return clone2;
+  return {
+    ...clone2,
+    ignoredPaths: ignoredPaths.slice(0, IGNORED_PATHS_LIMIT),
+    ignoredPathsOmitted: ignoredPaths.length - IGNORED_PATHS_LIMIT
+  };
+}
+function requireCoherentCandidate(runId, result, manifest) {
+  if (result.runId !== runId || manifest.runId !== runId) {
+    throw reviewError("archived run identity does not match", "archive-inconsistent");
+  }
+  if (result.status === "verified-candidate" !== (result.failure === null)) {
+    throw reviewError("archived candidate status is inconsistent", "archive-inconsistent");
+  }
+  const candidate = result.candidate;
+  if (candidate === null) {
+    throw reviewError("archived run has no candidate", "candidate-not-found");
+  }
+  if (candidate.anchorRef !== `refs/claude-architect/candidates/${runId}` || manifest.baseCommitOid !== candidate.baseCommitOid || manifest.candidateManifestHash !== candidate.manifestHash || manifestHashOf(candidate.changedPaths) !== candidate.manifestHash) {
+    throw reviewError("archived candidate does not match its run manifest", "candidate-review-failed");
+  }
+  return candidate;
+}
+async function createReviewSnapshot(run) {
+  const [result, manifest] = await Promise.all([
+    run.store.readResult(run.runId),
+    run.store.readManifest(run.runId)
+  ]);
+  if (result === null || manifest === null) {
+    throw reviewError("archived run was not found", "run-not-found");
+  }
+  const canonical = await run.platformServices.canonicalizePath(manifest.repoRoot);
+  const repositoryIdentity = canonical.gitCommonDir ?? canonical.canonical;
+  if (canonical.canonical !== manifest.repoRoot || run.repoRoot !== manifest.repoRoot || repositoryIdentity !== run.repositoryIdentity) {
+    throw reviewError("archived repository root changed identity", "archive-inconsistent");
+  }
+  const candidate = requireCoherentCandidate(run.runId, result, manifest);
+  const git2 = run.git ?? git;
+  const [anchor, tree] = await Promise.all([
+    git2(run.repoRoot, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `${candidate.anchorRef}^{commit}`
+    ]),
+    git2(run.repoRoot, [
+      "rev-parse",
+      "--verify",
+      `${candidate.candidateCommitOid}^{tree}`
+    ])
+  ]);
+  const anchorMissing = run.allowMissingAnchor === true && anchor.exitCode === 1 && anchor.stdout.trim().length === 0 && anchor.stderr.trim().length === 0 && anchor.truncated?.stdout !== true && anchor.truncated?.stderr !== true;
+  if (!anchorMissing && (anchor.exitCode !== 0 || anchor.stdout.trim() !== candidate.candidateCommitOid || anchor.truncated?.stdout === true || anchor.truncated?.stderr === true) || tree.exitCode !== 0 || tree.stdout.trim() !== candidate.candidateTreeOid || tree.truncated?.stdout === true || tree.truncated?.stderr === true) {
+    throw reviewError("candidate anchor no longer matches the archive", "candidate-anchor-mismatch");
+  }
+  const patch = await git2(run.repoRoot, [
+    "diff",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--binary",
+    "--full-index",
+    candidate.baseCommitOid,
+    candidate.candidateTreeOid,
+    "--"
+  ]);
+  if (patch.exitCode !== 0 || patch.truncated?.stdout === true || patch.truncated?.stderr === true) {
+    throw reviewError("failed to regenerate candidate patch", "candidate-review-failed");
+  }
+  const snapshot = {
+    runId: run.runId,
+    baseCommitOid: candidate.baseCommitOid,
+    candidateCommitOid: candidate.candidateCommitOid,
+    candidateTreeOid: candidate.candidateTreeOid,
+    manifestHash: candidate.manifestHash,
+    patch: patch.stdout,
+    changedPaths: candidate.changedPaths.map((change) => ({ ...change })),
+    evidence: boundEvidence(result.evidence),
+    executedVerification: result.executedVerification.map((outcome) => ({
+      ...outcome,
+      args: [...outcome.args]
+    }))
+  };
+  validateReviewSnapshot(snapshot, run.runId);
+  assertRedactionInvariants(snapshot);
+  return snapshot;
+}
+function reviewSnapshotHash(snapshot) {
+  const validated = validateReviewSnapshot(snapshot, snapshot.runId);
+  assertRedactionInvariants(validated);
+  const hash = createHash4("sha256").update(canonicalJsonValue(validated)).digest("hex");
+  if (!SHA256.test(hash)) throw new RuntimeError("review snapshot hash is invalid");
+  return hash;
+}
+
+// src/runtime/run-manifest.ts
+import { createHash as createHash5 } from "node:crypto";
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 function sha256(value) {
-  return createHash4("sha256").update(value).digest("hex");
+  return createHash5("sha256").update(value).digest("hex");
 }
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -26833,11 +27030,11 @@ function withManifestHash(body) {
     manifestHash: sha256(stableJson(sanitized))
   };
 }
-function isRecord3(value) {
+function isRecord4(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function hasExactKeys(value, expected) {
-  if (!isRecord3(value)) return false;
+function hasExactKeys2(value, expected) {
+  if (!isRecord4(value)) return false;
   const actual = Object.keys(value);
   return actual.length === expected.length && expected.every((key) => actual.includes(key));
 }
@@ -26857,7 +27054,7 @@ function protocolMajor(version2) {
   return Number.isSafeInteger(major) ? major : null;
 }
 function assertManifestShape(value) {
-  if (!hasExactKeys(value, [
+  if (!hasExactKeys2(value, [
     "manifestVersion",
     "runId",
     "repoRoot",
@@ -26874,7 +27071,7 @@ function assertManifestShape(value) {
     "schemaVersions",
     "packagedVerifier",
     "manifestHash"
-  ]) || value.manifestVersion !== "1" || typeof value.runId !== "string" || typeof value.repoRoot !== "string" || !isObjectId(value.baseCommitOid) || value.candidateManifestHash !== null && !isSha256(value.candidateManifestHash) || !hasExactKeys(value.producer, ["id", "version", "model"]) || !isNullableString(value.producer.id) || !isNullableString(value.producer.version) || !isNullableString(value.producer.model) || !isRecord3(value.effectivePolicy) || !Array.isArray(value.repositoryInstructions) || !value.repositoryInstructions.every((instruction) => hasExactKeys(instruction, ["path", "hash"]) && typeof instruction.path === "string" && isSha256(instruction.hash)) || !isSha256(value.promptHash) || !isRecord3(value.executionPolicy) || !Array.isArray(value.environment) || !value.environment.every((entry) => hasExactKeys(entry, ["name", "source"]) && typeof entry.name === "string" && typeof entry.source === "string") || typeof value.runtimeVersion !== "string" || typeof value.protocolVersion !== "string" || !hasExactKeys(value.schemaVersions, ["delegationSpec", "attemptResult"]) || typeof value.schemaVersions.delegationSpec !== "string" || typeof value.schemaVersions.attemptResult !== "string" || !hasExactKeys(value.packagedVerifier, ["version", "hash"]) || typeof value.packagedVerifier.version !== "string" || !isSha256(value.packagedVerifier.hash) || !isSha256(value.manifestHash)) {
+  ]) || value.manifestVersion !== "1" || typeof value.runId !== "string" || typeof value.repoRoot !== "string" || !isObjectId(value.baseCommitOid) || value.candidateManifestHash !== null && !isSha256(value.candidateManifestHash) || !hasExactKeys2(value.producer, ["id", "version", "model"]) || !isNullableString(value.producer.id) || !isNullableString(value.producer.version) || !isNullableString(value.producer.model) || !isRecord4(value.effectivePolicy) || !Array.isArray(value.repositoryInstructions) || !value.repositoryInstructions.every((instruction) => hasExactKeys2(instruction, ["path", "hash"]) && typeof instruction.path === "string" && isSha256(instruction.hash)) || !isSha256(value.promptHash) || !isRecord4(value.executionPolicy) || !Array.isArray(value.environment) || !value.environment.every((entry) => hasExactKeys2(entry, ["name", "source"]) && typeof entry.name === "string" && typeof entry.source === "string") || typeof value.runtimeVersion !== "string" || typeof value.protocolVersion !== "string" || !hasExactKeys2(value.schemaVersions, ["delegationSpec", "attemptResult"]) || typeof value.schemaVersions.delegationSpec !== "string" || typeof value.schemaVersions.attemptResult !== "string" || !hasExactKeys2(value.packagedVerifier, ["version", "hash"]) || typeof value.packagedVerifier.version !== "string" || !isSha256(value.packagedVerifier.hash) || !isSha256(value.manifestHash)) {
     throw new RuntimeError("archived run manifest is malformed");
   }
 }
@@ -26945,7 +27142,7 @@ var MAX_ARCHIVE_FILE_BYTES = 8e6;
 var schemas = loadSchemas();
 var attemptResultSchema = schemas.attemptResult;
 var candidateDecisionSchema = schemas.candidateDecision;
-var SHA256 = /^[0-9a-f]{64}$/u;
+var SHA2562 = /^[0-9a-f]{64}$/u;
 var cleanupJournalTail = Promise.resolve();
 function isSafeComponent(value) {
   const base = value.split(".", 1)[0] ?? value;
@@ -27319,7 +27516,7 @@ function hasIdenticalDecisionProvenance(existing, attempted) {
 }
 function verifyAutopilotEligibility(candidate, eligibility) {
   const keys = Object.keys(eligibility);
-  if (keys.length !== 5 || !keys.includes("eligibilityVersion") || !keys.includes("eligible") || !keys.includes("candidateManifestHash") || !keys.includes("evidenceHash") || !keys.includes("policyVersion") || eligibility.eligibilityVersion !== "1" || eligibility.eligible !== true || eligibility.policyVersion !== "1" || !SHA256.test(eligibility.evidenceHash) || eligibility.candidateManifestHash !== candidate.manifestHash || candidate.manifestHash !== manifestHashOf(candidate.changedPaths)) {
+  if (keys.length !== 5 || !keys.includes("eligibilityVersion") || !keys.includes("eligible") || !keys.includes("candidateManifestHash") || !keys.includes("evidenceHash") || !keys.includes("policyVersion") || eligibility.eligibilityVersion !== "1" || eligibility.eligible !== true || eligibility.policyVersion !== "1" || !SHA2562.test(eligibility.evidenceHash) || eligibility.candidateManifestHash !== candidate.manifestHash || candidate.manifestHash !== manifestHashOf(candidate.changedPaths)) {
     throw new RuntimeError("autopilot decision eligibility is invalid");
   }
 }
@@ -27584,6 +27781,42 @@ var ArtifactStore = class {
         )),
         runId
       );
+    } catch (error2) {
+      if (isMissing(error2)) return null;
+      throw error2;
+    }
+  }
+  async writeReviewSnapshot(snapshot) {
+    const validated = validateReviewSnapshot(snapshot, this.runId);
+    const attemptedHash = reviewSnapshotHash(validated);
+    try {
+      await this.writeJson("review-snapshot.json", validated);
+      return;
+    } catch (error2) {
+      const existing = await this.readReviewSnapshot(this.runId);
+      if (existing === null) throw error2;
+      if (reviewSnapshotHash(existing) === attemptedHash) return;
+      throw new RuntimeError(
+        "review snapshot conflict: archived snapshot differs from attempted snapshot",
+        { toolError: "review-snapshot-conflict" }
+      );
+    }
+  }
+  async readReviewSnapshot(runId) {
+    validateComponent(runId, "run id");
+    const runDirectory = path11.join(this.runsRoot, runId);
+    const validated = await this.ensureExistingRunDirectory(runDirectory);
+    if (validated === null) return null;
+    try {
+      const snapshot = validateReviewSnapshot(
+        JSON.parse(await readRegularFile(
+          path11.join(validated.path, "review-snapshot.json"),
+          validated.identity
+        )),
+        runId
+      );
+      reviewSnapshotHash(snapshot);
+      return snapshot;
     } catch (error2) {
       if (isMissing(error2)) return null;
       throw error2;
@@ -31546,18 +31779,18 @@ async function withRepoLock(key, fn) {
     if (mutex.pending === 0 && mutexes.get(key) === mutex) mutexes.delete(key);
   }
 }
-var IGNORED_PATHS_LIMIT = 50;
+var IGNORED_PATHS_LIMIT2 = 50;
 function boundIgnoredPathEvidence(value) {
   const evidence = value.evidence;
   if (typeof evidence !== "object" || evidence === null) return value;
   const paths = evidence.ignoredPaths;
-  if (!Array.isArray(paths) || paths.length <= IGNORED_PATHS_LIMIT) return value;
+  if (!Array.isArray(paths) || paths.length <= IGNORED_PATHS_LIMIT2) return value;
   return {
     ...value,
     evidence: {
       ...evidence,
-      ignoredPaths: paths.slice(0, IGNORED_PATHS_LIMIT),
-      ignoredPathsOmitted: paths.length - IGNORED_PATHS_LIMIT
+      ignoredPaths: paths.slice(0, IGNORED_PATHS_LIMIT2),
+      ignoredPathsOmitted: paths.length - IGNORED_PATHS_LIMIT2
     }
   };
 }
@@ -31590,7 +31823,7 @@ function errorResult(error2) {
   const diagnostic = error2 instanceof Error ? error2.message : String(error2);
   return { ok: false, error: code, diagnostic: redact(diagnostic) };
 }
-function isRecord4(value) {
+function isRecord5(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 async function loadArchivedRun(runId, deps) {
@@ -31605,7 +31838,7 @@ async function loadArchivedRun(runId, deps) {
   if (result.runId !== runId || manifest.runId !== runId) {
     throw runtimeError("archived run identity does not match", "archive-inconsistent");
   }
-  if (result.candidate !== null && (manifest.baseCommitOid !== result.candidate.baseCommitOid || manifest.candidateManifestHash !== result.candidate.manifestHash || result.candidate.manifestHash !== createHash5("sha256").update(JSON.stringify(result.candidate.changedPaths)).digest("hex"))) {
+  if (result.candidate !== null && (manifest.baseCommitOid !== result.candidate.baseCommitOid || manifest.candidateManifestHash !== result.candidate.manifestHash || result.candidate.manifestHash !== createHash6("sha256").update(JSON.stringify(result.candidate.changedPaths)).digest("hex"))) {
     throw runtimeError("archived candidate does not match its run manifest", "archive-inconsistent");
   }
   const canonical = await services2(deps).canonicalizePath(manifest.repoRoot);
@@ -31685,7 +31918,7 @@ async function requireInactivePipeline(run, runId) {
   }
 }
 function schemaCompatibility(input) {
-  if (isRecord4(input) && input.specVersion !== void 0 && input.specVersion !== DELEGATION_SPEC_VERSION) {
+  if (isRecord5(input) && input.specVersion !== void 0 && input.specVersion !== DELEGATION_SPEC_VERSION) {
     return {
       ok: false,
       diagnostic: `delegation spec version mismatch: request declares ${String(input.specVersion)}, runtime expects ${DELEGATION_SPEC_VERSION}`
@@ -31798,47 +32031,37 @@ async function handleDelegatePipeline(checkoutPath, input, deps = {}) {
     return errorResult(error2);
   }
 }
-async function regenerateReviewSnapshot(run, deps, allowMissingAnchor = false) {
-  const candidate = requireCandidate(run);
-  const git2 = deps.git ?? git;
-  const anchor = await git2(run.repoRoot, [
-    "rev-parse",
-    "--verify",
-    "--quiet",
-    `${candidate.anchorRef}^{commit}`
-  ]);
-  const tree = await git2(run.repoRoot, [
-    "rev-parse",
-    "--verify",
-    `${candidate.candidateCommitOid}^{tree}`
-  ]);
-  const anchorMissing = allowMissingAnchor && anchor.exitCode === 1 && anchor.stdout.trim().length === 0;
-  if (!anchorMissing && (anchor.exitCode !== 0 || anchor.stdout.trim() !== candidate.candidateCommitOid) || tree.exitCode !== 0 || tree.stdout.trim() !== candidate.candidateTreeOid) {
-    throw runtimeError("candidate anchor no longer matches the archive", "candidate-anchor-mismatch");
+function requireMatchingSnapshotBytes(regenerated, persisted) {
+  reviewSnapshotHash(persisted);
+  if (JSON.stringify(persisted) !== JSON.stringify(regenerated)) {
+    throw runtimeError(
+      "persisted review snapshot does not match the regenerated snapshot",
+      "archive-inconsistent"
+    );
   }
-  const patch = await git2(run.repoRoot, [
-    "diff",
-    "--no-ext-diff",
-    "--no-textconv",
-    "--binary",
-    "--full-index",
-    candidate.baseCommitOid,
-    candidate.candidateTreeOid,
-    "--"
-  ]);
-  if (patch.exitCode !== 0 || patch.truncated?.stdout === true) {
-    throw runtimeError("failed to regenerate candidate patch", "candidate-review-failed");
-  }
-  return boundIgnoredPathEvidence({
-    manifestHash: candidate.manifestHash,
-    patch: patch.stdout,
-    changedPaths: candidate.changedPaths.map((change) => ({ ...change })),
-    evidence: structuredClone(run.result.evidence),
-    executedVerification: run.result.executedVerification.map((outcome) => ({
-      ...outcome,
-      args: [...outcome.args]
-    }))
+}
+async function sharedReviewSnapshot(run, deps, allowMissingAnchor = false) {
+  const regenerated = await createReviewSnapshot({
+    runId: run.result.runId,
+    repoRoot: run.repoRoot,
+    repositoryIdentity: run.lockKey,
+    store: run.store,
+    platformServices: services2(deps),
+    git: deps.git ?? git,
+    allowMissingAnchor
   });
+  const persisted = await run.store.readReviewSnapshot?.(run.result.runId) ?? null;
+  if (persisted !== null) {
+    requireMatchingSnapshotBytes(regenerated, persisted);
+    return persisted;
+  }
+  await run.store.writeReviewSnapshot?.(regenerated);
+  const newlyPersisted = await run.store.readReviewSnapshot?.(run.result.runId) ?? null;
+  if (newlyPersisted !== null) {
+    requireMatchingSnapshotBytes(regenerated, newlyPersisted);
+    return newlyPersisted;
+  }
+  return regenerated;
 }
 function isIdenticalHumanDecision(existing, attempted) {
   return existing.decisionVersion === "2" && existing.authority === "human" && existing.decision === attempted.decision && existing.candidateManifestHash === attempted.candidateManifestHash && existing.evidenceHash === attempted.evidenceHash && existing.policyVersion === attempted.policyVersion;
@@ -31872,7 +32095,7 @@ async function handleReviewCandidate(checkoutPath, runId, deps = {}) {
   try {
     return await withCurrentArchivedRun(checkoutPath, runId, deps, async (run) => {
       await requireInactivePipeline(run, runId);
-      return regenerateReviewSnapshot(run, deps);
+      return sharedReviewSnapshot(run, deps);
     });
   } catch (error2) {
     return errorResult(error2);
@@ -31898,7 +32121,7 @@ async function handleDecideCandidate(checkoutPath, runId, decision, expectedArti
           );
         }
       }
-      const reviewSnapshot = await regenerateReviewSnapshot(
+      const reviewSnapshot = await sharedReviewSnapshot(
         run,
         deps,
         existing !== null && decision === "rejected"
@@ -31906,7 +32129,7 @@ async function handleDecideCandidate(checkoutPath, runId, decision, expectedArti
       const record2 = {
         decision,
         candidateManifestHash: candidate.manifestHash,
-        evidenceHash: createHash5("sha256").update(JSON.stringify(reviewSnapshot)).digest("hex"),
+        evidenceHash: reviewSnapshotHash(reviewSnapshot),
         policyVersion: "1",
         recordedAt: (deps.now ?? (() => /* @__PURE__ */ new Date()))().toISOString()
       };
@@ -31957,7 +32180,7 @@ async function handleIntegrateCandidate(checkoutPath, runId, expectedArtifactHas
 }
 
 // src/runtime/recovery-manager.ts
-import { createHash as createHash6, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash7, randomUUID as randomUUID5 } from "node:crypto";
 import { constants as constants5 } from "node:fs";
 import {
   lstat as lstat6,
@@ -32109,7 +32332,7 @@ function parseRunStart(text, expectedRunId) {
   if (record2.runId !== expectedRunId || typeof record2.lockKey !== "string" || !/^[0-9a-f]{64}$/.test(record2.lockKey) || typeof record2.canonicalCommonDir !== "string" || !path16.isAbsolute(record2.canonicalCommonDir) || record2.pid !== null && (record2.pid === void 0 || !Number.isSafeInteger(record2.pid) || record2.pid <= 1) || record2.processToken !== void 0 && record2.processToken !== null && typeof record2.processToken !== "string" || typeof record2.startedAt !== "string" || !Number.isFinite(Date.parse(record2.startedAt))) {
     throw new RuntimeError("run-start recovery record is malformed");
   }
-  const expectedLockKey = createHash6("sha256").update(record2.canonicalCommonDir).digest("hex");
+  const expectedLockKey = createHash7("sha256").update(record2.canonicalCommonDir).digest("hex");
   if (record2.lockKey !== expectedLockKey) {
     throw new RuntimeError("run-start lock key does not match its canonical common directory");
   }
@@ -33750,6 +33973,10 @@ var delegatePipelineOutput = external_exports.object({
   error: external_exports.string().optional()
 });
 var reviewCandidateOutputSchema = external_exports.object({
+  runId: external_exports.string().optional(),
+  baseCommitOid: external_exports.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u).optional(),
+  candidateCommitOid: external_exports.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u).optional(),
+  candidateTreeOid: external_exports.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u).optional(),
   manifestHash: external_exports.string().regex(/^[0-9a-f]{64}$/u).optional(),
   patch: external_exports.string().optional(),
   changedPaths: external_exports.array(external_exports.object({

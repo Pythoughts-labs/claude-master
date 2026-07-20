@@ -37,6 +37,11 @@ import {
   redactRecord,
 } from "./redaction.js";
 import {
+  reviewSnapshotHash,
+  validateReviewSnapshot,
+  type ReviewSnapshot,
+} from "./review-snapshot.js";
+import {
   sanitizeRunManifest,
   verifyRunManifest,
   type RunManifest,
@@ -896,6 +901,44 @@ export class ArtifactStore {
         )),
         runId,
       );
+    } catch (error) {
+      if (isMissing(error)) return null;
+      throw error;
+    }
+  }
+
+  async writeReviewSnapshot(snapshot: ReviewSnapshot): Promise<void> {
+    const validated = validateReviewSnapshot(snapshot, this.runId);
+    const attemptedHash = reviewSnapshotHash(validated);
+    try {
+      await this.writeJson("review-snapshot.json", validated);
+      return;
+    } catch (error) {
+      const existing = await this.readReviewSnapshot(this.runId);
+      if (existing === null) throw error;
+      if (reviewSnapshotHash(existing) === attemptedHash) return;
+      throw new RuntimeError(
+        "review snapshot conflict: archived snapshot differs from attempted snapshot",
+        { toolError: "review-snapshot-conflict" },
+      );
+    }
+  }
+
+  async readReviewSnapshot(runId: string): Promise<ReviewSnapshot | null> {
+    validateComponent(runId, "run id");
+    const runDirectory = path.join(this.runsRoot, runId);
+    const validated = await this.ensureExistingRunDirectory(runDirectory);
+    if (validated === null) return null;
+    try {
+      const snapshot = validateReviewSnapshot(
+        JSON.parse(await readRegularFile(
+          path.join(validated.path, "review-snapshot.json"),
+          validated.identity,
+        )),
+        runId,
+      );
+      reviewSnapshotHash(snapshot);
+      return snapshot;
     } catch (error) {
       if (isMissing(error)) return null;
       throw error;

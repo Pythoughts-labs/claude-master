@@ -24,6 +24,10 @@ import type { AttemptResult, CandidateArtifact } from "../../src/protocol/attemp
 import type { DelegationSpec } from "../../src/protocol/delegation-spec.js";
 import { PROTOCOL_VERSION } from "../../src/protocol/versions.js";
 import type { PipelineActiveMarker } from "../../src/runtime/artifact-store.js";
+import {
+  reviewSnapshotHash,
+  type ReviewSnapshot,
+} from "../../src/runtime/review-snapshot.js";
 import type { RunManifest } from "../../src/runtime/run-manifest.js";
 import { RuntimeError } from "../../src/util/errors.js";
 
@@ -81,16 +85,18 @@ const result: AttemptResult = {
 };
 
 const expectedReviewSnapshot = {
+  runId: result.runId,
+  baseCommitOid: candidate.baseCommitOid,
+  candidateCommitOid: candidate.candidateCommitOid,
+  candidateTreeOid: candidate.candidateTreeOid,
   manifestHash: candidate.manifestHash,
   patch: "exact unredacted patch\n",
   changedPaths,
   evidence: result.evidence,
   executedVerification: result.executedVerification,
-};
+} satisfies ReviewSnapshot;
 
-const expectedReviewEvidenceHash = createHash("sha256")
-  .update(JSON.stringify(expectedReviewSnapshot))
-  .digest("hex");
+const expectedReviewEvidenceHash = reviewSnapshotHash(expectedReviewSnapshot);
 
 const failedSlicedResult: AttemptResult = {
   ...result,
@@ -168,6 +174,7 @@ const validSpec: DelegationSpec = {
 class FakeStore implements ToolArtifactStore {
   decision: RunDecision | null = null;
   pipelineActiveMarker: PipelineActiveMarker | null = null;
+  reviewSnapshot: ReviewSnapshot | null = null;
 
   constructor(
     public storedResult: AttemptResult = result,
@@ -180,6 +187,22 @@ class FakeStore implements ToolArtifactStore {
 
   async readManifest(_runId: string): Promise<RunManifest | null> {
     return this.storedManifest;
+  }
+
+  async writeReviewSnapshot(snapshot: ReviewSnapshot): Promise<void> {
+    if (this.reviewSnapshot === null) {
+      this.reviewSnapshot = structuredClone(snapshot);
+      return;
+    }
+    if (reviewSnapshotHash(this.reviewSnapshot) === reviewSnapshotHash(snapshot)) return;
+    throw new RuntimeError(
+      "review snapshot conflict: archived snapshot differs from attempted snapshot",
+      { toolError: "review-snapshot-conflict" },
+    );
+  }
+
+  async readReviewSnapshot(_runId: string): Promise<ReviewSnapshot | null> {
+    return this.reviewSnapshot === null ? null : structuredClone(this.reviewSnapshot);
   }
 
   async writeHumanDecision(decision: HumanDecisionRecord): Promise<void> {
@@ -949,7 +972,8 @@ describe("MCP tool handlers", () => {
   );
 
   it("regenerates an unredacted review patch from the anchored tree", async () => {
-    const deps = dependencies();
+    const store = new FakeStore();
+    const deps = dependencies(store);
     const gitCalls: string[][] = [];
     const originalGit = deps.git!;
     deps.git = async (cwd, args, indexFile) => {
@@ -959,12 +983,18 @@ describe("MCP tool handlers", () => {
     const output = await handleReviewCandidate("/canonical/repo", "run-tools", deps);
 
     expect(output).toEqual({
+      runId: result.runId,
+      baseCommitOid: candidate.baseCommitOid,
+      candidateCommitOid: candidate.candidateCommitOid,
+      candidateTreeOid: candidate.candidateTreeOid,
       manifestHash: candidate.manifestHash,
       patch: "exact unredacted patch\n",
       changedPaths: candidate.changedPaths,
       evidence: result.evidence,
       executedVerification: result.executedVerification,
     });
+    expect(store.reviewSnapshot).toEqual(expectedReviewSnapshot);
+    expect(JSON.stringify(output)).toBe(JSON.stringify(store.reviewSnapshot));
     expect(gitCalls.at(-1)).toEqual([
       "diff",
       "--no-ext-diff",
@@ -976,6 +1006,28 @@ describe("MCP tool handlers", () => {
       "--",
     ]);
   });
+
+  it("fails closed when persisted review snapshot bytes differ from regeneration", async () => {
+    const store = new FakeStore();
+    store.reviewSnapshot = {
+      evidence: structuredClone(expectedReviewSnapshot.evidence),
+      ...expectedReviewSnapshot,
+    };
+    expect(reviewSnapshotHash(store.reviewSnapshot)).toBe(
+      reviewSnapshotHash(expectedReviewSnapshot),
+    );
+    expect(JSON.stringify(store.reviewSnapshot)).not.toBe(JSON.stringify(expectedReviewSnapshot));
+
+    await expect(handleReviewCandidate(
+      "/canonical/repo",
+      "run-tools",
+      dependencies(store),
+    )).resolves.toEqual({
+      ok: false,
+      error: "archive-inconsistent",
+      diagnostic: "persisted review snapshot does not match the regenerated snapshot",
+    });
+  }, 30_000);
 
   it("fails closed when an exact review patch exceeds the Git capture bound", async () => {
     const deps = dependencies();

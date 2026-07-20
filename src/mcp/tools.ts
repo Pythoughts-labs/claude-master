@@ -30,6 +30,11 @@ import {
   runAttempt as executeAttempt,
   type AttemptRuntimeDependencies,
 } from "../runtime/attempt-runtime.js";
+import {
+  createReviewSnapshot,
+  reviewSnapshotHash,
+  type ReviewSnapshot,
+} from "../runtime/review-snapshot.js";
 import type { RunManifest } from "../runtime/run-manifest.js";
 import { redact } from "../runtime/redaction.js";
 import { NestedDelegationError, RuntimeError } from "../util/errors.js";
@@ -46,6 +51,8 @@ export type HumanDecisionRecord = Omit<
 export interface ToolArtifactStore {
   readResult(runId: string): Promise<AttemptResult | null>;
   readManifest(runId: string): Promise<RunManifest | null>;
+  writeReviewSnapshot?(snapshot: ReviewSnapshot): Promise<void>;
+  readReviewSnapshot?(runId: string): Promise<ReviewSnapshot | null>;
   writeHumanDecision(record: HumanDecisionRecord): Promise<void>;
   readCandidateDecision(runId: string): Promise<RunDecision | null>;
   readPipelineActiveMarker(runId: string): Promise<PipelineActiveMarker | null>;
@@ -380,64 +387,46 @@ export async function handleDelegatePipeline(
   }
 }
 
-interface ReviewCandidateSnapshot {
-  manifestHash: string;
-  patch: string;
-  changedPaths: CandidateArtifact["changedPaths"];
-  evidence: AttemptResult["evidence"];
-  executedVerification: AttemptResult["executedVerification"];
+function requireMatchingSnapshotBytes(
+  regenerated: ReviewSnapshot,
+  persisted: ReviewSnapshot,
+): void {
+  reviewSnapshotHash(persisted);
+  if (JSON.stringify(persisted) !== JSON.stringify(regenerated)) {
+    throw runtimeError(
+      "persisted review snapshot does not match the regenerated snapshot",
+      "archive-inconsistent",
+    );
+  }
 }
 
-async function regenerateReviewSnapshot(
+async function sharedReviewSnapshot(
   run: ArchivedRun,
   deps: ToolDependencies,
   allowMissingAnchor = false,
-): Promise<ReviewCandidateSnapshot> {
-  const candidate = requireCandidate(run);
-  const git = deps.git ?? runGit;
-  const anchor = await git(run.repoRoot, [
-    "rev-parse",
-    "--verify",
-    "--quiet",
-    `${candidate.anchorRef}^{commit}`,
-  ]);
-  const tree = await git(run.repoRoot, [
-    "rev-parse",
-    "--verify",
-    `${candidate.candidateCommitOid}^{tree}`,
-  ]);
-  const anchorMissing = allowMissingAnchor
-    && anchor.exitCode === 1
-    && anchor.stdout.trim().length === 0;
-  if ((!anchorMissing && (anchor.exitCode !== 0
-    || anchor.stdout.trim() !== candidate.candidateCommitOid))
-    || tree.exitCode !== 0
-    || tree.stdout.trim() !== candidate.candidateTreeOid) {
-    throw runtimeError("candidate anchor no longer matches the archive", "candidate-anchor-mismatch");
-  }
-  const patch = await git(run.repoRoot, [
-    "diff",
-    "--no-ext-diff",
-    "--no-textconv",
-    "--binary",
-    "--full-index",
-    candidate.baseCommitOid,
-    candidate.candidateTreeOid,
-    "--",
-  ]);
-  if (patch.exitCode !== 0 || patch.truncated?.stdout === true) {
-    throw runtimeError("failed to regenerate candidate patch", "candidate-review-failed");
-  }
-  return boundIgnoredPathEvidence({
-    manifestHash: candidate.manifestHash,
-    patch: patch.stdout,
-    changedPaths: candidate.changedPaths.map(change => ({ ...change })),
-    evidence: structuredClone(run.result.evidence),
-    executedVerification: run.result.executedVerification.map(outcome => ({
-      ...outcome,
-      args: [...outcome.args],
-    })),
+): Promise<ReviewSnapshot> {
+  const regenerated = await createReviewSnapshot({
+    runId: run.result.runId,
+    repoRoot: run.repoRoot,
+    repositoryIdentity: run.lockKey,
+    store: run.store,
+    platformServices: services(deps),
+    git: deps.git ?? runGit,
+    allowMissingAnchor,
   });
+  const persisted = await run.store.readReviewSnapshot?.(run.result.runId) ?? null;
+  if (persisted !== null) {
+    requireMatchingSnapshotBytes(regenerated, persisted);
+    return persisted;
+  }
+
+  await run.store.writeReviewSnapshot?.(regenerated);
+  const newlyPersisted = await run.store.readReviewSnapshot?.(run.result.runId) ?? null;
+  if (newlyPersisted !== null) {
+    requireMatchingSnapshotBytes(regenerated, newlyPersisted);
+    return newlyPersisted;
+  }
+  return regenerated;
 }
 
 function isIdenticalHumanDecision(
@@ -487,11 +476,11 @@ export async function handleReviewCandidate(
   checkoutPath: string,
   runId: string,
   deps: ToolDependencies = {},
-): Promise<ReviewCandidateSnapshot | ToolErrorResult> {
+): Promise<ReviewSnapshot | ToolErrorResult> {
   try {
     return await withCurrentArchivedRun(checkoutPath, runId, deps, async run => {
       await requireInactivePipeline(run, runId);
-      return regenerateReviewSnapshot(run, deps);
+      return sharedReviewSnapshot(run, deps);
     });
   } catch (error) {
     return errorResult(error);
@@ -530,7 +519,7 @@ export async function handleDecideCandidate(
           );
         }
       }
-      const reviewSnapshot = await regenerateReviewSnapshot(
+      const reviewSnapshot = await sharedReviewSnapshot(
         run,
         deps,
         existing !== null && decision === "rejected",
@@ -538,9 +527,7 @@ export async function handleDecideCandidate(
       const record: HumanDecisionRecord = {
         decision,
         candidateManifestHash: candidate.manifestHash,
-        evidenceHash: createHash("sha256")
-          .update(JSON.stringify(reviewSnapshot))
-          .digest("hex"),
+        evidenceHash: reviewSnapshotHash(reviewSnapshot),
         policyVersion: "1",
         recordedAt: (deps.now ?? (() => new Date()))().toISOString(),
       };
