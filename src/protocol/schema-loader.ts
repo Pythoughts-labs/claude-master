@@ -9,6 +9,7 @@ import incrementSchema from "../../runtime/schemas/increment-report.v1.json" wit
 import verificationSchema from "../../runtime/schemas/verification-report.v1.json" with { type: "json" };
 import advisorSchema from "../../runtime/schemas/advisor-report.v1.json" with { type: "json" };
 import autopilotEligibilitySchema from "../../runtime/schemas/autopilot-eligibility.v1.json" with { type: "json" };
+import autopilotWorkflowStateSchema from "../../runtime/schemas/autopilot-workflow-state.v1.json" with { type: "json" };
 
 import { PROTOCOL_VERSION } from "./versions.js";
 
@@ -37,6 +38,7 @@ export interface CompiledSchemas {
   verificationReport: ValidateFunction;
   advisorReport: ValidateFunction;
   autopilotEligibility: ValidateFunction;
+  autopilotWorkflowState: ValidateFunction;
 }
 
 export function loadSchemas(): CompiledSchemas {
@@ -61,6 +63,7 @@ export function loadSchemas(): CompiledSchemas {
     verificationReport: ajv.compile(verificationSchema as object),
     advisorReport: ajv.compile(advisorSchema as object),
     autopilotEligibility: ajv.compile(autopilotEligibilitySchema as object),
+    autopilotWorkflowState: ajv.compile(autopilotWorkflowStateSchema as object),
   };
 }
 
