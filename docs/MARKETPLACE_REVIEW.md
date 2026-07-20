@@ -11,8 +11,7 @@ No Producer can mark its own work accepted. `decideCandidate` records the archit
 ## Component inventory
 
 - Skill: `/claude-architect:delegate` in `skills/delegate/SKILL.md`.
-- Read-only advisors: `advisor` and `claude-advisor`.
-- Legacy implementation lane supervisors: `codex-implementer`, `opencode-implementer`, `pi-implementer`, and `pythinker-implementer`.
+- Read-only advisor: `advisor`.
 - MCP tools: `delegate`, `delegatePipeline`, `reviewCandidate`, `decideCandidate`, `integrateCandidate`, `doctor`, `gitStatus`, `gitDiff`, `gitLog`, and `gitChangedFiles`.
 - Packaged runtime: `runtime/bootstrap.mjs`, `runtime/server.mjs`, schemas, and Windows watchdog/helper support.
 - Host modules: protocol validation, Producer adapters/routing, platform sandbox/process supervision, Git worktree/candidate handling, verification, pipeline gates, artifact storage/recovery, and controlled integration.
@@ -20,11 +19,11 @@ No Producer can mark its own work accepted. `decideCandidate` records the archit
 
 ## Executables invoked
 
-The plugin starts a suitable `node` executable and uses `git`. Depending on the chosen lane it may invoke `codex`, `opencode`, `pi`, or `pythinker`. Platform confinement/supervision can invoke macOS `/usr/bin/sandbox-exec`, Linux sandbox tooling such as `bwrap` when that backend is selected, Windows watchdog/helper binaries, and standard shell/process timeout utilities used by legacy scripts. Verification invokes only the executable and argv explicitly authorized in the Delegation Spec. The plugin does not expose an unrestricted shell MCP tool.
+The plugin starts a suitable `node` executable and uses `git`. Depending on the chosen Producer it may invoke `codex`, `opencode`, `pi`, or `pythinker`. Platform confinement/supervision can invoke macOS `/usr/bin/sandbox-exec`, Linux sandbox tooling such as `bwrap` when that backend is selected, and Windows watchdog/helper binaries. Verification invokes only the executable and argv explicitly authorized in the Delegation Spec. The plugin does not expose an unrestricted shell MCP tool.
 
 ## Supported operating systems
 
-The plugin is designed for macOS, Linux, and Windows process/runtime operation. Security capability is narrower than basic runtime compatibility: the Codex MCP edit lane is certified on native macOS arm64 with `codex-native-sandbox`; native Linux is marked tested; native Windows Codex editing is unsupported and must fail eligibility checks. OpenCode, Pi, and Pythinker remain legacy migration lanes. Marketplace language should not imply that all lanes or operating systems have equal certification.
+The plugin is designed for macOS, Linux, and Windows process/runtime operation. Security capability is narrower than basic runtime compatibility: the Codex MCP edit path is certified on native macOS arm64 with `codex-native-sandbox`; native Linux is marked tested; native Windows Codex editing is unsupported and must fail eligibility checks. Every Producer/platform combination is capability-gated. An unavailable combination fails closed without unconfined execution or substitution, and certification must not be inferred across Producers, backends, or operating systems.
 
 ## Network destinations
 
@@ -48,7 +47,7 @@ The user chooses the Producer when none is named. After a verified candidate or 
 
 Primary threats are malicious Producer output, prompt injection in repository/diff content, a compromised Producer CLI, scope escape, forged test claims, candidate substitution, state races, credential leakage, and unauthorized acceptance. Mitigations include versioned validation, OS sandboxing where eligible, detached worktrees, environment minimization, timeouts/process-tree cleanup, post-run allowlist checks, Git object anchoring, manifest hashes, separate Host verification, read-only fresh reviewers, bounded/redacted archives, crash recovery with process start tokens, and hash-gated integration.
 
-Known limitations are material: only macOS arm64 Codex is certified; Linux is tested and native Windows editing is unsupported; legacy lanes have weaker assurance; prompt injection and subtle malicious code can pass review/tests; provider retention is outside plugin control; redaction is best effort; same-user or host compromise is out of scope; and the human decision is not cryptographically authenticated.
+Known limitations are material: only macOS arm64 Codex is certified; Linux is tested and native Windows Codex editing is unsupported; other Producer/platform combinations depend on reported capability and eligibility; prompt injection and subtle malicious code can pass review/tests; provider retention is outside plugin control; redaction is best effort; same-user or host compromise is out of scope; and the human decision is not cryptographically authenticated.
 
 ## Installation
 

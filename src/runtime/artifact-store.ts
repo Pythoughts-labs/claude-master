@@ -878,13 +878,10 @@ export class ArtifactStore {
         || (value.processToken !== null && typeof value.processToken !== "string")
         || typeof value.startedAt !== "string"
         || !Number.isFinite(Date.parse(value.startedAt))
-        || (value.sliced !== undefined && typeof value.sliced !== "boolean")) {
+        || typeof value.sliced !== "boolean") {
         throw new RuntimeError("archived pipeline-active marker is malformed");
       }
-      return {
-        ...value,
-        sliced: value.sliced ?? false,
-      } as PipelineActiveMarker;
+      return value as PipelineActiveMarker;
     } catch (error) {
       if (isMissing(error)) return null;
       throw error;

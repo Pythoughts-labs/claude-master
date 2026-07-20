@@ -449,13 +449,14 @@ describe("recoverStaleRuns", () => {
       `${lockKey}.lock`,
     );
     await mkdir(path.dirname(lockPath), { recursive: true });
-    await writeFile(lockPath, "9103");
+    const lockBytes = JSON.stringify({ pid: 9103, processToken: "owner-9103" });
+    await writeFile(lockPath, lockBytes);
     let ownerChecks = 0;
 
     await expect(recoverStaleRuns({
       platformServices: {
         os: "darwin",
-        async getProcessStartToken() { return null; },
+        async getProcessStartToken(pid) { return pid === 9103 ? "owner-9103" : null; },
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive(pid) {
@@ -467,7 +468,7 @@ describe("recoverStaleRuns", () => {
 
     expect(ownerChecks).toBeGreaterThanOrEqual(2);
     await expect(store.readResult(runId)).resolves.toBeNull();
-    await expect(readFile(lockPath, "utf8")).resolves.toBe("9103");
+    await expect(readFile(lockPath, "utf8")).resolves.toBe(lockBytes);
   }, { timeout: 120_000 });
 
   // POSIX-only: this simulates a concurrent process renaming a replacement lock onto
@@ -897,7 +898,7 @@ describe("recoverStaleRuns", () => {
     await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
     const lockPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks", `${lockKey}.lock`);
     await mkdir(path.dirname(lockPath), { recursive: true });
-    await writeFile(lockPath, "99123");
+    await writeFile(lockPath, JSON.stringify({ pid: 99123, processToken: "stale-99123" }));
     const terminated: number[] = [];
 
     const result = await recoverStaleRuns({
@@ -1066,18 +1067,19 @@ describe("recoverStaleRuns", () => {
     const lockKey = "a".repeat(64);
     const lockPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks", `${lockKey}.lock`);
     await mkdir(path.dirname(lockPath), { recursive: true });
-    await writeFile(lockPath, String(process.pid));
+    const lockBytes = JSON.stringify({ pid: process.pid, processToken: "current-process" });
+    await writeFile(lockPath, lockBytes);
 
     await expect(recoverStaleRuns({
       platformServices: {
         os: "darwin",
-        async getProcessStartToken() { return null; },
+        async getProcessStartToken(pid) { return pid === process.pid ? "current-process" : null; },
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => true,
     })).resolves.toEqual({ recovered: [], quarantined: [] });
 
-    await expect(readFile(lockPath, "utf8")).resolves.toBe(String(process.pid));
+    await expect(readFile(lockPath, "utf8")).resolves.toBe(lockBytes);
   });
 
   it("does not recover an unfinished run owned by a live locked session", async () => {
@@ -1098,13 +1100,14 @@ describe("recoverStaleRuns", () => {
     await runGit(repo.directory, ["update-ref", anchorRef, repo.head]);
     const lockPath = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks", `${lockKey}.lock`);
     await mkdir(path.dirname(lockPath), { recursive: true });
-    await writeFile(lockPath, "7777");
+    const lockBytes = JSON.stringify({ pid: 7777, processToken: "live-7777" });
+    await writeFile(lockPath, lockBytes);
     const terminated: number[] = [];
 
     await expect(recoverStaleRuns({
       platformServices: {
         os: "darwin",
-        async getProcessStartToken() { return null; },
+        async getProcessStartToken(pid) { return pid === 7777 ? "live-7777" : null; },
         async terminateProcessTreeByPid(pid) { terminated.push(pid); },
       },
       isProcessAlive: pid => pid === 7777,
@@ -1113,7 +1116,7 @@ describe("recoverStaleRuns", () => {
     expect(terminated).toEqual([]);
     await expect(access(worktree.path)).resolves.toBeUndefined();
     expect(await runGit(repo.directory, ["rev-parse", anchorRef])).toBe(repo.head);
-    await expect(readFile(lockPath, "utf8")).resolves.toBe("7777");
+    await expect(readFile(lockPath, "utf8")).resolves.toBe(lockBytes);
     await expect(store.readResult(runId)).resolves.toBeNull();
   });
 
@@ -1701,14 +1704,21 @@ describe("recoverStaleRuns", () => {
     const locksRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks");
     const mismatchedPath = path.join(locksRoot, `${"b".repeat(64)}.lock`);
     const matchingPath = path.join(locksRoot, `${"c".repeat(64)}.lock`);
+    const unverifiablePath = path.join(locksRoot, `${"d".repeat(64)}.lock`);
     await mkdir(locksRoot, { recursive: true });
     await writeFile(mismatchedPath, JSON.stringify({ pid: 7001, processToken: "old" }));
     await writeFile(matchingPath, JSON.stringify({ pid: 7002, processToken: "live" }));
+    await writeFile(unverifiablePath, JSON.stringify({ pid: 7003, processToken: "recorded" }));
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     await recoverStaleRuns({
       platformServices: {
         os: "darwin",
-        async getProcessStartToken(pid) { return pid === 7001 ? "new" : "live"; },
+        async getProcessStartToken(pid) {
+          if (pid === 7001) return "new";
+          if (pid === 7002) return "live";
+          return null;
+        },
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => true,
@@ -1716,27 +1726,71 @@ describe("recoverStaleRuns", () => {
 
     await expectMissing(mismatchedPath);
     await expect(readFile(matchingPath, "utf8")).resolves.toContain("\"processToken\":\"live\"");
+    await expect(readFile(unverifiablePath, "utf8"))
+      .resolves.toContain("\"processToken\":\"recorded\"");
+    expect(warn).toHaveBeenCalledWith("startup recovery preserved unverifiable lock", {
+      event: "recovery-unverifiable-lock",
+      lockName: path.basename(unverifiablePath),
+      reason: "process-token-unavailable",
+    });
+    warn.mockRestore();
   });
 
-  it("accepts legacy bare-pid locks and reclaims only dead owners", async () => {
+  it("preserves malformed bare-pid locks, emits diagnostics, and recovers other runs", async () => {
+    const repo = await initRepo();
+    const blockedRunId = "run-a-bare-pid-lock";
+    const healthyRunId = "run-z-healthy-lock";
+    const blockedStore = await createUnfinishedRun(blockedRunId, repo.commonDir, null);
+    const healthyRepo = await initRepo();
+    const healthyStore = await createUnfinishedRun(healthyRunId, healthyRepo.commonDir, null);
     const locksRoot = path.join(process.env.CLAUDE_PLUGIN_DATA!, "locks");
-    const deadPath = path.join(locksRoot, `${"d".repeat(64)}.lock`);
+    const deadPath = path.join(
+      locksRoot,
+      `${createHash("sha256").update(repo.commonDir).digest("hex")}.lock`,
+    );
     const livePath = path.join(locksRoot, `${"e".repeat(64)}.lock`);
+    const nullTokenPath = path.join(locksRoot, `${"f".repeat(64)}.lock`);
     await mkdir(locksRoot, { recursive: true });
     await writeFile(deadPath, "8001");
     await writeFile(livePath, "8002");
+    await writeFile(nullTokenPath, JSON.stringify({ pid: 8003, processToken: null }));
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
-    await recoverStaleRuns({
+    await expect(recoverStaleRuns({
       platformServices: {
         os: "darwin",
         async getProcessStartToken() { return "irrelevant"; },
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: pid => pid === 8002,
-    });
+    })).resolves.toEqual({ recovered: [healthyRunId], quarantined: [] });
 
-    await expectMissing(deadPath);
+    await expect(readFile(deadPath, "utf8")).resolves.toBe("8001");
     await expect(readFile(livePath, "utf8")).resolves.toBe("8002");
+    await expect(readFile(nullTokenPath, "utf8"))
+      .resolves.toBe(JSON.stringify({ pid: 8003, processToken: null }));
+    await expect(blockedStore.readResult(blockedRunId)).resolves.toBeNull();
+    await expect(healthyStore.readResult(healthyRunId)).resolves.toMatchObject({
+      status: "cancelled",
+    });
+    expect(warn.mock.calls).toEqual(expect.arrayContaining([
+      ["startup recovery preserved malformed lock", {
+        event: "recovery-malformed-lock",
+        lockName: path.basename(deadPath),
+        reason: "invalid-owner-record",
+      }],
+      ["startup recovery preserved malformed lock", {
+        event: "recovery-malformed-lock",
+        lockName: path.basename(livePath),
+        reason: "invalid-owner-record",
+      }],
+      ["startup recovery preserved malformed lock", {
+        event: "recovery-malformed-lock",
+        lockName: path.basename(nullTokenPath),
+        reason: "invalid-owner-record",
+      }],
+    ]));
+    warn.mockRestore();
   });
 
   it("recovers state left under a stale plugin root", async () => {
@@ -2064,7 +2118,10 @@ describe("recoverStaleRuns", () => {
       process.env.CLAUDE_PLUGIN_DATA!, "locks", `${CLEANUP_JOURNAL_LOCK_KEY}.lock`,
     );
     await mkdir(path.dirname(journalLockPath), { recursive: true });
-    await writeFile(journalLockPath, JSON.stringify({ pid: 999_999, processToken: null }));
+    await writeFile(journalLockPath, JSON.stringify({
+      pid: 999_999,
+      processToken: "stale-journal-owner",
+    }));
 
     await recoverStaleRuns({
       platformServices: {
@@ -2189,7 +2246,7 @@ describe("recoverStaleRuns", () => {
     await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
   });
 
-  it("treats a legacy pipeline marker as non-sliced during recovery", async () => {
+  it("quarantines a terminal run with a legacy pipeline marker", async () => {
     const repo = await initRepo();
     const runId = "run-interrupted-legacy-pipeline";
     const store = await createUnfinishedRun(runId, repo.commonDir, null);
@@ -2207,13 +2264,9 @@ describe("recoverStaleRuns", () => {
         async terminateProcessTreeByPid() {},
       },
       isProcessAlive: () => false,
-    })).resolves.toEqual({ recovered: [], quarantined: [] });
+    })).resolves.toEqual({ recovered: [], quarantined: [runId] });
 
-    await expect(store.readResult(runId)).resolves.toMatchObject({
-      status: "verified-candidate",
-      failure: null,
-    });
-    await expectMissing(path.join(store.runDirectory, "pipeline-active.json"));
+    await expectQuarantinedRun(runId, store.runDirectory);
   });
 
   it("cleans every sliced worktree and ref for a terminal run without touching a prefix neighbor", async () => {

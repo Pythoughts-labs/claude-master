@@ -1,6 +1,6 @@
 # Threat Model
 
-This model covers the MCP implementation path and the packaged legacy lanes. It assumes the local OS, user account, Node.js runtime, Git executable, and Claude Code host are not already fully compromised. It does not assume that repository text, generated code, Producer output, or model-provider responses are trustworthy.
+This model covers every Producer adapter exposed through the MCP implementation path. It assumes the local OS, user account, Node.js runtime, Git executable, and Claude Code host are not already fully compromised. It does not assume that repository text, generated code, Producer output, or model-provider responses are trustworthy.
 
 ## Assets
 
@@ -20,7 +20,7 @@ Assets include the integrity and confidentiality of the user's repository and Gi
 |---|---|---|
 | Delegation input | Schema/version validation in `src/protocol/spec-validator.ts` and `src/protocol/schema-loader.ts`; explicit allowlist, forbidden scope, timeout, verification argv, and network policy | A valid but overly broad spec grants broad authority |
 | Producer process | Adapter-built argv in `src/producers/`; sanitized environment in `src/runtime/environment-policy.ts`; supervised process groups/timeouts in `src/platform/process-supervisor.ts`; nested-delegation marker | Compromised binaries run with whatever read authority the sandbox permits |
-| Filesystem writes | Detached worktree in `src/git/worktree-manager.ts`; Codex native sandbox or eligible platform backend; post-run inventory and scope rejection in `src/git/candidate-tree.ts` | Sandbox defects or unsupported legacy lanes can allow transient out-of-scope effects before detection |
+| Filesystem writes | Detached worktree in `src/git/worktree-manager.ts`; Producer-native sandbox or eligible platform backend; fail-closed eligibility; post-run inventory and scope rejection in `src/git/candidate-tree.ts` | Defects in an eligible sandbox can allow transient out-of-scope effects before detection |
 | Network/exfiltration | Codex network disabled; per-command verification network declarations; minimal environment propagation; credential redaction | Provider traffic is necessary for cloud models; readable repository secrets may be sent; no destination allowlist |
 | Prompt injection | Producer labeled untrusted; pipeline prompts delimit candidate diff/evidence as untrusted in `src/pipeline/role-prompts.ts`; reviewers are fresh, read-only invocations | Models can still follow malicious content or miss subtle behavior |
 | Forged success claims | Producer self-report is not acceptance evidence; structural verification and Host-run commands in `src/verify/acceptance-verifier.ts`; separate verification worktree in `src/verify/project-verifier.ts` | Tests can be incomplete, malicious, nondeterministic, or dependent on unavailable services |
@@ -39,7 +39,7 @@ These mitigations do not validate business intent. For example, a small allowed 
 
 ## Platform-specific residual risks
 
-The backend registry marks Codex native sandboxing certified only on macOS arm64 and tested on native Linux. Native Windows is unsupported for Codex editing, though watchdog/process-tree support exists. OpenCode, Pi, and Pythinker are legacy migration lanes and can run with provider-specific autonomy; Pythinker in particular is documented as unattended `--yolo`. Their results require especially careful independent diff and test review.
+The backend registry marks Codex native sandboxing certified only on macOS arm64 and tested on native Linux. Native Windows is unsupported for Codex editing, though watchdog/process-tree support exists. Every Producer/platform combination must satisfy the capability registry before editing; an unsupported or unavailable combination fails closed with no alternate-lane substitution. Provider-specific autonomy remains a residual risk, so all Producer results require independent diff and test review.
 
 ## Security conclusions
 

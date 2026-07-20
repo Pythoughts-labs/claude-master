@@ -97,7 +97,7 @@ export interface RecoveryDependencies {
 
 interface LockOwner {
   pid: number;
-  processToken: string | null;
+  processToken: string;
 }
 
 interface AcquiredLock {
@@ -106,7 +106,14 @@ interface AcquiredLock {
   contents: Buffer;
 }
 
-type DeadLockReclaimResult = "reclaimed" | "live" | "contended";
+type LockOwnerStatus = "dead" | "live" | "unverifiable";
+
+type DeadLockReclaimResult =
+  | "reclaimed"
+  | "live"
+  | "contended"
+  | "malformed"
+  | "unverifiable";
 
 function errorCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException).code;
@@ -1456,29 +1463,26 @@ function defaultDelayMs(ms: number): Promise<void> {
 
 function parseLockOwner(contents: string): LockOwner | null {
   const trimmed = contents.trim();
-  if (/^[0-9]+$/.test(trimmed)) {
-    const pid = Number(trimmed);
-    return Number.isSafeInteger(pid) && pid > 1 ? { pid, processToken: null } : null;
-  }
   let value: unknown;
   try { value = JSON.parse(trimmed); }
   catch { return null; }
   if (typeof value !== "object" || value === null) return null;
   const owner = value as { pid?: unknown; processToken?: unknown };
   if (typeof owner.pid !== "number" || !Number.isSafeInteger(owner.pid) || owner.pid <= 1
-    || (owner.processToken !== null && typeof owner.processToken !== "string")) return null;
+    || typeof owner.processToken !== "string" || owner.processToken.length === 0) return null;
   return { pid: owner.pid, processToken: owner.processToken };
 }
 
-async function lockOwnerIsLive(
-  owner: LockOwner | null,
+async function lockOwnerStatus(
+  owner: { pid: number; processToken: string | null } | null,
   isProcessAlive: (pid: number) => boolean,
   getProcessStartToken: (pid: number) => Promise<string | null>,
-): Promise<boolean> {
-  if (owner === null || !isProcessAlive(owner.pid)) return false;
-  if (owner.processToken === null) return true;
+): Promise<LockOwnerStatus> {
+  if (owner === null || !isProcessAlive(owner.pid)) return "dead";
+  if (owner.processToken === null) return "unverifiable";
   const currentToken = await getProcessStartToken(owner.pid);
-  return currentToken === null || currentToken === owner.processToken;
+  if (currentToken === null) return "unverifiable";
+  return currentToken === owner.processToken ? "live" : "dead";
 }
 
 async function readHandleBytes(
@@ -1584,12 +1588,28 @@ async function reclaimDeadLock(
     const contents = await readHandleBytes(handle, metadata.size);
     if (contents.byteLength !== metadata.size) return "contended";
     const owner = parseLockOwner(contents.toString("utf8"));
-    if (owner === null) return "contended";
-    if (await lockOwnerIsLive(
+    if (owner === null) {
+      logger.warn("startup recovery preserved malformed lock", {
+        event: "recovery-malformed-lock",
+        lockName: path.basename(lockPath),
+        reason: "invalid-owner-record",
+      });
+      return "malformed";
+    }
+    const ownerStatus = await lockOwnerStatus(
       owner,
       isProcessAlive,
       getProcessStartToken,
-    )) return "live";
+    );
+    if (ownerStatus === "live") return "live";
+    if (ownerStatus === "unverifiable") {
+      logger.warn("startup recovery preserved unverifiable lock", {
+        event: "recovery-unverifiable-lock",
+        lockName: path.basename(lockPath),
+        reason: "process-token-unavailable",
+      });
+      return "unverifiable";
+    }
     return await removeLockIfUnchanged(
       lockPath,
       handle,
@@ -2031,7 +2051,9 @@ async function lockIsOwnedByLiveProcess(
 ): Promise<boolean> {
   const contents = await readBoundedRegularFile(path.join(locksRoot, `${lockKey}.lock`));
   if (contents === null) return false;
-  return lockOwnerIsLive(parseLockOwner(contents), isProcessAlive, getProcessStartToken);
+  const owner = parseLockOwner(contents);
+  if (owner === null) return true;
+  return await lockOwnerStatus(owner, isProcessAlive, getProcessStartToken) !== "dead";
 }
 
 export async function recoverStaleRuns(
@@ -2127,11 +2149,11 @@ export async function recoverStaleRuns(
           if (result !== null) {
             validateTerminalResult(result, entry.name);
             const marker = await store.readPipelineActiveMarker(entry.name);
-            if (marker !== null && !await lockOwnerIsLive(
+            if (marker !== null && await lockOwnerStatus(
               { pid: marker.pid, processToken: marker.processToken },
               isProcessAlive,
               pid => ps.getProcessStartToken(pid),
-            )) {
+            ) === "dead") {
               const checkoutLock = await acquireOwnedLock(
                 path.join(locksRoot, `${record.lockKey}.lock`),
                 ownerContents,
@@ -2164,11 +2186,11 @@ export async function recoverStaleRuns(
                 }
                 validateTerminalResult(lockedResult, entry.name);
                 const lockedMarker = await store.readPipelineActiveMarker(entry.name);
-                if (lockedMarker !== null && !await lockOwnerIsLive(
+                if (lockedMarker !== null && await lockOwnerStatus(
                   { pid: lockedMarker.pid, processToken: lockedMarker.processToken },
                   isProcessAlive,
                   pid => ps.getProcessStartToken(pid),
-                )) {
+                ) === "dead") {
                   const commonDir = await validateGitCommonDir(lockedRecord.canonicalCommonDir);
                   if (lockedMarker.sliced) await archiveInterruptedPipeline(store, lockedResult);
                   await cleanupManagedWorktrees(commonDir, root, entry.name, ps);

@@ -3,11 +3,6 @@
 </p>
 
 <p align="center">
-  <a href="#available-skills-agents-and-mcp-tools"><img alt="codex-implementer" src="https://img.shields.io/badge/lane-codex--implementer-d97757?style=flat-square&labelColor=0b0e14"></a>
-  <a href="#available-skills-agents-and-mcp-tools"><img alt="opencode-implementer" src="https://img.shields.io/badge/lane-opencode--implementer-58a6ff?style=flat-square&labelColor=0b0e14"></a>
-  <a href="#available-skills-agents-and-mcp-tools"><img alt="pi-implementer" src="https://img.shields.io/badge/lane-pi--implementer%20%C2%B7%20%240-3fb950?style=flat-square&labelColor=0b0e14"></a>
-  <a href="#available-skills-agents-and-mcp-tools"><img alt="pythinker-implementer" src="https://img.shields.io/badge/lane-pythinker--implementer-d29922?style=flat-square&labelColor=0b0e14"></a>
-  <a href="#available-skills-agents-and-mcp-tools"><img alt="claude-advisor" src="https://img.shields.io/badge/advisor-claude--advisor-f85149?style=flat-square&labelColor=0b0e14"></a>
   <a href="#quick-start"><img alt="delegate skill" src="https://img.shields.io/badge/skill-delegate-e6edf3?style=flat-square&labelColor=0b0e14"></a>
 </p>
 
@@ -79,8 +74,6 @@ If no Producer is named, the skill asks you to choose Codex, OpenCode, Pi, or Py
 |---|---|---|
 | Skill | `/claude-architect:delegate` | Builds a versioned spec and drives delegation, review, decision, and guarded integration. |
 | Agent | `advisor` | Current strictly read-only commitment-boundary advisor. |
-| Legacy agent | `claude-advisor` | Legacy second-opinion advisor retained for migration. |
-| Legacy agents | `codex-implementer`, `opencode-implementer`, `pi-implementer`, `pythinker-implementer` | CLI-specific migration lanes; availability and confinement vary. |
 | MCP | `delegate` | Runs one validated, isolated, independently verified attempt. |
 | MCP | `delegatePipeline` | Runs the fresh-context implement/review/repair pipeline. |
 | MCP | `reviewCandidate` | Returns the exact frozen patch and verification evidence. |
@@ -103,7 +96,7 @@ Codex edit confinement uses `codex-native-sandbox`: native macOS arm64 is certif
 
 ## Data storage and privacy
 
-Durable run state, manifests, frozen artifacts, decisions, and recovery metadata are stored beneath the Claude Code-provided `${CLAUDE_PLUGIN_DATA}` directory. Temporary isolated worktrees and process files use OS temporary storage and are recovered or pruned by the runtime. Legacy lane diagnostics may write bounded run metadata beneath `${TMPDIR:-/tmp}/claude-architect-runs` unless overridden.
+Durable run state, manifests, frozen artifacts, decisions, and recovery metadata are stored beneath the Claude Code-provided `${CLAUDE_PLUGIN_DATA}` directory. Temporary isolated worktrees and process files use OS temporary storage and are recovered or pruned by the runtime. Production runs do not fall back to an implicit state directory when `${CLAUDE_PLUGIN_DATA}` is unavailable.
 
 Logs and MCP evidence are bounded and redacted; prompt/argument values are not intentionally logged. Producer CLIs and any configured model providers have their own telemetry, retention, and privacy policies. Do not place credentials or sensitive data in delegation specs, prompts, test fixtures, or command arguments.
 
@@ -111,8 +104,8 @@ Logs and MCP evidence are bounded and redacted; prompt/argument values are not i
 
 - This is a public beta, not an autonomous merge or deployment system.
 - It does not prove business correctness, eliminate supply-chain risk, or replace human security review.
-- Native Codex edit confinement is currently certified on macOS arm64; other platform/Producer combinations may be tested, legacy, diagnostics-only, or unavailable.
-- OpenCode, Pi, and Pythinker legacy lanes remain packaged during adapter migration and do not imply the same certification as the MCP Codex path.
+- Native Codex edit confinement is currently certified on macOS arm64; other platform/Producer combinations may be tested, diagnostics-only, or unavailable.
+- Every Producer must pass the runtime's capability and confinement checks. An unavailable requested Producer is reported and fails closed; the runtime does not substitute another Producer or bypass a denied edit lane.
 - Verification commands are evidence, not automatically sandboxed build infrastructure.
 - Integration stages an accepted candidate but never commits, pushes, opens a pull request, or deploys it.
 

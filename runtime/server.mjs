@@ -27115,13 +27115,10 @@ var ArtifactStore = class {
         path9.join(validated.path, "pipeline-active.json"),
         validated.identity
       ));
-      if (typeof value !== "object" || value === null || typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid <= 1 || value.processToken !== null && typeof value.processToken !== "string" || typeof value.startedAt !== "string" || !Number.isFinite(Date.parse(value.startedAt)) || value.sliced !== void 0 && typeof value.sliced !== "boolean") {
+      if (typeof value !== "object" || value === null || typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid <= 1 || value.processToken !== null && typeof value.processToken !== "string" || typeof value.startedAt !== "string" || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.sliced !== "boolean") {
         throw new RuntimeError("archived pipeline-active marker is malformed");
       }
-      return {
-        ...value,
-        sliced: value.sliced ?? false
-      };
+      return value;
     } catch (error2) {
       if (isMissing(error2)) return null;
       throw error2;
@@ -32397,10 +32394,6 @@ function defaultDelayMs(ms) {
 }
 function parseLockOwner(contents) {
   const trimmed = contents.trim();
-  if (/^[0-9]+$/.test(trimmed)) {
-    const pid = Number(trimmed);
-    return Number.isSafeInteger(pid) && pid > 1 ? { pid, processToken: null } : null;
-  }
   let value;
   try {
     value = JSON.parse(trimmed);
@@ -32409,14 +32402,15 @@ function parseLockOwner(contents) {
   }
   if (typeof value !== "object" || value === null) return null;
   const owner = value;
-  if (typeof owner.pid !== "number" || !Number.isSafeInteger(owner.pid) || owner.pid <= 1 || owner.processToken !== null && typeof owner.processToken !== "string") return null;
+  if (typeof owner.pid !== "number" || !Number.isSafeInteger(owner.pid) || owner.pid <= 1 || typeof owner.processToken !== "string" || owner.processToken.length === 0) return null;
   return { pid: owner.pid, processToken: owner.processToken };
 }
-async function lockOwnerIsLive(owner, isProcessAlive, getProcessStartToken) {
-  if (owner === null || !isProcessAlive(owner.pid)) return false;
-  if (owner.processToken === null) return true;
+async function lockOwnerStatus(owner, isProcessAlive, getProcessStartToken) {
+  if (owner === null || !isProcessAlive(owner.pid)) return "dead";
+  if (owner.processToken === null) return "unverifiable";
   const currentToken = await getProcessStartToken(owner.pid);
-  return currentToken === null || currentToken === owner.processToken;
+  if (currentToken === null) return "unverifiable";
+  return currentToken === owner.processToken ? "live" : "dead";
 }
 async function readHandleBytes(handle, size) {
   const contents = Buffer.alloc(size);
@@ -32503,12 +32497,28 @@ async function reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) {
     const contents = await readHandleBytes(handle, metadata.size);
     if (contents.byteLength !== metadata.size) return "contended";
     const owner = parseLockOwner(contents.toString("utf8"));
-    if (owner === null) return "contended";
-    if (await lockOwnerIsLive(
+    if (owner === null) {
+      logger.warn("startup recovery preserved malformed lock", {
+        event: "recovery-malformed-lock",
+        lockName: path14.basename(lockPath),
+        reason: "invalid-owner-record"
+      });
+      return "malformed";
+    }
+    const ownerStatus = await lockOwnerStatus(
       owner,
       isProcessAlive,
       getProcessStartToken
-    )) return "live";
+    );
+    if (ownerStatus === "live") return "live";
+    if (ownerStatus === "unverifiable") {
+      logger.warn("startup recovery preserved unverifiable lock", {
+        event: "recovery-unverifiable-lock",
+        lockName: path14.basename(lockPath),
+        reason: "process-token-unavailable"
+      });
+      return "unverifiable";
+    }
     return await removeLockIfUnchanged(
       lockPath,
       handle,
@@ -32862,7 +32872,9 @@ async function reclaimLocks(locksRoot, isProcessAlive, getProcessStartToken) {
 async function lockIsOwnedByLiveProcess(locksRoot, lockKey, isProcessAlive, getProcessStartToken) {
   const contents = await readBoundedRegularFile(path14.join(locksRoot, `${lockKey}.lock`));
   if (contents === null) return false;
-  return lockOwnerIsLive(parseLockOwner(contents), isProcessAlive, getProcessStartToken);
+  const owner = parseLockOwner(contents);
+  if (owner === null) return true;
+  return await lockOwnerStatus(owner, isProcessAlive, getProcessStartToken) !== "dead";
 }
 async function recoverStaleRuns(dependencies = {}) {
   const root = await stateRoot();
@@ -32934,11 +32946,11 @@ async function recoverStaleRuns(dependencies = {}) {
           if (result !== null) {
             validateTerminalResult(result, entry.name);
             const marker = await store.readPipelineActiveMarker(entry.name);
-            if (marker !== null && !await lockOwnerIsLive(
+            if (marker !== null && await lockOwnerStatus(
               { pid: marker.pid, processToken: marker.processToken },
               isProcessAlive,
               (pid) => ps.getProcessStartToken(pid)
-            )) {
+            ) === "dead") {
               const checkoutLock = await acquireOwnedLock(
                 path14.join(locksRoot, `${record2.lockKey}.lock`),
                 ownerContents,
@@ -32965,11 +32977,11 @@ async function recoverStaleRuns(dependencies = {}) {
                 }
                 validateTerminalResult(lockedResult, entry.name);
                 const lockedMarker = await store.readPipelineActiveMarker(entry.name);
-                if (lockedMarker !== null && !await lockOwnerIsLive(
+                if (lockedMarker !== null && await lockOwnerStatus(
                   { pid: lockedMarker.pid, processToken: lockedMarker.processToken },
                   isProcessAlive,
                   (pid) => ps.getProcessStartToken(pid)
-                )) {
+                ) === "dead") {
                   const commonDir = await validateGitCommonDir(lockedRecord.canonicalCommonDir);
                   if (lockedMarker.sliced) await archiveInterruptedPipeline(store, lockedResult);
                   await cleanupManagedWorktrees(commonDir, root, entry.name, ps);

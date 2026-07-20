@@ -4,7 +4,7 @@ Claude Architect treats repository content, Producer output, model text, and com
 
 ## Components that execute code
 
-`runtime/bootstrap.mjs` executes Node.js and starts the MCP server. The Host runtime invokes `git`, the selected Producer CLI (`codex`, `opencode`, `pi`, or `pythinker`), OS confinement helpers such as `/usr/bin/sandbox-exec` on supported macOS systems, Linux sandbox tooling when selected, and the packaged Windows watchdog/helper. Verification executes only commands listed in the validated Delegation Spec. Legacy lane shell scripts also invoke standard shell utilities and the selected CLI.
+`runtime/bootstrap.mjs` executes Node.js and starts the MCP server. The Host runtime invokes `git`, the selected Producer CLI (`codex`, `opencode`, `pi`, or `pythinker`), OS confinement helpers such as `/usr/bin/sandbox-exec` on supported macOS systems, Linux sandbox tooling when selected, and the packaged Windows watchdog/helper. Verification executes only commands listed in the validated Delegation Spec.
 
 Producer commands are built by adapters in `src/producers/`; user-controlled values are passed as argv rather than interpolated shell programs. Executables are resolved through platform services. Verification commands include an executable, argv, relative cwd, timeout, network policy, expected exit codes, optional environment, platform filters, and mutation policy. There is no general MCP “run arbitrary shell” tool.
 
@@ -12,11 +12,11 @@ Producer commands are built by adapters in `src/producers/`; user-controlled val
 
 The architect supplies explicit `writeAllowlist` and `forbiddenScope` entries. The Producer works in a detached worktree, not the user's checkout. After execution, `src/git/candidate-tree.ts` inventories tracked, untracked, and ignored changes and rejects unauthorized paths. This post-run check complements, but does not replace, OS sandboxing. Nested delegation is denied by the `CLAUDE_ARCHITECT_DELEGATED` marker and MCP startup refuses to run when that marker is present.
 
-Codex receives its native `workspace-write` or `read-only` sandbox. The supported backend table is fail-closed: macOS arm64 is certified, Linux is tested, and native Windows Codex editing is unsupported. Other Producers are legacy/migration paths and do not inherit the certified Codex claim.
+Codex receives its native `workspace-write` or `read-only` sandbox. The supported backend table is fail-closed: macOS arm64 is certified, Linux is tested, and native Windows Codex editing is unsupported. Every other Producer must likewise pass its adapter and platform capability checks; lack of an eligible backend makes the requested edit unavailable and never authorizes an unconfined substitute.
 
 ## Network access
 
-Codex edit and read-only invocations request no network (`sandbox_workspace_write.network_access=false`). Each verification command declares `network: denied` or an allowed policy; the verifier reports the requested and effective enforcement. A command is not evidence of network denial if the selected platform cannot enforce it. Legacy/provider CLIs may contact their configured cloud model service, and local providers may contact configured local endpoints. The plugin has no fixed hostname allowlist and does not proxy model traffic. Provider authentication, transport, and retention remain the provider/CLI operator's responsibility.
+Codex edit and read-only invocations request no network (`sandbox_workspace_write.network_access=false`). Each verification command declares `network: denied` or an allowed policy; the verifier reports the requested and effective enforcement. A command is not evidence of network denial if the selected platform cannot enforce it. Producer CLIs may contact their configured cloud model service, and local providers may contact configured local endpoints. The plugin has no fixed hostname allowlist and does not proxy model traffic. Provider authentication, transport, and retention remain the provider/CLI operator's responsibility.
 
 ## Files read and written
 
@@ -55,7 +55,7 @@ Disable/remove the plugin through Claude Code's plugin manager, then remove its 
 ## Known limitations
 
 - Only native macOS arm64 Codex is certified; Linux is tested, and native Windows Codex edit confinement is unsupported.
-- OpenCode, Pi, and Pythinker remain legacy migration lanes.
+- Producer edit availability is capability-gated and fails closed; certification is specific to the reported Producer, platform, and confinement backend.
 - Prompt injection can influence a model despite role prompts; confinement limits consequences but does not prove semantic correctness.
 - Read access may expose repository secrets to a remote provider.
 - Redaction is best effort, not data-loss prevention.

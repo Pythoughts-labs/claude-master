@@ -7,56 +7,50 @@ INSTALLER="$ROOT/scripts/install-opencode.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-AGENTS=(codex-implementer.md claude-advisor.md pi-implementer.md pythinker-implementer.md)
-RUNTIMES=(run-isolated.sh run-codex-isolated.sh run-opencode-isolated.sh run-pi-isolated.sh run-pythinker-isolated.sh)
-
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
 }
 
-assert_managed_layout() {
-  local base=$1
-  local agent
-  local runtime
+write_retired_claude_advisor() {
+  local destination=$1
 
-  for agent in "${AGENTS[@]}"; do
-    cmp -s "$ROOT/.opencode/agents/$agent" "$base/agents/$agent" ||
-      fail "$base/agents/$agent does not byte-match its source"
-  done
-  cmp -s "$ROOT/skills/delegate/SKILL.md" "$base/skills/delegate/SKILL.md" ||
-    fail "$base/skills/delegate/SKILL.md does not byte-match its source"
-  for runtime in "${RUNTIMES[@]}"; do
-    cmp -s "$ROOT/scripts/$runtime" "$base/claude-architect/scripts/$runtime" ||
-      fail "$base/claude-architect/scripts/$runtime does not byte-match its source"
-    [[ -x "$base/claude-architect/scripts/$runtime" ]] ||
-      fail "$base/claude-architect/scripts/$runtime is not executable"
-  done
+  mkdir -p "$(dirname "$destination")"
+  cat > "$destination" <<'EOF'
+---
+description: Read-only second opinion for architecture decisions, migrations, API designs, broad refactors, repeated failures, and final acceptance reviews.
+mode: subagent
+permission:
+  read: allow
+  glob: allow
+  grep: allow
+  bash: deny
+  edit: deny
+---
+
+# Claude Advisor
+
+Inspect the relevant code before answering. Give a direct verdict, the reason, and the single risk that decides it. Name precisely any missing fact that would change the answer. Do not implement or edit files, do not expand scope, and stay under roughly 300 words.
+EOF
 }
 
-assert_reported_destinations() {
+assert_managed_layout() {
+  local base=$1
+
+  cmp -s "$ROOT/skills/delegate/SKILL.md" "$base/skills/delegate/SKILL.md" ||
+    fail "$base/skills/delegate/SKILL.md does not byte-match its source"
+  [[ ! -e "$base/agents" ]] || fail "$base unexpectedly contains legacy agents"
+  [[ ! -e "$base/claude-architect/scripts" ]] ||
+    fail "$base unexpectedly contains legacy isolated launchers"
+}
+
+assert_reported_destination() {
   local base=$1
   local output=$2
-  local expected
-  local count=0
+  local expected="$base/skills/delegate/SKILL.md"
 
-  while IFS= read -r expected; do
-    grep -Fxq "$expected" "$output" || fail "installer did not report $expected"
-    count=$((count + 1))
-  done < <(
-    printf '%s\n' \
-      "$base/agents/codex-implementer.md" \
-      "$base/agents/claude-advisor.md" \
-      "$base/agents/pi-implementer.md" \
-      "$base/agents/pythinker-implementer.md" \
-      "$base/skills/delegate/SKILL.md" \
-      "$base/claude-architect/scripts/run-isolated.sh" \
-      "$base/claude-architect/scripts/run-codex-isolated.sh" \
-      "$base/claude-architect/scripts/run-opencode-isolated.sh" \
-      "$base/claude-architect/scripts/run-pi-isolated.sh" \
-      "$base/claude-architect/scripts/run-pythinker-isolated.sh"
-  )
-  [[ $(wc -l < "$output" | tr -d ' ') -eq "$count" ]] ||
+  grep -Fxq "$expected" "$output" || fail "installer did not report $expected"
+  [[ $(wc -l < "$output" | tr -d ' ') -eq 1 ]] ||
     fail 'installer reported an unexpected number of destinations'
 }
 
@@ -67,18 +61,65 @@ assert_project_install() {
 
   (cd "$TMP" && bash "$INSTALLER" --project "$project") > "$output"
   assert_managed_layout "$base"
-  assert_reported_destinations "$base" "$output"
+  assert_reported_destination "$base" "$output"
 
+  write_retired_claude_advisor "$base/agents/claude-advisor.md"
   printf 'keep me\n' > "$base/agents/unrelated.md"
   printf '{"keep":true}\n' > "$base/opencode.json"
-  printf 'stale\n' > "$base/agents/codex-implementer.md"
-  chmod -x "$base/claude-architect/scripts/run-codex-isolated.sh"
+  printf 'stale\n' > "$base/skills/delegate/SKILL.md"
   bash "$INSTALLER" --project "$project" > "$output"
-  assert_managed_layout "$base"
+  cmp -s "$ROOT/skills/delegate/SKILL.md" "$base/skills/delegate/SKILL.md" ||
+    fail 'reinstall did not refresh the managed skill'
+  [[ ! -e "$base/agents/claude-advisor.md" ]] ||
+    fail 'reinstall retained an unmodified retired managed agent'
+  grep -Fxq "retired $base/agents/claude-advisor.md" "$output" ||
+    fail 'reinstall did not report the retired managed agent'
   grep -Fxq 'keep me' "$base/agents/unrelated.md" || fail 'reinstall removed an unrelated agent'
   grep -Fxq '{"keep":true}' "$base/opencode.json" || fail 'reinstall changed unrelated config'
 
-  printf 'PASS: project install is complete, quoted, deterministic, and non-destructive.\n'
+  printf 'PASS: project install is MCP-only, deterministic, and non-destructive.\n'
+}
+
+assert_modified_retired_asset_conflicts() {
+  local project="$TMP/project-conflict"
+  local base="$project/.opencode"
+  local retired="$base/agents/claude-advisor.md"
+  local status
+
+  write_retired_claude_advisor "$retired"
+  printf '\nuser customization\n' >> "$retired"
+
+  set +e
+  bash "$INSTALLER" --project "$project" > "$TMP/conflict-output" 2> "$TMP/conflict-error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq 73 ]] || fail "modified retired asset exited $status instead of 73"
+  grep -Fxq 'user customization' "$retired" || fail 'conflict handling modified a user-owned asset'
+  [[ ! -e "$base/skills/delegate/SKILL.md" ]] || fail 'conflict handling performed a partial install'
+  grep -Fq "CONFLICT: preserved $retired (content differs from the retired managed asset)" \
+    "$TMP/conflict-error" || fail 'conflict handling did not identify the preserved asset'
+
+  printf 'PASS: modified retired assets are preserved and reported before writes.\n'
+}
+
+assert_retirement_inventory() {
+  local retired
+
+  for retired in \
+    agents/codex-implementer.md \
+    agents/claude-advisor.md \
+    agents/pi-implementer.md \
+    agents/pythinker-implementer.md \
+    claude-architect/scripts/run-isolated.sh \
+    claude-architect/scripts/run-codex-isolated.sh \
+    claude-architect/scripts/run-opencode-isolated.sh \
+    claude-architect/scripts/run-pi-isolated.sh \
+    claude-architect/scripts/run-pythinker-isolated.sh; do
+    grep -Fq "\"$retired:" "$INSTALLER" || fail "retirement inventory omits $retired"
+  done
+
+  printf 'PASS: every previously managed legacy asset is in the retirement inventory.\n'
 }
 
 assert_global_installs() {
@@ -89,12 +130,12 @@ assert_global_installs() {
 
   HOME="$home" XDG_CONFIG_HOME="$xdg" bash "$INSTALLER" --global > "$TMP/global-output"
   assert_managed_layout "$default_base"
-  assert_reported_destinations "$default_base" "$TMP/global-output"
+  assert_reported_destination "$default_base" "$TMP/global-output"
 
   HOME="$home" XDG_CONFIG_HOME="$xdg" OPENCODE_CONFIG_DIR="$configured" \
     bash "$INSTALLER" --global > "$TMP/custom-output"
   assert_managed_layout "$configured"
-  assert_reported_destinations "$configured" "$TMP/custom-output"
+  assert_reported_destination "$configured" "$TMP/custom-output"
   [[ ! -e "$home/.config/opencode" ]] || fail 'global install ignored XDG_CONFIG_HOME'
 
   printf 'PASS: global install honors XDG and OPENCODE_CONFIG_DIR precedence.\n'
@@ -133,62 +174,10 @@ assert_invalid_arguments() {
   printf 'PASS: invalid, mixed, missing, and extra arguments fail before writes.\n'
 }
 
-extract_resolver() {
-  local agent=$1
-  local output=$2
-
-  awk '
-    /<!-- BEGIN CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->/ { inside=1; next }
-    /<!-- END CLAUDE_ARCHITECT_RUNTIME_RESOLVER -->/ { inside=0; found=1; next }
-    inside && $0 !~ /^```/ { print }
-    END { if (!found) exit 1 }
-  ' "$agent" > "$output"
-}
-
-assert_resolver_case() {
-  local agent_name=$1
-  local adapter=$2
-  local project="$TMP/resolver-$agent_name"
-  local nested="$project/work/a/b"
-  local block="$TMP/$agent_name-resolver.sh"
-  local resolved
-
-  bash "$INSTALLER" --project "$project" > /dev/null
-  mkdir -p "$nested"
-  extract_resolver "$ROOT/.opencode/agents/$agent_name-implementer.md" "$block"
-  resolved=$(cd "$nested" && env -u CLAUDE_ARCHITECT_ROOT -u OPENCODE_CONFIG_DIR bash "$block")
-  [[ "$resolved" == "$project/.opencode/claude-architect/scripts/$adapter" ]] ||
-    fail "$agent_name nested resolver returned $resolved"
-
-  printf 'PASS: %s resolves %s from a nested project directory.\n' "$agent_name" "$adapter"
-}
-
-assert_custom_global_resolver_case() {
-  local agent_name=$1
-  local adapter=$2
-  local configured="$TMP/global-resolver-$agent_name"
-  local cwd="$TMP/outside-$agent_name/a/b"
-  local block="$TMP/$agent_name-global-resolver.sh"
-  local resolved
-
-  OPENCODE_CONFIG_DIR="$configured" bash "$INSTALLER" --global > /dev/null
-  mkdir -p "$cwd"
-  extract_resolver "$ROOT/.opencode/agents/$agent_name-implementer.md" "$block"
-  resolved=$(cd "$cwd" && OPENCODE_CONFIG_DIR="$configured" env -u CLAUDE_ARCHITECT_ROOT bash "$block")
-  [[ "$resolved" == "$configured/claude-architect/scripts/$adapter" ]] ||
-    fail "$agent_name custom-global resolver returned $resolved"
-
-  printf 'PASS: %s resolves %s from OPENCODE_CONFIG_DIR.\n' "$agent_name" "$adapter"
-}
-
 assert_project_install
 assert_global_installs
 assert_invalid_arguments
-assert_resolver_case codex run-codex-isolated.sh
-assert_resolver_case pi run-pi-isolated.sh
-assert_resolver_case pythinker run-pythinker-isolated.sh
-assert_custom_global_resolver_case codex run-codex-isolated.sh
-assert_custom_global_resolver_case pi run-pi-isolated.sh
-assert_custom_global_resolver_case pythinker run-pythinker-isolated.sh
+assert_modified_retired_asset_conflicts
+assert_retirement_inventory
 
-printf 'PASS: OpenCode installer and runtime lookup behavior are verified.\n'
+printf 'PASS: OpenCode installer ships only the MCP delegate skill.\n'

@@ -33,7 +33,7 @@ The Producer CLI and its model are explicitly untrusted. It receives a rendered 
 
 The worktree is a containment and observation boundary. The runtime inventories all resulting paths and freezes only changes that match `writeAllowlist` and do not match `forbiddenScope`. Producer stdout, structured reports, test claims, and repository instructions are data, not authority. They cannot record acceptance or call integration because nested MCP startup/delegation is denied and multi-agent behavior is disabled for the certified Codex invocation.
 
-This boundary has limits: readable repository data can be disclosed to a cloud model, sandbox implementations can have defects, and legacy lanes are not certified to the same standard.
+This boundary has limits: readable repository data can be disclosed to a cloud model and sandbox implementations can have defects. Capability gating prevents an unavailable confinement backend from becoming an implicit unconfined or substitute edit path; it does not make an eligible backend infallible.
 
 ## Boundary 4: implementation and review contexts
 

@@ -4,20 +4,15 @@ This inventory describes the shipped surfaces relevant to marketplace review. Th
 
 ## Skill
 
-`skills/delegate/SKILL.md` defines `/claude-architect:delegate`. It instructs Claude to build a versioned Delegation Spec, choose a Producer explicitly, call the MCP lifecycle, review exact frozen bytes, record a human decision, and integrate only an accepted candidate whose manifest hash matches. It recommends `delegatePipeline` for non-trivial changes and documents the legacy migration fallback. The skill itself is orchestration text; it does not directly receive Bash or file-edit tools.
+`skills/delegate/SKILL.md` defines `/claude-architect:delegate`. It instructs Claude to build a versioned Delegation Spec, choose a Producer explicitly, call the MCP lifecycle, review exact frozen bytes, record a human decision, and integrate only an accepted candidate whose manifest hash matches. It recommends `delegatePipeline` for non-trivial changes. If the requested Producer is not eligible, the workflow reports it unavailable instead of substituting another Producer or bypassing confinement. The skill itself is orchestration text; it does not directly receive Bash or file-edit tools.
 
 ## Agents
 
 | Component | Purpose and declared restrictions |
 |---|---|
 | `agents/advisor.md` | Strictly non-mutating advisor. Declares read-only repository tools and no Bash or edit authority. |
-| `agents/claude-advisor.md` | Legacy/read-only architecture advisor; reads before opining and must not mutate. |
-| `agents/codex-implementer.md` | Legacy Codex lane supervisor. Declares Bash/Read/Grep/Glob, invokes Codex through the isolated runner with `workspace-write`, offline sandbox, ephemeral config, and no child agents; independently reviews diff/tests. Not the fallback for a denied certified MCP lane. |
-| `agents/opencode-implementer.md` | Legacy OpenCode supervisor with Bash/read/search access. Runs the selected CLI through an isolated adapter and verifies its changes. |
-| `agents/pi-implementer.md` | Legacy Pi supervisor with Bash/read/search access. Uses a one-shot/no-session invocation and deterministic tool subset; provider/model is configuration-dependent. |
-| `agents/pythinker-implementer.md` | Legacy Pythinker supervisor with Bash/read/search access. Invokes unattended `--yolo`; this high-autonomy output requires independent review. |
 
-Agent frontmatter restrictions constrain Claude Code's agent wrapper; the external CLI still has the authority granted by its adapter and OS sandbox. OpenCode, Pi, and Pythinker are migration lanes, not certified MCP Codex equivalents.
+Agent frontmatter restrictions constrain Claude Code's advisor wrapper. Implementation Producers run through the validated MCP lifecycle and have only the authority granted by their adapter and eligible OS sandbox. Certification remains specific to the reported Producer, platform, and backend.
 
 ## MCP tools
 
@@ -49,7 +44,7 @@ The MCP server has no generic command-execution endpoint. Verification execution
 
 ## Hooks and scripts
 
-The plugin contains no marketplace/runtime hook declaration under a `hooks/` directory. Repository development uses `.githooks/pre-push`, which is not installed as a Claude Code plugin hook and only runs when a contributor configures Git's `core.hooksPath`. Shell scripts under `scripts/` provide legacy isolated lane launchers, release validation, and development/install checks. They may invoke `bash`, Producer CLIs, timeout/process utilities, Node.js, Git, and test/build commands according to their specific script.
+The plugin contains no marketplace/runtime hook declaration under a `hooks/` directory. Repository development uses `.githooks/pre-push`, which is not installed as a Claude Code plugin hook and only runs when a contributor configures Git's `core.hooksPath`. Shell scripts under `scripts/` provide release validation and development/install checks. They may invoke `bash`, timeout/process utilities, Node.js, Git, and test/build commands according to their specific script.
 
 ## Tool restriction summary
 

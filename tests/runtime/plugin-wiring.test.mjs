@@ -67,11 +67,35 @@ describe("P0-A plugin wiring", () => {
     }
     assert.match(skill, /validationErrors/u, "delegate skill must describe the repair loop");
     assert.match(skill, /protocolVersion/u, "delegate skill must echo its protocol marker");
-    for (const fallback of ["codex-implementer", "opencode-implementer", "pi-implementer", "pythinker-implementer"]) {
-      assert.ok(skill.includes(`\`${fallback}\``), `delegate skill must retain ${fallback} as migration fallback`);
+    for (const rosterName of ["codex-implementer", "opencode-implementer", "pi-implementer", "pythinker-implementer"]) {
+      assert.ok(skill.includes(`\`${rosterName}\``), `delegate skill must retain ${rosterName} in its selection roster`);
     }
     assert.match(skill, /laneEligibility\.edit=false/u);
-    assert.match(skill, /must not fall back to `claude-architect:codex-implementer`/u);
+    assert.doesNotMatch(skill, /^## Legacy migration fallback$/mu);
+
+    for (const legacyFile of [
+      "agents/codex-implementer.md",
+      "agents/opencode-implementer.md",
+      "agents/pi-implementer.md",
+      "agents/pythinker-implementer.md",
+      ".opencode/agents/claude-advisor.md",
+      ".opencode/agents/codex-implementer.md",
+      ".opencode/agents/pi-implementer.md",
+      ".opencode/agents/pythinker-implementer.md",
+      "scripts/run-isolated.sh",
+      "scripts/run-codex-isolated.sh",
+      "scripts/run-opencode-isolated.sh",
+      "scripts/run-pi-isolated.sh",
+      "scripts/run-pythinker-isolated.sh",
+      "tests/lane-roster.test.mjs",
+      "tests/lane-model-fallback.test.mjs",
+      "tests/lane-contract.test.mjs",
+      "tests/run-isolated.test.sh",
+      "tests/codex-lifecycle.test.sh",
+      "tests/runtime/isolated-scripts.test.ts",
+    ]) {
+      assert.equal(fs.existsSync(`${root}/${legacyFile}`), false, `${legacyFile} must not ship`);
+    }
 
     const plugin = JSON.parse(read(".claude-plugin/plugin.json"));
     const marketplace = JSON.parse(read(".claude-plugin/marketplace.json"));

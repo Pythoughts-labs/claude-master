@@ -583,7 +583,7 @@ describe("ArtifactStore", () => {
     await expect(store.readPipelineActiveMarker(runId)).resolves.toEqual(marker);
   });
 
-  it("normalizes a legacy pipeline marker without sliced to non-sliced", async () => {
+  it("rejects a legacy pipeline marker without sliced", async () => {
     const runId = "run-pipeline-marker-legacy";
     const store = new ArtifactStore(runId);
     await store.writeLog("lifecycle", "create run directory\n");
@@ -593,9 +593,9 @@ describe("ArtifactStore", () => {
       startedAt: "2026-07-19T12:00:00.000Z",
     })}\n`);
 
-    await expect(store.readPipelineActiveMarker(runId)).resolves.toMatchObject({
-      sliced: false,
-    });
+    await expect(store.readPipelineActiveMarker(runId)).rejects.toThrow(
+      /pipeline-active marker is malformed/i,
+    );
   });
 
   it.each([null, "true", 1, {}])(

@@ -6,6 +6,10 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the packaged legacy implementation/advisor lanes and their compatibility fallbacks from the documented workflow. All supported Producers now use the validated MCP lifecycle, fail closed when edit eligibility or confinement cannot be proven, and recovery no longer accepts PID-only checkout-lock ownership.
+
 ## [0.24.0] - 2026-07-19
 
 ### Added

@@ -12,7 +12,7 @@ Reviewers and the modeled verifier are listed in `READ_ONLY_ROLES`. `buildRoleSp
 
 The deterministic consolidator deduplicates findings, preserves the highest severity, records originating reviewer labels, and reports conflicting required outcomes at the same location (`src/pipeline/consolidator.ts`). A fresh fixer process then receives only the common package plus consolidated findings, has only the original write allowlist, must disposition every finding, and is told not to perform final verification. Fixes are re-reviewed in a subsequent loop iteration. Final verification is actually performed by trusted host code in `verifyCandidate`, in a separate worktree created at the final commit. It runs structural and project verification, checks scope and baseline ancestry, detects deleted or newly skipped tests, checks worktree cleanliness, and feeds a deterministic gate. Although a `verifier` prompt and read-only role exist, the pipeline does not invoke that agent role.
 
-Finally, the delegate skill requires the architect to inspect the evidence bundle. `decision-ready` is not self-merging: the architect records a decision, and integration is a later hash-bound action. For `human-decision-required`, the skill says to present unresolved findings verbatim and never accept on the human's behalf (`skills/delegate/SKILL.md`). The legacy implementer agent definitions likewise say their output is untrusted and requires architect review, but their own “verify independently” steps are implementation-lane validation rather than clean-room final verification.
+Finally, the delegate skill requires the architect to inspect the evidence bundle. `decision-ready` is not self-merging: the architect records a decision, and integration is a later hash-bound action. For `human-decision-required`, the skill says to present unresolved findings verbatim and never accept on the human's behalf (`skills/delegate/SKILL.md`). Every implementation Producer now enters this MCP lifecycle; there is no separate prompt-governed implementation path whose local validation substitutes for clean-room final verification.
 
 ## Spec Comparison
 
@@ -42,7 +42,7 @@ The reviewers are independent in context and timing, but not guaranteed to be di
 
 6. **Decision identity is thin.** `RunDecision` records decision and timestamp, but the exposed `decideCandidate` operation does not capture actor identity, rationale, adjudication artifact, or accepted risk. The skill supplies a human stop for unresolved blockers, but the stored decision boundary is not rich enough to prove who resolved a dispute or why.
 
-7. **Role separation is split between runtime and prose for legacy lanes.** The MCP pipeline mechanically confines reviewers. By contrast, the legacy agent files primarily require architect review and lane-local re-verification through instructions. They do not constitute the same structured multi-review/fix/adjudication pipeline and should not be described as equivalent assurance.
+7. **Producer eligibility must remain fail-closed.** The MCP pipeline mechanically confines reviewers and capability-gates implementation Producers. Missing edit or read-only confinement must remain an unavailable role outcome; it cannot select an unconfined execution path or silently substitute a different Producer.
 
 ## Recommendations (prioritized)
 
@@ -72,4 +72,4 @@ Normalize findings by acceptance-criterion ID and falsifiable claim, not only ex
 
 ### P2 — Clarify assurance levels in documentation and schemas
 
-Document three distinct checks: implementer-local validation, deterministic clean-worktree verification, and independent semantic review. State that legacy lanes provide candidate production only and acquire full assurance only when their artifact enters the MCP pipeline. Rename or remove unused role surfaces so the documented role graph matches the executed state machine.
+Document three distinct checks: implementer-local validation, deterministic clean-worktree verification, and independent semantic review. State that all implementation Producers enter the MCP pipeline and that unavailable capability or confinement fails closed without substitution. Rename or remove unused role surfaces so the documented role graph matches the executed state machine.

@@ -37,7 +37,7 @@ Offer exactly these choices:
 
 There is no implicit lane default. If the answer names a supported model or reasoning override, include it in the delegation spec; otherwise let the selected Producer use its configured default.
 
-P0-A certifies the MCP implementation path only for Codex on macOS arm64 when its capability report names `codex-native-sandbox` and marks the edit Lane eligible. OpenCode, Pi, and Pythinker remain available through the legacy fallback below until their MCP Producer adapters are certified.
+P0-A certifies the MCP implementation path only for Codex on macOS arm64 when its capability report names `codex-native-sandbox` and marks the edit Lane eligible.
 
 ## Build the Delegation Spec
 
@@ -81,7 +81,7 @@ The `delegate` and `delegatePipeline` MCP calls are synchronous. Keep each call 
 1. Call `delegate` through `mcp__plugin_claude-architect_runtime__delegate` with `checkoutPath`, the candidate spec, and `protocolVersion: "1.3.0"` copied from this skill's `PROTOCOL_VERSION` marker.
 2. When it returns `ok:false` with `validationErrors`, repair only the reported spec defects and resubmit. This repair loop must not touch a Producer.
 3. When it returns a protocol/schema diagnostic, stop and tell the user to update the installed marketplace copy and reload Claude Code. Never guess across a version mismatch.
-4. When the result is `unavailable`, `failed`, or `cancelled`, report the structured classification and evidence. Do not claim a candidate exists. A Codex report with `laneEligibility.edit=false`, a missing `codex-native-sandbox`, or an unsupported Host is diagnostics-only and must not enter any legacy implementation lane.
+4. When the result is `unavailable`, `failed`, or `cancelled`, report the structured classification and evidence. Do not claim a candidate exists. A report with `laneEligibility.edit=false`, or any other ineligible or unconfined Lane, fails closed with the structured diagnostic.
 5. When the result is `verified-candidate`, call `reviewCandidate` with `checkoutPath` and the run id. Read the exact unredacted patch, changed-path manifest, and verification evidence; compare them with every success criterion and repository convention.
 6. Present the review outcome. Call `decideCandidate` with `checkoutPath`, the run id, and `accepted`, `rejected`, or `revision-requested`. Rejection discards the candidate anchor; a revision requires a new spec/attempt rather than editing frozen bytes.
 7. Only after an accepted decision, call `integrateCandidate` with `checkoutPath`, the run id, and the exact candidate `manifestHash` as `expectedArtifactHash`. Report `applied`, `conflicted`, or `aborted` truthfully. Integration stages the reviewed tree but does not commit it.
@@ -238,17 +238,3 @@ After backgrounding the host returns control once; emit a single Live status
 line (the FleetView-style format above) then. Continuous status requires scheduled wakeups (about 75s apart, each a full
 turn) — only do this when the human explicitly asks for live status, tell them it
 costs a turn per update, and never poll tighter than the round cadence.
-
-## Legacy migration fallback
-
-The pre-0.8 prose lane definitions remain packaged during migration: `codex-implementer`, `opencode-implementer`, `pi-implementer`, and `pythinker-implementer`. OpenCode, Pi, and Pythinker may use their selected legacy lane while their MCP adapters are not yet certified. Keep the objective, files, interfaces, constraints, and verification unchanged, isolate writes in the lane's worktree, and independently inspect its diff and verification output. Never silently substitute Claude implementation for a named Producer.
-
-Every legacy lane — dispatched alone or concurrently — must receive its own worktree; concurrent lanes are pinned to one frozen base commit. Lanes whose `writeAllowlist` globs overlap, or cannot be proven disjoint (including any `**`), must be serialized, with the next lane rebased after each integration. Lanes never merge themselves — the architect integrates accepted diffs centrally and reruns verification on the composed tree.
-
-Tree-wide git-state mutations are forbidden on shared checkouts: `git stash` (push/pop/apply/drop), `git checkout -- .`, `git restore .`, `git reset --hard`, and `git clean`; use a disposable worktree for pre-existence checks.
-
-The legacy wrapper lifecycle is synchronous: keep its producer call in the foreground. There are exactly two valid turn endings: a full report after independent verification, or a concrete blocker report; never end a turn waiting for a background monitor or notification.
-
-The `codex-implementer` definition is retained only for administrators migrating a pre-0.8 installation. This 0.8 flow must not fall back to `claude-architect:codex-implementer` when the MCP runtime denies Codex edit eligibility or confinement; stop with the structured diagnostic. If an administrator deliberately invokes the old pre-0.8 surface outside this flow, route Codex fallback work explicitly to `claude-architect:codex-implementer`, never `codex:codex-rescue`, its persistent `app-server`, or any detached companion.
-
-Use `claude-architect:advisor` for architecture, migrations, public API changes, broad refactors, two failed approaches, or final review of a multi-step deliverable. The advisor is read-only and has no Bash or mutation tools.
