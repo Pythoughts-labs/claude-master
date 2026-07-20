@@ -378,6 +378,7 @@ export async function handleReviewCandidate(
   deps: ToolDependencies = {},
 ): Promise<
   | {
+    manifestHash: string;
     patch: string;
     changedPaths: CandidateArtifact["changedPaths"];
     evidence: AttemptResult["evidence"];
@@ -421,6 +422,7 @@ export async function handleReviewCandidate(
         throw runtimeError("failed to regenerate candidate patch", "candidate-review-failed");
       }
       return boundIgnoredPathEvidence({
+        manifestHash: candidate.manifestHash,
         patch: patch.stdout,
         changedPaths: candidate.changedPaths.map(change => ({ ...change })),
         evidence: structuredClone(run.result.evidence),

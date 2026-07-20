@@ -61,7 +61,8 @@ export const delegatePipelineOutput = z.object({
   diagnostic: z.string().optional(),
   error: z.string().optional(),
 });
-const reviewOutput = z.object({
+export const reviewCandidateOutputSchema = z.object({
+  manifestHash: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
   patch: z.string().optional(),
   changedPaths: z.array(z.object({
     path: z.string(),
@@ -251,9 +252,9 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
     "reviewCandidate",
     {
       title: "Review a verified candidate",
-      description: "Regenerate and return the exact candidate patch and verification evidence.",
+      description: "Return the exact candidate manifest hash, patch, and verification evidence.",
       inputSchema: reviewCandidateInputSchema,
-      outputSchema: reviewOutput,
+      outputSchema: reviewCandidateOutputSchema,
     },
     async ({ checkoutPath, runId }) => toolOutput(await handleReviewCandidate(
       checkoutPath,

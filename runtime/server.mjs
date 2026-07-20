@@ -411,11 +411,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants5);
+          this.rhs = optimizeExpr(this.rhs, names, constants6);
         return this;
       }
       get names() {
@@ -432,10 +432,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants5);
+        this.rhs = optimizeExpr(this.rhs, names, constants6);
         return this;
       }
       get names() {
@@ -496,8 +496,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants5) {
-        this.code = optimizeExpr(this.code, names, constants5);
+      optimizeNames(names, constants6) {
+        this.code = optimizeExpr(this.code, names, constants6);
         return this;
       }
       get names() {
@@ -526,12 +526,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants5))
+          if (n.optimizeNames(names, constants6))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -584,12 +584,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants5);
-        if (!(super.optimizeNames(names, constants5) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants6);
+        if (!(super.optimizeNames(names, constants6) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants5);
+        this.condition = optimizeExpr(this.condition, names, constants6);
         return this;
       }
       get names() {
@@ -612,10 +612,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants5) {
-        if (!super.optimizeNames(names, constants5))
+      optimizeNames(names, constants6) {
+        if (!super.optimizeNames(names, constants6))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants5);
+        this.iteration = optimizeExpr(this.iteration, names, constants6);
         return this;
       }
       get names() {
@@ -651,10 +651,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants5) {
-        if (!super.optimizeNames(names, constants5))
+      optimizeNames(names, constants6) {
+        if (!super.optimizeNames(names, constants6))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants5);
+        this.iterable = optimizeExpr(this.iterable, names, constants6);
         return this;
       }
       get names() {
@@ -696,11 +696,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         var _a, _b;
-        super.optimizeNames(names, constants5);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants5);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants5);
+        super.optimizeNames(names, constants6);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants6);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants6);
         return this;
       }
       get names() {
@@ -1001,7 +1001,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants5) {
+    function optimizeExpr(expr, names, constants6) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1016,14 +1016,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants5[n.str];
+        const c = constants6[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants5[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants6[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -3230,8 +3230,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path15) {
-      let input = path15;
+    function removeDotSegments(path17) {
+      let input = path17;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3483,8 +3483,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path15, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path15 && path15 !== "/" ? path15 : void 0;
+        const [path17, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path17 && path17 !== "/" ? path17 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -8195,8 +8195,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path15, errorMaps, issueData } = params;
-  const fullPath = [...path15, ...issueData.path || []];
+  const { data, path: path17, errorMaps, issueData } = params;
+  const fullPath = [...path17, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -8312,11 +8312,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path15, key) {
+  constructor(parent, value, path17, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path15;
+    this._path = path17;
     this._key = key;
   }
   get path() {
@@ -11953,10 +11953,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path15) {
-  if (!path15)
+function getElementAtPath(obj, path17) {
+  if (!path17)
     return obj;
-  return path15.reduce((acc, key) => acc?.[key], obj);
+  return path17.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12276,11 +12276,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path15, issues) {
+function prefixIssues(path17, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path15);
+    iss.path.unshift(path17);
     return iss;
   });
 }
@@ -21935,6 +21935,12 @@ var DELEGATION_SPEC_VERSION = "1";
 var ATTEMPT_RESULT_VERSION = "1";
 var RUNTIME_VERSION = "0.26.0";
 
+// src/mcp/doctor.ts
+import { constants as constants2 } from "node:fs";
+import { open as open3, readdir } from "node:fs/promises";
+import path4 from "node:path";
+import nodeProcess4 from "node:process";
+
 // src/platform/posix-platform-services.ts
 import { spawn, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -23852,6 +23858,9 @@ async function linkPrimaryDependencies(primaryRepo, worktreePath, dependencies =
 // src/mcp/doctor.ts
 var POSIX_HOME_PATH = /\/(?:Users|home)\/[^/\\\s"']+(?:\/[^/\\\s"']+)*/g;
 var WINDOWS_HOME_PATH = /[A-Za-z]:\\Users\\[^/\\\s"']+(?:\\[^/\\\s"']+)*/gi;
+var CHECKOUT_LOCK_NAME = /^([0-9a-f]{64})\.lock$/;
+var MAX_CHECKOUT_LOCK_BYTES = 4096;
+var NO_FOLLOW = constants2.O_NOFOLLOW ?? 0;
 function redactAbsoluteHomePaths(text) {
   return redact(text).replace(WINDOWS_HOME_PATH, (match) => `[path]\\${match.split("\\").at(-1) ?? ""}`).replace(POSIX_HOME_PATH, (match) => `[path]/${match.split("/").at(-1) ?? ""}`);
 }
@@ -23873,6 +23882,103 @@ function nodeIsSupported(version2) {
 }
 function gitVersion(stdout) {
   return /^git version ([^\s]+)(?:\s|$)/u.exec(stdout.trim())?.[1] ?? null;
+}
+function errorCode2(error2) {
+  return error2.code;
+}
+function defaultIsProcessAlive(pid) {
+  try {
+    nodeProcess4.kill(pid, 0);
+    return true;
+  } catch (error2) {
+    if (errorCode2(error2) === "EPERM") return true;
+    if (errorCode2(error2) === "ESRCH") return false;
+    throw error2;
+  }
+}
+function parseCheckoutLockOwner(contents) {
+  let value;
+  try {
+    value = JSON.parse(contents);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const owner = value;
+  const processToken = owner.processToken;
+  if (typeof owner.pid !== "number" || !Number.isSafeInteger(owner.pid) || owner.pid < 1 || processToken !== null && (typeof processToken !== "string" || processToken.length === 0)) {
+    return null;
+  }
+  return { pid: owner.pid, processToken };
+}
+async function readCheckoutLock(handle) {
+  const buffer = Buffer.alloc(MAX_CHECKOUT_LOCK_BYTES + 1);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      offset,
+      buffer.length - offset,
+      offset
+    );
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return offset > MAX_CHECKOUT_LOCK_BYTES ? null : buffer.subarray(0, offset).toString("utf8");
+}
+async function checkoutLockIssues(stateDir, ps, isProcessAlive) {
+  if (stateDir === void 0) return [];
+  const locksRoot = path4.join(stateDir, "locks");
+  let entries;
+  try {
+    entries = await readdir(locksRoot, { withFileTypes: true });
+  } catch (error2) {
+    return errorCode2(error2) === "ENOENT" ? [] : ["checkout-lock-scan-failed"];
+  }
+  const issues = /* @__PURE__ */ new Set();
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const match = CHECKOUT_LOCK_NAME.exec(entry.name);
+    if (match === null || match[1] === CLEANUP_JOURNAL_LOCK_KEY) continue;
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      issues.add("checkout-lock-malformed");
+      continue;
+    }
+    let handle;
+    try {
+      handle = await open3(path4.join(locksRoot, entry.name), constants2.O_RDONLY | NO_FOLLOW);
+      const metadataBeforeRead = await handle.stat();
+      if (!metadataBeforeRead.isFile() || metadataBeforeRead.size > MAX_CHECKOUT_LOCK_BYTES) {
+        issues.add("checkout-lock-malformed");
+        continue;
+      }
+      const contents = await readCheckoutLock(handle);
+      const metadataAfterRead = await handle.stat();
+      if (contents === null || metadataAfterRead.size !== metadataBeforeRead.size || metadataAfterRead.mtimeMs !== metadataBeforeRead.mtimeMs || metadataAfterRead.ctimeMs !== metadataBeforeRead.ctimeMs) {
+        issues.add("checkout-lock-malformed");
+        continue;
+      }
+      const owner = parseCheckoutLockOwner(contents);
+      if (owner === null) {
+        issues.add("checkout-lock-malformed");
+        continue;
+      }
+      if (!isProcessAlive(owner.pid)) {
+        issues.add("checkout-lock-leaked");
+        continue;
+      }
+      const liveToken = owner.processToken === null ? null : await ps.getProcessStartToken(owner.pid);
+      issues.add(owner.processToken !== null && liveToken !== null && liveToken !== owner.processToken ? "checkout-lock-leaked" : "checkout-lock-held");
+    } catch (error2) {
+      if (errorCode2(error2) !== "ENOENT") issues.add("checkout-lock-malformed");
+    } finally {
+      try {
+        await handle?.close();
+      } catch {
+        issues.add("checkout-lock-malformed");
+      }
+    }
+  }
+  return [...issues];
 }
 async function doctor(deps = {}) {
   const ps = deps.ps ?? getPlatformServices();
@@ -23900,6 +24006,12 @@ async function doctor(deps = {}) {
   if (env.CLAUDE_ARCHITECT_DELEGATED !== void 0) {
     issues.push("nested-delegation-marker-present");
   }
+  const stateDir = env.CLAUDE_PLUGIN_DATA ?? (env.NODE_ENV === "test" ? env.CLAUDE_ARCHITECT_STATE_DIR : void 0);
+  issues.push(...await checkoutLockIssues(
+    stateDir,
+    ps,
+    deps.isProcessAlive ?? defaultIsProcessAlive
+  ));
   let git2 = { version: null, ok: false };
   try {
     const result = await (deps.git ?? git)(process.cwd(), ["--version"]);
@@ -24039,7 +24151,7 @@ import { createHash as createHash5 } from "node:crypto";
 
 // src/git/repo-preconditions.ts
 import { access as access2, lstat, opendir, readlink, realpath } from "node:fs/promises";
-import path4 from "node:path";
+import path5 from "node:path";
 var MAX_DETAIL_ENTRIES = 20;
 function boundedDetail(lines) {
   if (lines.length <= MAX_DETAIL_ENTRIES) return lines;
@@ -24096,7 +24208,7 @@ function indexPathsWithMode(output, mode) {
   for (const record2 of output.split("\0")) {
     if (!record2.startsWith(`${mode} `)) continue;
     const separator = record2.indexOf("	");
-    if (separator !== -1) paths.add(record2.slice(separator + 1).split(path4.sep).join("/"));
+    if (separator !== -1) paths.add(record2.slice(separator + 1).split(path5.sep).join("/"));
   }
   return paths;
 }
@@ -24104,8 +24216,8 @@ function pathIsWithin(root, candidate) {
   if (getPlatformServices().os === "win32") {
     return canonicalizeForScope(candidate, root);
   }
-  const relative = path4.relative(root, candidate);
-  return relative === "" || relative !== ".." && !relative.startsWith(`..${path4.sep}`) && !path4.isAbsolute(relative);
+  const relative = path5.relative(root, candidate);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relative);
 }
 function pathsIdentifySameLocation(left, right) {
   if (getPlatformServices().os === "win32") {
@@ -24125,10 +24237,10 @@ async function isSafeTrackedFileSymlink(repositoryRoot, symlinkPath, relativePat
     if (hasCode(error2, ["ENOENT", "ENOTDIR", "ELOOP"])) return false;
     throw error2;
   }
-  if (path4.isAbsolute(linkTarget)) return false;
-  const lexicalTarget = path4.resolve(path4.dirname(symlinkPath), linkTarget);
+  if (path5.isAbsolute(linkTarget)) return false;
+  const lexicalTarget = path5.resolve(path5.dirname(symlinkPath), linkTarget);
   if (!pathIsWithin(repositoryRoot, lexicalTarget)) return false;
-  if (pathIsWithin(path4.join(repositoryRoot, ".git"), lexicalTarget)) return false;
+  if (pathIsWithin(path5.join(repositoryRoot, ".git"), lexicalTarget)) return false;
   let target;
   try {
     target = await realpath(symlinkPath);
@@ -24138,7 +24250,7 @@ async function isSafeTrackedFileSymlink(repositoryRoot, symlinkPath, relativePat
   }
   if (!pathsIdentifySameLocation(lexicalTarget, target)) return false;
   if (!pathIsWithin(repositoryRoot, target)) return false;
-  if (pathIsWithin(path4.join(repositoryRoot, ".git"), target)) return false;
+  if (pathIsWithin(path5.join(repositoryRoot, ".git"), target)) return false;
   return (await lstat(target)).isFile();
 }
 async function findNestedRepositories(repositoryRoot, registeredSubmodules, trackedSymlinks, writeAllowlist) {
@@ -24149,7 +24261,7 @@ async function findNestedRepositories(repositoryRoot, registeredSubmodules, trac
     const directory = pendingDirectories.pop();
     if (directory.relativePath !== "") {
       try {
-        await lstat(path4.join(directory.path, ".git"));
+        await lstat(path5.join(directory.path, ".git"));
         nested.push(directory.relativePath);
         continue;
       } catch (error2) {
@@ -24164,8 +24276,8 @@ async function findNestedRepositories(repositoryRoot, registeredSubmodules, trac
         throw new Error("nested repository scan entry budget exceeded");
       }
       if (entry.name === ".git") continue;
-      const child = path4.join(directory.path, entry.name);
-      const relativeChild = path4.relative(repositoryRoot, child).split(path4.sep).join("/");
+      const child = path5.join(directory.path, entry.name);
+      const relativeChild = path5.relative(repositoryRoot, child).split(path5.sep).join("/");
       if (registeredSubmodules.has(relativeChild)) continue;
       if (!writeAllowlist.some((pattern) => patternOverlapsRepository(pattern, relativeChild))) continue;
       if (entry.isSymbolicLink()) {
@@ -24200,7 +24312,7 @@ async function checkPreconditions(repoRoot, options = {}) {
   if (!succeeded(gitDirectoryResult)) return { ok: false, reason: "git-command-failed" };
   const gitDirectory = gitDirectoryResult.stdout.trim();
   try {
-    if ((await Promise.all(IN_PROGRESS_PATHS.map((relative) => exists2(path4.join(gitDirectory, relative))))).some(Boolean)) {
+    if ((await Promise.all(IN_PROGRESS_PATHS.map((relative) => exists2(path5.join(gitDirectory, relative))))).some(Boolean)) {
       return { ok: false, reason: "in-progress-operation" };
     }
   } catch {
@@ -24327,9 +24439,9 @@ function manifestHashOf(changedPaths) {
 function computeChangedPathManifest(inputs) {
   const rawEntries = new Map(inputs.rawDiff.map((entry) => [entry.path, entry]));
   const treeEntries = parseTree(inputs.treeOutput);
-  const changedPaths = sortChangedPaths(parseNameStatus(inputs.nameStatusOutput).map(({ path: path15, status }) => {
-    const treeEntry = treeEntries.get(path15);
-    const rawEntry = rawEntries.get(path15);
+  const changedPaths = sortChangedPaths(parseNameStatus(inputs.nameStatusOutput).map(({ path: path17, status }) => {
+    const treeEntry = treeEntries.get(path17);
+    const rawEntry = rawEntries.get(path17);
     if (treeEntry === void 0 && status !== "D") {
       throw new RuntimeError("candidate tree is missing a changed path");
     }
@@ -24337,7 +24449,7 @@ function computeChangedPathManifest(inputs) {
       throw new RuntimeError("git diff-tree outputs disagree");
     }
     return {
-      path: path15,
+      path: path17,
       changeType: changeType(status),
       mode: treeEntry?.mode ?? rawEntry.oldMode,
       contentHash: treeEntry?.oid ?? null
@@ -24618,11 +24730,11 @@ async function applyCandidateTree(args) {
 }
 
 // src/pipeline/pipeline-runtime.ts
-import path12 from "node:path";
+import path14 from "node:path";
 
 // src/git/worktree-manager.ts
 import { mkdir as mkdir2 } from "node:fs/promises";
-import path5 from "node:path";
+import path6 from "node:path";
 var MAX_DIAGNOSTIC_LENGTH3 = 2e3;
 var WINDOWS_REMOVE_ATTEMPTS = 5;
 var WINDOWS_REMOVE_RETRY_DELAY_MS = 250;
@@ -24649,9 +24761,9 @@ var WorktreeManager = class {
     if (!SAFE_MANAGED_ID.test(this.runId)) {
       throw new RuntimeError("invalid worktree run id");
     }
-    const worktreesRoot = path5.resolve(resolveStateDir(), "worktrees");
-    const worktreePath = path5.resolve(worktreesRoot, this.runId);
-    if (worktreePath === worktreesRoot || !worktreePath.startsWith(`${worktreesRoot}${path5.sep}`)) {
+    const worktreesRoot = path6.resolve(resolveStateDir(), "worktrees");
+    const worktreePath = path6.resolve(worktreesRoot, this.runId);
+    if (worktreePath === worktreesRoot || !worktreePath.startsWith(`${worktreesRoot}${path6.sep}`)) {
       throw new RuntimeError("invalid worktree run id");
     }
     return { worktreesRoot, worktreePath };
@@ -25347,7 +25459,7 @@ import { rm as rm5 } from "node:fs/promises";
 // src/git/candidate-tree.ts
 import { lstat as lstat2, mkdtemp as mkdtemp2, rm as rm2 } from "node:fs/promises";
 import { tmpdir as tmpdir5 } from "node:os";
-import path6 from "node:path";
+import path7 from "node:path";
 var MAX_DIAGNOSTIC_LENGTH4 = 2e3;
 var MAX_REJECT_PATHS = 25;
 var BINARY_PATCH_PAYLOAD_MARKER = "[[BINARY_PATCH_PAYLOAD_OMITTED]]";
@@ -25437,7 +25549,7 @@ function isAllowed2(pathname, writeAllowlist, forbiddenScope, opaqueDirectory = 
 async function advisoryLstatScan(worktreePath, changedPaths) {
   const symlinkResults = await Promise.all(changedPaths.map(async (changedPath) => {
     try {
-      return (await lstat2(path6.resolve(worktreePath, changedPath))).isSymbolicLink();
+      return (await lstat2(path7.resolve(worktreePath, changedPath))).isSymbolicLink();
     } catch (error2) {
       if (error2.code === "ENOENT") return false;
       throw error2;
@@ -25471,8 +25583,8 @@ async function freezeCandidate(args) {
   if (await advisoryLstatScan(args.worktreePath, inventory.changedPaths)) {
     return { ok: false, reason: "modified-symlink" };
   }
-  const indexDirectory = await mkdtemp2(path6.join(tmpdir5(), "claude-architect-index-"));
-  const indexFile = path6.join(indexDirectory, "index");
+  const indexDirectory = await mkdtemp2(path7.join(tmpdir5(), "claude-architect-index-"));
+  const indexFile = path7.join(indexDirectory, "index");
   try {
     await checkedGit2(args.worktreePath, ["read-tree", args.baseCommitOid], indexFile);
     if (inventory.changedPaths.length > 0) {
@@ -25592,14 +25704,14 @@ function buildWriteSeatbeltPolicy(args) {
     extraWritableRoots: [...args.extraWritableRoots]
   };
 }
-function sbPath(path15) {
-  for (const character of path15) {
+function sbPath(path17) {
+  for (const character of path17) {
     const codePoint = character.codePointAt(0);
     if (codePoint !== void 0 && (codePoint < 32 || codePoint === 127)) {
-      throw new Error(`seatbelt: control character in path: ${JSON.stringify(path15)}`);
+      throw new Error(`seatbelt: control character in path: ${JSON.stringify(path17)}`);
     }
   }
-  return `"${path15.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"')}"`;
+  return `"${path17.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"')}"`;
 }
 function openCodeWritablePaths(invocation, policy) {
   if (policy.tempHome !== null || !invocation.requiredEnv.includes("OPENCODE_CONFIG_DIR")) return [];
@@ -25638,18 +25750,18 @@ function buildProfile(policy, additionalWritable) {
     "/dev",
     ...policy.extraWritableRoots ?? [],
     ...additionalWritable
-  ].filter((path15) => typeof path15 === "string" && path15.length > 0).flatMap((path15) => {
+  ].filter((path17) => typeof path17 === "string" && path17.length > 0).flatMap((path17) => {
     try {
-      return [path15, realpathSync(path15)];
+      return [path17, realpathSync(path17)];
     } catch {
-      return [path15];
+      return [path17];
     }
   }))];
   const lines = [
     "(version 1)",
     "(allow default)",
     "(deny file-write*)",
-    ...writable.map((path15) => `(allow file-write* (subpath ${sbPath(path15)}))`),
+    ...writable.map((path17) => `(allow file-write* (subpath ${sbPath(path17)}))`),
     '(allow file-write* (literal "/dev/null") (literal "/dev/tty"))'
   ];
   if (!policy.allowNetwork) lines.push("(deny network*)");
@@ -25735,13 +25847,16 @@ function route(preferences, reports) {
 
 // src/verify/baseline-verifier.ts
 import { randomUUID } from "node:crypto";
+import { readFile as readFile2 } from "node:fs/promises";
+import { basename } from "node:path";
+import path10 from "node:path";
 
 // src/verify/project-verifier.ts
 import { realpath as realpath2 } from "node:fs/promises";
-import path8 from "node:path";
+import path9 from "node:path";
 
 // src/runtime/environment-policy.ts
-import path7 from "node:path";
+import path8 from "node:path";
 var POSIX_ESSENTIAL_ENV = [
   "HOME",
   "PATH",
@@ -25856,14 +25971,14 @@ function buildEnvironment(args) {
           env,
           provenance,
           "APPDATA",
-          path7.win32.join(args.tempHome, "AppData", "Roaming"),
+          path8.win32.join(args.tempHome, "AppData", "Roaming"),
           "platform"
         );
         setEnvironmentValue(
           env,
           provenance,
           "LOCALAPPDATA",
-          path7.win32.join(args.tempHome, "AppData", "Local"),
+          path8.win32.join(args.tempHome, "AppData", "Local"),
           "platform"
         );
       } else {
@@ -25958,12 +26073,12 @@ function commandEnvironment(command, os) {
 }
 function isWithinScope(root, candidate, os) {
   if (os === "win32") return canonicalizeForScope(candidate, root);
-  const relative = path8.posix.relative(root, candidate);
-  return relative === "" || !path8.posix.isAbsolute(relative) && relative !== ".." && !relative.startsWith("../");
+  const relative = path9.posix.relative(root, candidate);
+  return relative === "" || !path9.posix.isAbsolute(relative) && relative !== ".." && !relative.startsWith("../");
 }
 async function resolveCommandCwd(worktreePath, commandCwd, os) {
-  if (path8.isAbsolute(commandCwd)) return null;
-  const lexical = path8.resolve(worktreePath, commandCwd);
+  if (path9.isAbsolute(commandCwd)) return null;
+  const lexical = path9.resolve(worktreePath, commandCwd);
   if (!isWithinScope(worktreePath, lexical, os)) return null;
   try {
     const [canonicalRoot, canonicalCwd] = await Promise.all([
@@ -26013,7 +26128,7 @@ async function executeCommand(args) {
     const environment = commandEnvironment(command, ps.os);
     executable = await ps.resolveExecutable({
       name: command.executable,
-      ...path8.isAbsolute(command.executable) ? { explicitPath: command.executable } : {},
+      ...path9.isAbsolute(command.executable) ? { explicitPath: command.executable } : {},
       searchPath: environment.PATH ?? environment.Path ?? ""
     });
     exit = await supervise(ps, {
@@ -26212,6 +26327,134 @@ function throwIfAborted(signal) {
   if (!signal?.aborted) return;
   throw new DOMException("Baseline verification was cancelled", "AbortError");
 }
+function executableName(value) {
+  return basename(value).toLowerCase().replace(/\.(?:cmd|exe|mjs|cjs|js)$/u, "");
+}
+function firstPositionalArgument(args) {
+  const optionsWithValues = /* @__PURE__ */ new Set([
+    "--call",
+    "--conditions",
+    "--eval",
+    "--import",
+    "--loader",
+    "--package",
+    "--registry",
+    "--require",
+    "-c",
+    "-e",
+    "-p",
+    "-r"
+  ]);
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--") return args[index + 1];
+    if (optionsWithValues.has(argument)) {
+      index += 1;
+      continue;
+    }
+    if (!argument.startsWith("-")) return argument;
+  }
+  return void 0;
+}
+function nodeEntrypointInvokesVitest(value) {
+  if (value === void 0) return false;
+  const normalized = value.replace(/\\/gu, "/");
+  return /(?:^|\/)node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?vitest\/vitest\.(?:cjs|js|mjs)$/iu.test(normalized);
+}
+function packageManagerScriptName(tokens, executableIndex) {
+  const args = tokens.slice(executableIndex + 1);
+  const invocation = firstPositionalArgument(args);
+  if (invocation === void 0 || ["exec", "dlx"].includes(invocation)) return void 0;
+  return ["run", "run-script"].includes(invocation) ? firstPositionalArgument(args.slice(args.indexOf(invocation) + 1)) : invocation;
+}
+function shellCommandInvokesVitest(command, scripts, visitedScripts) {
+  return command.split(/(?:&&|\|\||[;|])/u).some((segment) => {
+    const tokens = segment.trim().split(/\s+/u).map((token) => token.replace(/^["']|["']$/gu, ""));
+    let index = 0;
+    if (tokens[index] === "env" || tokens[index] === "cross-env") index += 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(tokens[index] ?? "")) index += 1;
+    const executable = executableName(tokens[index] ?? "");
+    if (executable === "vitest") return true;
+    if (executable === "node" || executable === "bun") {
+      return nodeEntrypointInvokesVitest(firstPositionalArgument(tokens.slice(index + 1)));
+    }
+    if (executable === "npx" || executable === "bunx") {
+      return executableName(firstPositionalArgument(tokens.slice(index + 1)) ?? "") === "vitest";
+    }
+    if (["npm", "pnpm", "yarn"].includes(executable)) {
+      const args = tokens.slice(index + 1);
+      const invocation = firstPositionalArgument(args);
+      if (["exec", "dlx"].includes(invocation ?? "")) {
+        const invocationIndex = args.indexOf(invocation);
+        return executableName(firstPositionalArgument(args.slice(invocationIndex + 1)) ?? "") === "vitest";
+      }
+      const scriptName = packageManagerScriptName(tokens, index);
+      if (scriptName === void 0 || visitedScripts.has(scriptName)) return false;
+      const script = scripts[scriptName];
+      if (typeof script !== "string") return executable === "yarn" && scriptName === "vitest";
+      const nextVisited = new Set(visitedScripts).add(scriptName);
+      return shellCommandInvokesVitest(script, scripts, nextVisited);
+    }
+    return false;
+  });
+}
+async function packageScriptInvokesVitest(cwd, scriptName) {
+  try {
+    const parsed = JSON.parse(await readFile2(path10.join(cwd, "package.json"), "utf8"));
+    if (parsed === null || typeof parsed !== "object" || !("scripts" in parsed)) return false;
+    const scripts = parsed.scripts;
+    if (scripts === null || typeof scripts !== "object") return false;
+    const script = scripts[scriptName];
+    return typeof script === "string" && shellCommandInvokesVitest(
+      script,
+      scripts,
+      /* @__PURE__ */ new Set([scriptName])
+    );
+  } catch {
+    return false;
+  }
+}
+async function isVitestCommand(command, cwd) {
+  if (executableName(command.executable) === "vitest") return true;
+  const launcher = executableName(command.executable);
+  if (launcher === "node" || launcher === "bun") {
+    return nodeEntrypointInvokesVitest(firstPositionalArgument(command.args));
+  }
+  if (launcher === "npx" || launcher === "bunx") {
+    return executableName(firstPositionalArgument(command.args) ?? "") === "vitest";
+  }
+  if (launcher === "npm" || launcher === "pnpm" || launcher === "yarn") {
+    const invocation = firstPositionalArgument(command.args);
+    if (invocation === void 0) return false;
+    if (["exec", "dlx"].includes(invocation)) {
+      const invocationIndex = command.args.indexOf(invocation);
+      return executableName(firstPositionalArgument(command.args.slice(invocationIndex + 1)) ?? "") === "vitest";
+    }
+    const scriptName = ["run", "run-script"].includes(invocation) ? firstPositionalArgument(command.args.slice(command.args.indexOf(invocation) + 1)) : invocation;
+    return scriptName !== void 0 && packageScriptInvokesVitest(cwd, scriptName);
+  }
+  return false;
+}
+async function reportsNoTestFiles(command, cwd, executed) {
+  if (!await isVitestCommand(command, cwd)) return false;
+  const outputs = executed.outputLogs.map((log) => log.text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, ""));
+  const candidates = [...outputs, outputs.join("")];
+  const suiteCounts = candidates.flatMap((output) => {
+    try {
+      const report = JSON.parse(output);
+      return report !== null && typeof report === "object" && "numTotalTestSuites" in report && typeof report.numTotalTestSuites === "number" ? [report.numTotalTestSuites] : [];
+    } catch {
+      return [];
+    }
+  });
+  if (suiteCounts.some((count) => count > 0)) return false;
+  if (suiteCounts.some((count) => count === 0)) return true;
+  const aggregate = outputs.join("");
+  if (/\bTest Files\s+\d+\s+(?:passed|failed|skipped|todo)\b/iu.test(aggregate)) {
+    return false;
+  }
+  return /\bNo test files found\b/iu.test(aggregate) || /\bTest Files\s+no tests\b/iu.test(aggregate);
+}
 async function verifyBaseline(args) {
   throwIfAborted(args.abortSignal);
   const ps = args.ps ?? getPlatformServices();
@@ -26257,10 +26500,12 @@ async function verifyBaseline(args) {
         dependencyLink,
         ...command.allowedMutations === void 0 ? {} : { allowedMutations: command.allowedMutations }
       });
+      const noTestsCollected = await reportsNoTestFiles(command, cwd, executed);
       commands.push({
         id: executed.outcome.id,
         exitCode: executed.outcome.exitCode,
-        ok: (!executed.failed || command.expectBaselineFailure === true) && !mutation.mutated,
+        ok: (!executed.failed || command.expectBaselineFailure === true) && !mutation.mutated && !noTestsCollected,
+        ...noTestsCollected ? { classification: "no-tests-collected" } : {},
         ...mutation.mutated ? { mutation: { records: mutation.records, headChanged: mutation.headChanged } } : {}
       });
       throwIfAborted(args.abortSignal);
@@ -26284,19 +26529,19 @@ async function verifyBaseline(args) {
 
 // src/runtime/artifact-store.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { constants as constants2 } from "node:fs";
+import { constants as constants3 } from "node:fs";
 import {
   link,
   lstat as lstat3,
   mkdir as mkdir3,
-  open as open3,
+  open as open4,
   opendir as opendir2,
-  readdir,
+  readdir as readdir2,
   realpath as realpath3,
   rename,
   rm as rm3
 } from "node:fs/promises";
-import path9 from "node:path";
+import path11 from "node:path";
 
 // src/runtime/run-manifest.ts
 import { createHash as createHash4 } from "node:crypto";
@@ -26480,7 +26725,7 @@ var WINDOWS_RESERVED_COMPONENT = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 var CANDIDATE_REF_PREFIX = "refs/claude-architect/candidates/";
 var PRUNE_BACKUP_REF_PREFIX = "refs/claude-architect/prune-backups/";
 var CLEANUP_JOURNAL = "cleanup.ndjson";
-var NO_FOLLOW = constants2.O_NOFOLLOW ?? 0;
+var NO_FOLLOW2 = constants3.O_NOFOLLOW ?? 0;
 var MAX_ARCHIVE_FILE_BYTES = 8e6;
 var attemptResultSchema = loadSchemas().attemptResult;
 var cleanupJournalTail = Promise.resolve();
@@ -26493,14 +26738,14 @@ function validateComponent(value, kind) {
     throw new RuntimeError(`invalid ${kind}: ${JSON.stringify(value)}`);
   }
 }
-function errorCode2(error2) {
+function errorCode3(error2) {
   return error2.code;
 }
 function isMissing(error2) {
-  return errorCode2(error2) === "ENOENT";
+  return errorCode3(error2) === "ENOENT";
 }
 function isAlreadyPresent(error2) {
-  return errorCode2(error2) === "EEXIST";
+  return errorCode3(error2) === "EEXIST";
 }
 async function pathExists(filename) {
   try {
@@ -26523,8 +26768,8 @@ function compareEntries(left, right) {
   return left.runId < right.runId ? -1 : left.runId > right.runId ? 1 : 0;
 }
 function isWithin(root, candidate) {
-  const relative = path9.relative(root, candidate);
-  return relative === "" || !path9.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path9.sep}`);
+  const relative = path11.relative(root, candidate);
+  return relative === "" || !path11.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path11.sep}`);
 }
 async function ensurePlainDirectory(directory) {
   let created = false;
@@ -26538,7 +26783,7 @@ async function ensurePlainDirectory(directory) {
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new RuntimeError(`archive directory must not be a symbolic link: ${redact(directory)}`);
   }
-  if (created) await syncDirectory(path9.dirname(directory));
+  if (created) await syncDirectory(path11.dirname(directory));
   return { dev: metadata.dev, ino: metadata.ino };
 }
 async function ensurePlainDirectoryTree(directory) {
@@ -26546,7 +26791,7 @@ async function ensurePlainDirectoryTree(directory) {
     return await ensurePlainDirectory(directory);
   } catch (error2) {
     if (!isMissing(error2)) throw error2;
-    const parent = path9.dirname(directory);
+    const parent = path11.dirname(directory);
     if (parent === directory) throw error2;
     await ensurePlainDirectoryTree(parent);
     return ensurePlainDirectory(directory);
@@ -26561,20 +26806,20 @@ async function assertDirectoryIdentity(directory, expected) {
 async function syncDirectory(directory) {
   let handle;
   try {
-    handle = await open3(directory, constants2.O_RDONLY | NO_FOLLOW);
+    handle = await open4(directory, constants3.O_RDONLY | NO_FOLLOW2);
     await handle.sync();
   } catch (error2) {
-    const unsupportedOnWindows = process.platform === "win32" && ["EISDIR", "EINVAL", "ENOTSUP", "EPERM"].includes(errorCode2(error2) ?? "");
+    const unsupportedOnWindows = process.platform === "win32" && ["EISDIR", "EINVAL", "ENOTSUP", "EPERM"].includes(errorCode3(error2) ?? "");
     if (!unsupportedOnWindows) throw error2;
   } finally {
     await handle?.close();
   }
 }
 async function readRegularFile(filename, parentIdentity) {
-  const handle = await open3(filename, constants2.O_RDONLY | NO_FOLLOW);
+  const handle = await open4(filename, constants3.O_RDONLY | NO_FOLLOW2);
   try {
     if (parentIdentity !== void 0) {
-      await assertDirectoryIdentity(path9.dirname(filename), parentIdentity);
+      await assertDirectoryIdentity(path11.dirname(filename), parentIdentity);
     }
     const metadata = await handle.stat();
     if (!metadata.isFile()) {
@@ -26601,7 +26846,7 @@ async function readRegularFile(filename, parentIdentity) {
       throw new RuntimeError(`archive entry changed while being read: ${redact(filename)}`);
     }
     if (parentIdentity !== void 0) {
-      await assertDirectoryIdentity(path9.dirname(filename), parentIdentity);
+      await assertDirectoryIdentity(path11.dirname(filename), parentIdentity);
     }
     return contents.subarray(0, offset).toString("utf8");
   } finally {
@@ -26629,7 +26874,7 @@ async function directoryBytes(directory, expectedIdentity) {
     await assertDirectoryIdentity(directory, identity);
     for await (const entry of entries) {
       await assertDirectoryIdentity(directory, identity);
-      const entryPath = path9.join(directory, entry.name);
+      const entryPath = path11.join(directory, entry.name);
       try {
         const entryMetadata = await lstat3(entryPath);
         if (entryMetadata.isSymbolicLink()) {
@@ -26645,7 +26890,7 @@ async function directoryBytes(directory, expectedIdentity) {
     await assertDirectoryIdentity(directory, identity);
   } finally {
     await entries.close().catch((error2) => {
-      if (errorCode2(error2) !== "ERR_DIR_CLOSED") throw error2;
+      if (errorCode3(error2) !== "ERR_DIR_CLOSED") throw error2;
     });
   }
   return total;
@@ -26714,7 +26959,7 @@ function preserveNullableIdentity2(value, label) {
 function preserveCandidatePath(value) {
   const candidatePath = preserveIdentity2(value, "candidate path");
   const segments = candidatePath.split("/");
-  if (candidatePath === "" || candidatePath.includes("\\") || candidatePath.includes("\0") || path9.posix.isAbsolute(candidatePath) || path9.win32.isAbsolute(candidatePath) || /^[A-Za-z]:/.test(candidatePath) || segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+  if (candidatePath === "" || candidatePath.includes("\\") || candidatePath.includes("\0") || path11.posix.isAbsolute(candidatePath) || path11.win32.isAbsolute(candidatePath) || /^[A-Za-z]:/.test(candidatePath) || segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
     throw new RuntimeError("candidate path must be a normalized relative Git path");
   }
   return candidatePath;
@@ -26820,11 +27065,11 @@ var ArtifactStore = class {
   constructor(runId) {
     validateComponent(runId, "run id");
     this.runId = runId;
-    this.runsRoot = path9.join(resolveStateDir(), "runs");
-    this.runDirectory = path9.join(this.runsRoot, runId);
+    this.runsRoot = path11.join(resolveStateDir(), "runs");
+    this.runDirectory = path11.join(this.runsRoot, runId);
   }
   async ensureRunsRoot() {
-    await ensurePlainDirectoryTree(path9.dirname(this.runsRoot));
+    await ensurePlainDirectoryTree(path11.dirname(this.runsRoot));
     await ensurePlainDirectory(this.runsRoot);
     return realpath3(this.runsRoot);
   }
@@ -26850,19 +27095,19 @@ var ArtifactStore = class {
     return canonicalRunDirectory;
   }
   async ensureArchiveDirectory(relativePath) {
-    if (path9.isAbsolute(relativePath)) throw new RuntimeError("archive path must be relative");
-    const normalized = path9.normalize(relativePath);
-    if (normalized === ".." || normalized.startsWith(`..${path9.sep}`)) {
+    if (path11.isAbsolute(relativePath)) throw new RuntimeError("archive path must be relative");
+    const normalized = path11.normalize(relativePath);
+    if (normalized === ".." || normalized.startsWith(`..${path11.sep}`)) {
       throw new RuntimeError("archive path escapes run directory");
     }
     const canonicalRunDirectory = await this.ensureRunDirectory(true);
     if (canonicalRunDirectory === null) throw new RuntimeError("failed to create archive directory");
-    const relativeDirectory = path9.dirname(normalized);
+    const relativeDirectory = path11.dirname(normalized);
     if (relativeDirectory === ".") return canonicalRunDirectory;
     let current = canonicalRunDirectory;
-    for (const component of relativeDirectory.split(path9.sep)) {
+    for (const component of relativeDirectory.split(path11.sep)) {
       validateComponent(component, "log name");
-      current = path9.join(current, component);
+      current = path11.join(current, component);
       await ensurePlainDirectory(current);
       const canonicalCurrent = await realpath3(current);
       if (!isWithin(canonicalRunDirectory, canonicalCurrent)) {
@@ -26875,15 +27120,15 @@ var ArtifactStore = class {
   async writeArchiveFile(relativePath, text) {
     const directory = await this.ensureArchiveDirectory(relativePath);
     const directoryIdentity = await ensurePlainDirectory(directory);
-    const destination = path9.join(directory, path9.basename(relativePath));
-    const temporaryPath = path9.join(directory, `.${path9.basename(destination)}.${randomUUID2()}.tmp`);
+    const destination = path11.join(directory, path11.basename(relativePath));
+    const temporaryPath = path11.join(directory, `.${path11.basename(destination)}.${randomUUID2()}.tmp`);
     let handle;
     let temporaryCreated = false;
     try {
       await assertDirectoryIdentity(directory, directoryIdentity);
-      handle = await open3(
+      handle = await open4(
         temporaryPath,
-        constants2.O_WRONLY | constants2.O_CREAT | constants2.O_EXCL | NO_FOLLOW,
+        constants3.O_WRONLY | constants3.O_CREAT | constants3.O_EXCL | NO_FOLLOW2,
         384
       );
       temporaryCreated = true;
@@ -26920,23 +27165,23 @@ var ArtifactStore = class {
     await this.writeArchiveFile(relativePath, serialized);
   }
   async replaceJson(relativePath, value) {
-    if (path9.isAbsolute(relativePath) || path9.dirname(relativePath) !== "." || path9.basename(relativePath) !== relativePath || !isSafeComponent(relativePath)) {
+    if (path11.isAbsolute(relativePath) || path11.dirname(relativePath) !== "." || path11.basename(relativePath) !== relativePath || !isSafeComponent(relativePath)) {
       throw new RuntimeError("replacement archive path must be a safe relative leaf");
     }
     const directory = await this.ensureRunDirectory(false);
     if (directory === null) throw new RuntimeError("run archive does not exist");
     const directoryIdentity = await ensurePlainDirectory(directory);
-    const destination = path9.join(directory, relativePath);
-    const temporaryPath = path9.join(directory, `.${relativePath}.${randomUUID2()}.tmp`);
+    const destination = path11.join(directory, relativePath);
+    const temporaryPath = path11.join(directory, `.${relativePath}.${randomUUID2()}.tmp`);
     const serialized = `${serializeJson(value, 2)}
 `;
     let handle;
     let temporaryCreated = false;
     try {
       await assertDirectoryIdentity(directory, directoryIdentity);
-      handle = await open3(
+      handle = await open4(
         temporaryPath,
-        constants2.O_WRONLY | constants2.O_CREAT | constants2.O_EXCL | NO_FOLLOW,
+        constants3.O_WRONLY | constants3.O_CREAT | constants3.O_EXCL | NO_FOLLOW2,
         384
       );
       temporaryCreated = true;
@@ -26956,24 +27201,24 @@ var ArtifactStore = class {
   }
   async writeLog(name, text) {
     validateComponent(name, "log name");
-    const ref = path9.posix.join("logs", `${name}.log`);
+    const ref = path11.posix.join("logs", `${name}.log`);
     await this.writeArchiveFile(ref, redact(text));
     return ref;
   }
   async writePipelineArtifact(name, value) {
     validateComponent(name, "log name");
     await this.writeJson(
-      path9.posix.join("pipeline", `${name}.json`),
+      path11.posix.join("pipeline", `${name}.json`),
       redactRecord(value)
     );
   }
   async readPipelineArtifact(runId, name) {
     validateComponent(runId, "run id");
     validateComponent(name, "log name");
-    const runDirectory = path9.join(this.runsRoot, runId);
+    const runDirectory = path11.join(this.runsRoot, runId);
     const validatedRun = await this.ensureExistingRunDirectory(runDirectory);
     if (validatedRun === null) return null;
-    const validated = await this.ensureExistingRunDirectory(path9.join(runDirectory, "pipeline"));
+    const validated = await this.ensureExistingRunDirectory(path11.join(runDirectory, "pipeline"));
     if (validated === null) return null;
     if (!isWithin(validatedRun.path, validated.path)) {
       throw new RuntimeError("pipeline archive directory escapes run directory");
@@ -26981,7 +27226,7 @@ var ArtifactStore = class {
     await assertDirectoryIdentity(validatedRun.path, validatedRun.identity);
     try {
       const value = JSON.parse(await readRegularFile(
-        path9.join(validated.path, `${name}.json`),
+        path11.join(validated.path, `${name}.json`),
         validated.identity
       ));
       await assertDirectoryIdentity(validatedRun.path, validatedRun.identity);
@@ -27026,13 +27271,13 @@ var ArtifactStore = class {
   }
   async readResult(runId) {
     validateComponent(runId, "run id");
-    const runDirectory = path9.join(this.runsRoot, runId);
+    const runDirectory = path11.join(this.runsRoot, runId);
     const validated = await this.ensureExistingRunDirectory(runDirectory);
     if (validated === null) return null;
     try {
       return verifyAttemptResult(
         JSON.parse(await readRegularFile(
-          path9.join(validated.path, "result.json"),
+          path11.join(validated.path, "result.json"),
           validated.identity
         )),
         runId
@@ -27063,13 +27308,13 @@ var ArtifactStore = class {
   }
   async readManifest(runId) {
     validateComponent(runId, "run id");
-    const runDirectory = path9.join(this.runsRoot, runId);
+    const runDirectory = path11.join(this.runsRoot, runId);
     const validated = await this.ensureExistingRunDirectory(runDirectory);
     if (validated === null) return null;
     try {
       return verifyRunManifest(
         JSON.parse(await readRegularFile(
-          path9.join(validated.path, "manifest.json"),
+          path11.join(validated.path, "manifest.json"),
           validated.identity
         )),
         runId
@@ -27098,12 +27343,12 @@ var ArtifactStore = class {
   }
   async readDecision(runId) {
     validateComponent(runId, "run id");
-    const runDirectory = path9.join(this.runsRoot, runId);
+    const runDirectory = path11.join(this.runsRoot, runId);
     const validated = await this.ensureExistingRunDirectory(runDirectory);
     if (validated === null) return null;
     try {
       const value = JSON.parse(await readRegularFile(
-        path9.join(validated.path, "decision.json"),
+        path11.join(validated.path, "decision.json"),
         validated.identity
       ));
       if (!["accepted", "rejected", "revision-requested"].includes(value.decision) || typeof value.recordedAt !== "string" || !Number.isFinite(Date.parse(value.recordedAt))) {
@@ -27123,12 +27368,12 @@ var ArtifactStore = class {
   }
   async readPipelineActiveMarker(runId) {
     validateComponent(runId, "run id");
-    const runDirectory = path9.join(this.runsRoot, runId);
+    const runDirectory = path11.join(this.runsRoot, runId);
     const validated = await this.ensureExistingRunDirectory(runDirectory);
     if (validated === null) return null;
     try {
       const value = JSON.parse(await readRegularFile(
-        path9.join(validated.path, "pipeline-active.json"),
+        path11.join(validated.path, "pipeline-active.json"),
         validated.identity
       ));
       if (typeof value !== "object" || value === null || typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid <= 1 || value.processToken !== null && typeof value.processToken !== "string" || typeof value.startedAt !== "string" || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.sliced !== "boolean") {
@@ -27143,16 +27388,16 @@ var ArtifactStore = class {
   async clearPipelineActiveMarker() {
     const directory = await this.ensureRunDirectory(false);
     if (directory === null) return;
-    await rm3(path9.join(directory, "pipeline-active.json"), { force: true });
+    await rm3(path11.join(directory, "pipeline-active.json"), { force: true });
   }
   async list() {
     await this.ensureRunsRoot();
-    const entries = await readdir(this.runsRoot, { withFileTypes: true });
+    const entries = await readdir2(this.runsRoot, { withFileTypes: true });
     return entries.filter((entry) => entry.isDirectory() && isSafeComponent(entry.name)).map((entry) => entry.name).sort();
   }
   async entries() {
     const entries = await Promise.all((await this.list()).map(async (runId) => {
-      const directory = path9.join(this.runsRoot, runId);
+      const directory = path11.join(this.runsRoot, runId);
       try {
         const metadata = await lstat3(directory);
         if (metadata.isSymbolicLink() || !metadata.isDirectory()) return null;
@@ -27311,10 +27556,10 @@ var ArtifactStore = class {
       try {
         await this.ensureRunsRoot();
         const runsRootIdentity = await ensurePlainDirectory(this.runsRoot);
-        const filename = path9.join(this.runsRoot, CLEANUP_JOURNAL);
-        const handle = await open3(
+        const filename = path11.join(this.runsRoot, CLEANUP_JOURNAL);
+        const handle = await open4(
           filename,
-          constants2.O_WRONLY | constants2.O_CREAT | constants2.O_APPEND | NO_FOLLOW,
+          constants3.O_WRONLY | constants3.O_CREAT | constants3.O_APPEND | NO_FOLLOW2,
           384
         );
         try {
@@ -27391,7 +27636,7 @@ var ArtifactStore = class {
       if (attempted.has(entry.runId)) return;
       attempted.add(entry.runId);
       const quarantineName = `.prune-${entry.runId}-${randomUUID2()}`;
-      const quarantinePath = path9.join(this.runsRoot, quarantineName);
+      const quarantinePath = path11.join(this.runsRoot, quarantineName);
       let prepared = null;
       let transaction = null;
       let runsRootIdentity = null;
@@ -27417,7 +27662,7 @@ var ArtifactStore = class {
         try {
           canonical = await platformServices.canonicalizePath(initialManifest.repoRoot);
         } catch (error2) {
-          if (errorCode2(error2) !== "ENOENT") throw error2;
+          if (errorCode3(error2) !== "ENOENT") throw error2;
           await this.reclaimRepoAbsentArchive(
             entry,
             reason,
@@ -27579,7 +27824,7 @@ var ArtifactStore = class {
 };
 
 // src/runtime/reproducibility.ts
-import { readFile as readFile2 } from "node:fs/promises";
+import { readFile as readFile3 } from "node:fs/promises";
 var REPOSITORY_INSTRUCTION_PATHS = ["AGENTS.md", "CLAUDE.md"];
 function gitFailure4(action, result) {
   const diagnostic = redact(result.stderr || result.stdout).trim().slice(0, 2e3);
@@ -27637,7 +27882,7 @@ function isMissingModule(error2) {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 async function collectPackagedVerifier(dependencies) {
-  const readModule = dependencies.readModule ?? ((url) => readFile2(url));
+  const readModule = dependencies.readModule ?? ((url) => readFile3(url));
   const candidates = dependencies.verifierModuleUrls ?? defaultVerifierModuleUrls();
   let lastMissingError;
   for (const candidate of candidates) {
@@ -27670,19 +27915,19 @@ async function collectReproducibilityInputs(repoRoot, baseCommitOid, dependencie
 
 // src/runtime/run-start.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { constants as constants3 } from "node:fs";
+import { constants as constants4 } from "node:fs";
 import {
   access as access3,
   lstat as lstat4,
-  open as open4,
+  open as open5,
   realpath as realpath4,
   rename as rename2,
   rm as rm4
 } from "node:fs/promises";
-import path10 from "node:path";
+import path12 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var NO_FOLLOW2 = constants3.O_NOFOLLOW ?? 0;
-function errorCode3(error2) {
+var NO_FOLLOW3 = constants4.O_NOFOLLOW ?? 0;
+function errorCode4(error2) {
   return error2.code;
 }
 async function resolveWatchdogPath() {
@@ -27732,10 +27977,10 @@ function assertDirectoryIdentity2(target) {
 async function syncDirectory2(directory) {
   let handle;
   try {
-    handle = await open4(directory, constants3.O_RDONLY | NO_FOLLOW2);
+    handle = await open5(directory, constants4.O_RDONLY | NO_FOLLOW3);
     await handle.sync();
   } catch (error2) {
-    const unsupportedOnWindows = process.platform === "win32" && ["EISDIR", "EINVAL", "ENOTSUP", "EPERM"].includes(errorCode3(error2) ?? "");
+    const unsupportedOnWindows = process.platform === "win32" && ["EISDIR", "EINVAL", "ENOTSUP", "EPERM"].includes(errorCode4(error2) ?? "");
     if (!unsupportedOnWindows) throw error2;
   } finally {
     await handle?.close();
@@ -27743,13 +27988,13 @@ async function syncDirectory2(directory) {
 }
 async function writeRunStart(target, record2, create) {
   await assertDirectoryIdentity2(target);
-  const destination = path10.join(target.canonicalDirectory, "run-start.json");
+  const destination = path12.join(target.canonicalDirectory, "run-start.json");
   const serialized = `${JSON.stringify(record2, null, 2)}
 `;
   if (create) {
-    const handle2 = await open4(
+    const handle2 = await open5(
       destination,
-      constants3.O_WRONLY | constants3.O_CREAT | constants3.O_EXCL | NO_FOLLOW2,
+      constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW3,
       384
     );
     try {
@@ -27762,16 +28007,16 @@ async function writeRunStart(target, record2, create) {
     await assertDirectoryIdentity2(target);
     return;
   }
-  const temporaryPath = path10.join(
+  const temporaryPath = path12.join(
     target.canonicalDirectory,
     `.run-start.${randomUUID3()}.tmp`
   );
   let created = false;
   let handle;
   try {
-    handle = await open4(
+    handle = await open5(
       temporaryPath,
-      constants3.O_WRONLY | constants3.O_CREAT | constants3.O_EXCL | NO_FOLLOW2,
+      constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW3,
       384
     );
     created = true;
@@ -28906,8 +29151,8 @@ function buildRoleSpec(role, base, pkg) {
 }
 
 // src/pipeline/git-writable-roots.ts
-import { lstat as lstat5, mkdir as mkdir4, readFile as readFile3, realpath as realpath5 } from "node:fs/promises";
-import path11 from "node:path";
+import { lstat as lstat5, mkdir as mkdir4, readFile as readFile4, realpath as realpath5 } from "node:fs/promises";
+import path13 from "node:path";
 function invalidWritableRoots(message, cause) {
   return new RuntimeError(message, {
     classification: "sandbox-violation",
@@ -28928,15 +29173,15 @@ async function requirePlainDirectory(directory, label) {
   }
 }
 function isContainedBy(parent, candidate) {
-  const relative = path11.relative(parent, candidate);
-  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path11.sep}`) && !path11.isAbsolute(relative);
+  const relative = path13.relative(parent, candidate);
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path13.sep}`) && !path13.isAbsolute(relative);
 }
 function sameFileIdentity(before, after) {
   return before.dev === after.dev && before.ino === after.ino;
 }
 async function readStablePlainFile(filename, label) {
   const before = await requirePlainFile(filename, label);
-  const value = await readFile3(filename, "utf8");
+  const value = await readFile4(filename, "utf8");
   const after = await requirePlainFile(filename, label);
   if (!sameFileIdentity(before, after)) {
     throw invalidWritableRoots(`${label} changed while being read`);
@@ -28944,16 +29189,16 @@ async function readStablePlainFile(filename, label) {
   return value;
 }
 async function resolveLinkedWorktreeWritableRoots(worktreePath) {
-  const dotGit = path11.join(worktreePath, ".git");
+  const dotGit = path13.join(worktreePath, ".git");
   try {
     const pointer = await readStablePlainFile(dotGit, "linked worktree .git entry");
     const match = /^gitdir: (.+)\r?\n?$/.exec(pointer);
     if (match === null) {
       throw invalidWritableRoots("linked worktree .git pointer is malformed");
     }
-    const gitDir = await realpath5(path11.resolve(worktreePath, match[1]));
+    const gitDir = await realpath5(path13.resolve(worktreePath, match[1]));
     await requirePlainDirectory(gitDir, "linked worktree private git directory");
-    const commonDirPointer = path11.join(gitDir, "commondir");
+    const commonDirPointer = path13.join(gitDir, "commondir");
     const commonDirValue = (await readStablePlainFile(
       commonDirPointer,
       "linked worktree commondir entry"
@@ -28961,16 +29206,16 @@ async function resolveLinkedWorktreeWritableRoots(worktreePath) {
     if (commonDirValue === "" || commonDirValue.includes("\0")) {
       throw invalidWritableRoots("linked worktree commondir pointer is malformed");
     }
-    const commonDir = await realpath5(path11.resolve(gitDir, commonDirValue));
+    const commonDir = await realpath5(path13.resolve(gitDir, commonDirValue));
     await requirePlainDirectory(commonDir, "common git directory");
-    const worktreesDir = await realpath5(path11.join(commonDir, "worktrees"));
+    const worktreesDir = await realpath5(path13.join(commonDir, "worktrees"));
     await requirePlainDirectory(worktreesDir, "common git worktrees directory");
     if (!isContainedBy(worktreesDir, gitDir)) {
       throw invalidWritableRoots("linked worktree private git directory escapes common git worktrees");
     }
-    const sharedObjectsDir = await realpath5(path11.join(commonDir, "objects"));
+    const sharedObjectsDir = await realpath5(path13.join(commonDir, "objects"));
     await requirePlainDirectory(sharedObjectsDir, "common git objects directory");
-    const privateObjectsPath = path11.join(gitDir, "private-objects");
+    const privateObjectsPath = path13.join(gitDir, "private-objects");
     await mkdir4(privateObjectsPath, { recursive: true, mode: 448 });
     await requirePlainDirectory(privateObjectsPath, "private git objects directory");
     const privateObjectsDir = await realpath5(privateObjectsPath);
@@ -29315,7 +29560,7 @@ function privateObjectReadOptions(access4) {
 }
 async function importPromotedObjects(args) {
   const privateObjects = privateObjectReadOptions(args.access);
-  const packPrefix = path12.join(args.access.sharedObjectsDir, "pack", "pack");
+  const packPrefix = path14.join(args.access.sharedObjectsDir, "pack", "pack");
   await checkedGit4(
     args.checkoutPath,
     ["pack-objects", "--revs", packPrefix],
@@ -30884,7 +31129,7 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
 }
 
 // src/protocol/spec-validator.ts
-import path13 from "node:path";
+import path15 from "node:path";
 var schemas2 = loadSchemas();
 function allowlistCovers(top, glob) {
   return top.some((pattern) => {
@@ -30895,7 +31140,7 @@ function allowlistCovers(top, glob) {
   });
 }
 function isSafeRepositoryGlob(glob) {
-  return glob.length > 0 && !path13.posix.isAbsolute(glob) && !path13.win32.isAbsolute(glob) && !glob.split(/[\\/]/).includes("..");
+  return glob.length > 0 && !path15.posix.isAbsolute(glob) && !path15.win32.isAbsolute(glob) && !glob.split(/[\\/]/).includes("..");
 }
 function validateAllowedTestDeletions(globs, basePath) {
   for (const [index, glob] of (globs ?? []).entries()) {
@@ -30941,8 +31186,8 @@ function validateSpec(input) {
     );
     if (topLevelDeletionError !== null) return topLevelDeletionError;
     for (const [index, command] of spec.verification.entries()) {
-      const normalizedCwd = path13.posix.normalize(command.cwd);
-      if (path13.isAbsolute(command.cwd) || normalizedCwd === ".." || normalizedCwd.startsWith("../")) {
+      const normalizedCwd = path15.posix.normalize(command.cwd);
+      if (path15.isAbsolute(command.cwd) || normalizedCwd === ".." || normalizedCwd.startsWith("../")) {
         return {
           ok: false,
           errors: [{
@@ -30970,8 +31215,8 @@ function validateSpec(input) {
         }
       }
       for (const [commandIndex, command] of slice.verification.entries()) {
-        const normalizedCwd = path13.posix.normalize(command.cwd);
-        if (path13.isAbsolute(command.cwd) || normalizedCwd === ".." || normalizedCwd.startsWith("../")) {
+        const normalizedCwd = path15.posix.normalize(command.cwd);
+        if (path15.isAbsolute(command.cwd) || normalizedCwd === ".." || normalizedCwd.startsWith("../")) {
           return {
             ok: false,
             errors: [{
@@ -31304,6 +31549,7 @@ async function handleReviewCandidate(checkoutPath, runId, deps = {}) {
         throw runtimeError("failed to regenerate candidate patch", "candidate-review-failed");
       }
       return boundIgnoredPathEvidence({
+        manifestHash: candidate.manifestHash,
         patch: patch.stdout,
         changedPaths: candidate.changedPaths.map((change) => ({ ...change })),
         evidence: structuredClone(run.result.evidence),
@@ -31372,20 +31618,20 @@ async function handleIntegrateCandidate(checkoutPath, runId, expectedArtifactHas
 
 // src/runtime/recovery-manager.ts
 import { createHash as createHash6, randomUUID as randomUUID5 } from "node:crypto";
-import { constants as constants4 } from "node:fs";
+import { constants as constants5 } from "node:fs";
 import {
   lstat as lstat6,
   link as link2,
   mkdir as mkdir5,
-  open as open5,
-  readdir as readdir2,
+  open as open6,
+  readdir as readdir3,
   realpath as realpath6,
   rename as rename3,
   rm as rm7
 } from "node:fs/promises";
-import path14 from "node:path";
-import nodeProcess4 from "node:process";
-var NO_FOLLOW3 = constants4.O_NOFOLLOW ?? 0;
+import path16 from "node:path";
+import nodeProcess5 from "node:process";
+var NO_FOLLOW4 = constants5.O_NOFOLLOW ?? 0;
 var MAX_STATE_FILE_BYTES = 8e6;
 var SAFE_RUN_ID = /^[a-z0-9][a-z0-9._-]*$/;
 var LOCK_NAME = /^([0-9a-f]{64})\.lock$/;
@@ -31395,11 +31641,11 @@ var BACKUP_REF_PREFIX = "refs/claude-architect/prune-backups/";
 var SLICE_REF_PREFIX2 = "refs/claude-architect/slices/";
 var MAX_QUARANTINE_REASON_BYTES = 2e3;
 var MAX_QUARANTINE_RECORD_BYTES = 4096;
-function errorCode4(error2) {
+function errorCode5(error2) {
   return error2.code;
 }
 function isMissing2(error2) {
-  return errorCode4(error2) === "ENOENT";
+  return errorCode5(error2) === "ENOENT";
 }
 function isPlainDirectory(metadata) {
   return metadata.isDirectory() && !metadata.isSymbolicLink();
@@ -31413,9 +31659,9 @@ function validateRunId(runId) {
   }
 }
 async function stateRoot() {
-  const configured = nodeProcess4.env.CLAUDE_PLUGIN_DATA ?? (nodeProcess4.env.NODE_ENV === "test" ? nodeProcess4.env.CLAUDE_ARCHITECT_STATE_DIR : void 0);
+  const configured = nodeProcess5.env.CLAUDE_PLUGIN_DATA ?? (nodeProcess5.env.NODE_ENV === "test" ? nodeProcess5.env.CLAUDE_ARCHITECT_STATE_DIR : void 0);
   if (configured === void 0) return null;
-  const root = path14.resolve(resolveStateDir());
+  const root = path16.resolve(resolveStateDir());
   try {
     const metadata = await lstat6(root);
     if (!isPlainDirectory(metadata)) {
@@ -31431,7 +31677,7 @@ async function stateRoot() {
 async function readBoundedRegularFile(filename) {
   let handle;
   try {
-    handle = await open5(filename, constants4.O_RDONLY | NO_FOLLOW3);
+    handle = await open6(filename, constants5.O_RDONLY | NO_FOLLOW4);
     const metadata = await handle.stat();
     if (!metadata.isFile() || metadata.size > MAX_STATE_FILE_BYTES) {
       throw new RuntimeError("recovery state entry is not a bounded regular file");
@@ -31447,7 +31693,7 @@ async function readBoundedRegularFile(filename) {
 async function readCleanupJournal(filename) {
   let handle;
   try {
-    handle = await open5(filename, constants4.O_RDONLY | NO_FOLLOW3);
+    handle = await open6(filename, constants5.O_RDONLY | NO_FOLLOW4);
   } catch (error2) {
     if (isMissing2(error2)) return { text: null, tornTail: false };
     throw error2;
@@ -31520,7 +31766,7 @@ function parseRunStart(text, expectedRunId) {
   }
   const record2 = value;
   validateRunId(record2.runId);
-  if (record2.runId !== expectedRunId || typeof record2.lockKey !== "string" || !/^[0-9a-f]{64}$/.test(record2.lockKey) || typeof record2.canonicalCommonDir !== "string" || !path14.isAbsolute(record2.canonicalCommonDir) || record2.pid !== null && (record2.pid === void 0 || !Number.isSafeInteger(record2.pid) || record2.pid <= 1) || record2.processToken !== void 0 && record2.processToken !== null && typeof record2.processToken !== "string" || typeof record2.startedAt !== "string" || !Number.isFinite(Date.parse(record2.startedAt))) {
+  if (record2.runId !== expectedRunId || typeof record2.lockKey !== "string" || !/^[0-9a-f]{64}$/.test(record2.lockKey) || typeof record2.canonicalCommonDir !== "string" || !path16.isAbsolute(record2.canonicalCommonDir) || record2.pid !== null && (record2.pid === void 0 || !Number.isSafeInteger(record2.pid) || record2.pid <= 1) || record2.processToken !== void 0 && record2.processToken !== null && typeof record2.processToken !== "string" || typeof record2.startedAt !== "string" || !Number.isFinite(Date.parse(record2.startedAt))) {
     throw new RuntimeError("run-start recovery record is malformed");
   }
   const expectedLockKey = createHash6("sha256").update(record2.canonicalCommonDir).digest("hex");
@@ -31560,7 +31806,7 @@ async function validateGitCommonDir(commonDir) {
   return canonical;
 }
 async function validateRepositoryRoot(repoRoot) {
-  if (!path14.isAbsolute(repoRoot)) {
+  if (!path16.isAbsolute(repoRoot)) {
     throw new RuntimeError("cleanup journal repository root is not absolute");
   }
   const canonical = await realpath6(repoRoot);
@@ -31643,14 +31889,14 @@ function isManagedWorktreeId(runId, managedId) {
   ).test(managedId);
 }
 async function managedWorktreeIds(root, runId) {
-  const worktreesRoot = path14.join(root, "worktrees");
+  const worktreesRoot = path16.join(root, "worktrees");
   if (await plainDirectoryIdentity(worktreesRoot) === null) return [];
-  const entries = await readdir2(worktreesRoot, { withFileTypes: true });
+  const entries = await readdir3(worktreesRoot, { withFileTypes: true });
   return entries.map((entry) => entry.name).filter((managedId) => isManagedWorktreeId(runId, managedId)).sort((left, right) => left.localeCompare(right));
 }
 async function cleanupManagedWorktrees(commonDir, root, runId, ps) {
   for (const managedId of await managedWorktreeIds(root, runId)) {
-    const worktreePath = path14.join(root, "worktrees", managedId);
+    const worktreePath = path16.join(root, "worktrees", managedId);
     if (await plainDirectoryIdentity(worktreePath) !== null) {
       await new WorktreeManager(commonDir, managedId, ps).remove(worktreePath);
     }
@@ -31785,7 +32031,7 @@ async function readRecoveryQuarantineJournal(runsRoot) {
   if (rootIdentity === null) {
     throw new RuntimeError("recovery quarantine journal root disappeared");
   }
-  const filename = path14.join(runsRoot, "recovery-quarantine.ndjson");
+  const filename = path16.join(runsRoot, "recovery-quarantine.ndjson");
   let expectedMetadata;
   try {
     expectedMetadata = await lstat6(filename);
@@ -31807,7 +32053,7 @@ async function readRecoveryQuarantineJournal(runsRoot) {
   }
   let handle;
   try {
-    handle = await open5(filename, constants4.O_RDONLY | NO_FOLLOW3);
+    handle = await open6(filename, constants5.O_RDONLY | NO_FOLLOW4);
   } catch (error2) {
     if (!isMissing2(error2)) throw error2;
     try {
@@ -31873,10 +32119,10 @@ async function syncRecoveryDirectory(directory) {
   let handle;
   let primaryError;
   try {
-    handle = await open5(directory, constants4.O_RDONLY | NO_FOLLOW3);
+    handle = await open6(directory, constants5.O_RDONLY | NO_FOLLOW4);
     await handle.sync();
   } catch (error2) {
-    const unsupportedOnWindows = nodeProcess4.platform === "win32" && ["EISDIR", "EINVAL", "ENOTSUP", "EPERM"].includes(errorCode4(error2) ?? "");
+    const unsupportedOnWindows = nodeProcess5.platform === "win32" && ["EISDIR", "EINVAL", "ENOTSUP", "EPERM"].includes(errorCode5(error2) ?? "");
     if (!unsupportedOnWindows) primaryError = error2;
   }
   try {
@@ -31893,7 +32139,7 @@ async function syncRecoveryDirectory(directory) {
   if (primaryError !== void 0) throw primaryError;
 }
 async function publishRecoveryQuarantineJournal(runsRoot, filename, snapshot, nextBytes) {
-  const temporaryPath = path14.join(
+  const temporaryPath = path16.join(
     runsRoot,
     `.recovery-quarantine-journal-${randomUUID5()}.tmp`
   );
@@ -31904,9 +32150,9 @@ async function publishRecoveryQuarantineJournal(runsRoot, filename, snapshot, ne
   let temporaryIdentity;
   let primaryError;
   try {
-    handle = await open5(
+    handle = await open6(
       temporaryPath,
-      constants4.O_RDWR | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW3,
+      constants5.O_RDWR | constants5.O_CREAT | constants5.O_EXCL | NO_FOLLOW4,
       384
     );
     temporaryCreated = true;
@@ -32034,7 +32280,7 @@ async function appendRecoveryQuarantineRecord(runsRoot, record2) {
   if (lineBytes > MAX_QUARANTINE_RECORD_BYTES) {
     throw new RuntimeError("recovery quarantine record exceeds its size limit");
   }
-  const filename = path14.join(runsRoot, "recovery-quarantine.ndjson");
+  const filename = path16.join(runsRoot, "recovery-quarantine.ndjson");
   const snapshot = await readRecoveryQuarantineJournal(runsRoot);
   if (snapshot.runIds.has(record2.runId)) {
     await syncRecoveryDirectory(runsRoot);
@@ -32051,8 +32297,8 @@ async function appendRecoveryQuarantineRecord(runsRoot, record2) {
   await publishRecoveryQuarantineJournal(runsRoot, filename, snapshot, nextBytes);
 }
 async function quarantineRun(runsRoot, runId, error2) {
-  const runDirectory = path14.join(runsRoot, runId);
-  const quarantinePath = path14.join(runsRoot, `.poisoned-${runId}`);
+  const runDirectory = path16.join(runsRoot, runId);
+  const quarantinePath = path16.join(runsRoot, `.poisoned-${runId}`);
   const runsIdentity = await plainDirectoryIdentity(runsRoot);
   if (runsIdentity === null) throw new RuntimeError("recovery runs root disappeared");
   let runIdentity = null;
@@ -32133,10 +32379,10 @@ async function appendCleanupRecord(runsRoot, record2) {
   try {
     const identity = await plainDirectoryIdentity(runsRoot);
     if (identity === null) throw new RuntimeError("cleanup journal root disappeared");
-    const filename = path14.join(runsRoot, "cleanup.ndjson");
-    const handle = await open5(
+    const filename = path16.join(runsRoot, "cleanup.ndjson");
+    const handle = await open6(
       filename,
-      constants4.O_WRONLY | constants4.O_CREAT | constants4.O_APPEND | NO_FOLLOW3,
+      constants5.O_WRONLY | constants5.O_CREAT | constants5.O_APPEND | NO_FOLLOW4,
       384
     );
     try {
@@ -32212,7 +32458,7 @@ async function commitCleanupRefs(record2) {
   await deleteExactRef(repoRoot, record2.backupRef, backupOid);
 }
 async function readPendingCleanupRecords(runsRoot) {
-  const { text, tornTail } = await readCleanupJournal(path14.join(runsRoot, "cleanup.ndjson"));
+  const { text, tornTail } = await readCleanupJournal(path16.join(runsRoot, "cleanup.ndjson"));
   const pending = /* @__PURE__ */ new Map();
   if (text === null || text === "") return { pending, tornTail };
   const completeText = text.endsWith("\n") ? text.slice(0, -1) : text;
@@ -32227,7 +32473,7 @@ async function readPendingCleanupRecords(runsRoot) {
 async function truncateCleanupTornTail(filename) {
   let handle;
   try {
-    handle = await open5(filename, constants4.O_RDWR | NO_FOLLOW3);
+    handle = await open6(filename, constants5.O_RDWR | NO_FOLLOW4);
   } catch (error2) {
     if (isMissing2(error2)) return;
     throw error2;
@@ -32253,7 +32499,7 @@ async function truncateCleanupTornTail(filename) {
   }
 }
 async function repositoryRootExists(repoRoot) {
-  if (!path14.isAbsolute(repoRoot)) return true;
+  if (!path16.isAbsolute(repoRoot)) return true;
   try {
     await realpath6(repoRoot);
     return true;
@@ -32263,8 +32509,8 @@ async function repositoryRootExists(repoRoot) {
   }
 }
 async function reconcileRepoAbsentPrune(runsRoot, record2) {
-  const runDirectory = path14.join(runsRoot, record2.runId);
-  const quarantinePath = path14.join(runsRoot, record2.quarantineName);
+  const runDirectory = path16.join(runsRoot, record2.runId);
+  const quarantinePath = path16.join(runsRoot, record2.quarantineName);
   const runIdentity = await plainDirectoryIdentity(runDirectory);
   const quarantineIdentity = await plainDirectoryIdentity(quarantinePath);
   if (runIdentity !== null && quarantineIdentity !== null) {
@@ -32286,7 +32532,7 @@ async function replayInterruptedPrunes(runsRoot, ps) {
   const journalLock = await getPlatformServices().acquireCleanupJournalLock();
   try {
     const read = await readPendingCleanupRecords(runsRoot);
-    if (read.tornTail) await truncateCleanupTornTail(path14.join(runsRoot, "cleanup.ndjson"));
+    if (read.tornTail) await truncateCleanupTornTail(path16.join(runsRoot, "cleanup.ndjson"));
     pending = read.pending;
   } finally {
     await journalLock.release();
@@ -32313,8 +32559,8 @@ async function replayInterruptedPrunes(runsRoot, ps) {
       if (lease.repositoryIdentity !== repositoryIdentity) {
         throw new RuntimeError("checkout lease repository identity changed during prune recovery");
       }
-      const runDirectory = path14.join(runsRoot, record2.runId);
-      const quarantinePath = path14.join(runsRoot, record2.quarantineName);
+      const runDirectory = path16.join(runsRoot, record2.runId);
+      const quarantinePath = path16.join(runsRoot, record2.quarantineName);
       const runIdentity = await plainDirectoryIdentity(runDirectory);
       const quarantineIdentity = await plainDirectoryIdentity(quarantinePath);
       if (runIdentity !== null && quarantineIdentity !== null) {
@@ -32405,7 +32651,7 @@ async function recoverRun(record2, root, ps, isProcessAlive, requestCooperativeT
 }
 function defaultRequestCooperativeTermination(pid) {
   try {
-    nodeProcess4.kill(pid, "SIGTERM");
+    nodeProcess5.kill(pid, "SIGTERM");
   } catch {
   }
 }
@@ -32504,7 +32750,7 @@ async function removeLockIfUnchanged(lockPath, handle, expectedIdentity, expecte
 async function reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) {
   let handle;
   try {
-    handle = await open5(lockPath, constants4.O_RDONLY | NO_FOLLOW3);
+    handle = await open6(lockPath, constants5.O_RDONLY | NO_FOLLOW4);
   } catch (error2) {
     if (isMissing2(error2)) return "contended";
     throw error2;
@@ -32520,7 +32766,7 @@ async function reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) {
     if (owner === null) {
       logger.warn("startup recovery preserved malformed lock", {
         event: "recovery-malformed-lock",
-        lockName: path14.basename(lockPath),
+        lockName: path16.basename(lockPath),
         reason: "invalid-owner-record"
       });
       return "malformed";
@@ -32534,7 +32780,7 @@ async function reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) {
     if (ownerStatus === "unverifiable") {
       logger.warn("startup recovery preserved unverifiable lock", {
         event: "recovery-unverifiable-lock",
-        lockName: path14.basename(lockPath),
+        lockName: path16.basename(lockPath),
         reason: "process-token-unavailable"
       });
       return "unverifiable";
@@ -32587,7 +32833,7 @@ async function validateOwnedLockState(handle, namedPaths, expectedIdentity, expe
 async function removeExpectedLockPath(filename, expectedIdentity, expectedContents, expectedLinks) {
   let handle;
   try {
-    handle = await open5(filename, constants4.O_RDONLY | NO_FOLLOW3);
+    handle = await open6(filename, constants5.O_RDONLY | NO_FOLLOW4);
   } catch (error2) {
     if (isMissing2(error2)) return "absent";
     throw error2;
@@ -32629,7 +32875,7 @@ async function pathNamesLockIdentity(filename, expectedIdentity) {
   }
 }
 async function validatePublishedLock(lockPath, expectedIdentity, expectedContents, parentPath, parentIdentity, expectedLinks = 1, namedPaths = [lockPath]) {
-  const handle = await open5(lockPath, constants4.O_RDONLY | NO_FOLLOW3);
+  const handle = await open6(lockPath, constants5.O_RDONLY | NO_FOLLOW4);
   let primaryError;
   try {
     await validateOwnedLockState(
@@ -32708,12 +32954,12 @@ async function createOwnedLock(lockPath, contents) {
   if (contents.byteLength > MAX_STATE_FILE_BYTES) {
     throw new RuntimeError("new recovery lock exceeds its size limit");
   }
-  const parentPath = path14.dirname(lockPath);
+  const parentPath = path16.dirname(lockPath);
   const parentIdentity = await plainDirectoryIdentity(parentPath);
   if (parentIdentity === null) {
     throw new RuntimeError("recovery lock parent must remain a plain directory");
   }
-  const temporaryPath = path14.join(parentPath, `.recovery-lock-${randomUUID5()}.tmp`);
+  const temporaryPath = path16.join(parentPath, `.recovery-lock-${randomUUID5()}.tmp`);
   let handle;
   let temporaryIdentity;
   let temporaryCreated = false;
@@ -32721,9 +32967,9 @@ async function createOwnedLock(lockPath, contents) {
   let contended = false;
   const errors = [];
   try {
-    handle = await open5(
+    handle = await open6(
       temporaryPath,
-      constants4.O_RDWR | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW3,
+      constants5.O_RDWR | constants5.O_CREAT | constants5.O_EXCL | NO_FOLLOW4,
       384
     );
     temporaryCreated = true;
@@ -32744,7 +32990,7 @@ async function createOwnedLock(lockPath, contents) {
       await link2(temporaryPath, lockPath);
       published = true;
     } catch (error2) {
-      if (errorCode4(error2) === "EEXIST") contended = true;
+      if (errorCode5(error2) === "EEXIST") contended = true;
       else throw error2;
     }
     if (published) {
@@ -32847,7 +33093,7 @@ async function acquireOwnedLock(lockPath, contents, isProcessAlive, getProcessSt
 async function releaseOwnedLock(lock) {
   let handle;
   try {
-    handle = await open5(lock.lockPath, constants4.O_RDONLY | NO_FOLLOW3);
+    handle = await open6(lock.lockPath, constants5.O_RDONLY | NO_FOLLOW4);
   } catch (error2) {
     if (isMissing2(error2)) return;
     throw error2;
@@ -32858,14 +33104,14 @@ async function releaseOwnedLock(lock) {
     await handle.close();
   }
 }
-function defaultIsProcessAlive(pid) {
+function defaultIsProcessAlive2(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 1) return false;
   try {
-    nodeProcess4.kill(pid, 0);
+    nodeProcess5.kill(pid, 0);
     return true;
   } catch (error2) {
-    if (errorCode4(error2) === "EPERM") return true;
-    if (errorCode4(error2) === "ESRCH") return false;
+    if (errorCode5(error2) === "EPERM") return true;
+    if (errorCode5(error2) === "ESRCH") return false;
     throw error2;
   }
 }
@@ -32874,7 +33120,7 @@ async function reclaimLocks(locksRoot, isProcessAlive, getProcessStartToken) {
   try {
     const rootIdentity = await plainDirectoryIdentity(locksRoot);
     if (rootIdentity === null) return;
-    entries = await readdir2(locksRoot, { withFileTypes: true });
+    entries = await readdir3(locksRoot, { withFileTypes: true });
   } catch (error2) {
     if (isMissing2(error2)) return;
     throw error2;
@@ -32882,7 +33128,7 @@ async function reclaimLocks(locksRoot, isProcessAlive, getProcessStartToken) {
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     const match = LOCK_NAME.exec(entry.name);
     if (match === null) continue;
-    const lockPath = path14.join(locksRoot, entry.name);
+    const lockPath = path16.join(locksRoot, entry.name);
     if (!entry.isFile() || entry.isSymbolicLink()) {
       throw new RuntimeError("checkout lock must be a regular file during recovery");
     }
@@ -32890,7 +33136,7 @@ async function reclaimLocks(locksRoot, isProcessAlive, getProcessStartToken) {
   }
 }
 async function lockIsOwnedByLiveProcess(locksRoot, lockKey, isProcessAlive, getProcessStartToken) {
-  const contents = await readBoundedRegularFile(path14.join(locksRoot, `${lockKey}.lock`));
+  const contents = await readBoundedRegularFile(path16.join(locksRoot, `${lockKey}.lock`));
   if (contents === null) return false;
   const owner = parseLockOwner(contents);
   if (owner === null) return true;
@@ -32906,23 +33152,23 @@ async function recoverStaleRuns(dependencies = {}) {
     terminateProcessTreeByPid: (pid, token) => (supplied ?? selected).terminateProcessTreeByPid(pid, token),
     acquireCheckoutLock: (checkout) => supplied && supplied.acquireCheckoutLock ? supplied.acquireCheckoutLock(checkout) : selected.acquireCheckoutLock(checkout)
   };
-  const isProcessAlive = dependencies.isProcessAlive ?? defaultIsProcessAlive;
+  const isProcessAlive = dependencies.isProcessAlive ?? defaultIsProcessAlive2;
   const requestCooperativeTermination = dependencies.requestCooperativeTermination ?? defaultRequestCooperativeTermination;
   const delayMs = dependencies.delayMs ?? defaultDelayMs;
   const graceMs = dependencies.graceMs ?? 3e3;
   const runGit = dependencies.git ?? git;
   if (root === null) return { recovered: [], quarantined: [] };
-  const locksRoot = path14.join(root, "locks");
+  const locksRoot = path16.join(root, "locks");
   await mkdir5(locksRoot, { recursive: true });
   if (await plainDirectoryIdentity(locksRoot) === null) {
     throw new RuntimeError("recovery locks directory disappeared");
   }
   const ownerContents = Buffer.from(JSON.stringify({
-    pid: nodeProcess4.pid,
-    processToken: await ps.getProcessStartToken(nodeProcess4.pid)
+    pid: nodeProcess5.pid,
+    processToken: await ps.getProcessStartToken(nodeProcess5.pid)
   }));
   const recoveryLock = await acquireOwnedLock(
-    path14.join(locksRoot, "recovery.lock"),
+    path16.join(locksRoot, "recovery.lock"),
     ownerContents,
     isProcessAlive,
     (pid) => ps.getProcessStartToken(pid)
@@ -32930,11 +33176,11 @@ async function recoverStaleRuns(dependencies = {}) {
   if (recoveryLock === null) return { recovered: [], quarantined: [] };
   let primaryError;
   try {
-    const runsRoot = path14.join(root, "runs");
+    const runsRoot = path16.join(root, "runs");
     const runsIdentity = await plainDirectoryIdentity(runsRoot);
     if (runsIdentity !== null) {
       await reclaimDeadLock(
-        path14.join(locksRoot, `${CLEANUP_JOURNAL_LOCK_KEY}.lock`),
+        path16.join(locksRoot, `${CLEANUP_JOURNAL_LOCK_KEY}.lock`),
         isProcessAlive,
         (pid) => ps.getProcessStartToken(pid)
       );
@@ -32945,7 +33191,7 @@ async function recoverStaleRuns(dependencies = {}) {
     const recovered = [];
     const quarantined = [];
     if (runsIdentity !== null) {
-      const runEntries = await readdir2(runsRoot, { withFileTypes: true });
+      const runEntries = await readdir3(runsRoot, { withFileTypes: true });
       for (const entry of runEntries.sort((left, right) => left.name.localeCompare(right.name))) {
         if (entry.isDirectory() && !entry.isSymbolicLink() && entry.name.startsWith(".poisoned-")) {
           const runId = entry.name.slice(".poisoned-".length);
@@ -32957,8 +33203,8 @@ async function recoverStaleRuns(dependencies = {}) {
         }
         if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
         try {
-          const runDirectory = path14.join(runsRoot, entry.name);
-          const runStartText = await readBoundedRegularFile(path14.join(runDirectory, "run-start.json"));
+          const runDirectory = path16.join(runsRoot, entry.name);
+          const runStartText = await readBoundedRegularFile(path16.join(runDirectory, "run-start.json"));
           if (runStartText === null) continue;
           const record2 = parseRunStart(runStartText, entry.name);
           const store = new ArtifactStore(entry.name);
@@ -32972,7 +33218,7 @@ async function recoverStaleRuns(dependencies = {}) {
               (pid) => ps.getProcessStartToken(pid)
             ) === "dead") {
               const checkoutLock = await acquireOwnedLock(
-                path14.join(locksRoot, `${record2.lockKey}.lock`),
+                path16.join(locksRoot, `${record2.lockKey}.lock`),
                 ownerContents,
                 isProcessAlive,
                 (pid) => ps.getProcessStartToken(pid)
@@ -32982,7 +33228,7 @@ async function recoverStaleRuns(dependencies = {}) {
               let cleanupFailed = false;
               try {
                 const lockedRunStartText = await readBoundedRegularFile(
-                  path14.join(runDirectory, "run-start.json")
+                  path16.join(runDirectory, "run-start.json")
                 );
                 if (lockedRunStartText === null) {
                   throw new RuntimeError("run-start recovery record disappeared during recovery");
@@ -33041,7 +33287,7 @@ async function recoverStaleRuns(dependencies = {}) {
     }
     for (const { record: record2, runStartText } of stale) {
       const checkoutLock = await acquireOwnedLock(
-        path14.join(locksRoot, `${record2.lockKey}.lock`),
+        path16.join(locksRoot, `${record2.lockKey}.lock`),
         ownerContents,
         isProcessAlive,
         (pid) => ps.getProcessStartToken(pid)
@@ -33052,7 +33298,7 @@ async function recoverStaleRuns(dependencies = {}) {
       let becameTerminal = false;
       try {
         const lockedRunStartText = await readBoundedRegularFile(
-          path14.join(runsRoot, record2.runId, "run-start.json")
+          path16.join(runsRoot, record2.runId, "run-start.json")
         );
         if (lockedRunStartText === null) {
           throw new RuntimeError("run-start recovery record disappeared before stale recovery");
@@ -33163,7 +33409,8 @@ var delegatePipelineOutput = external_exports.object({
   diagnostic: external_exports.string().optional(),
   error: external_exports.string().optional()
 });
-var reviewOutput = external_exports.object({
+var reviewCandidateOutputSchema = external_exports.object({
+  manifestHash: external_exports.string().regex(/^[0-9a-f]{64}$/u).optional(),
   patch: external_exports.string().optional(),
   changedPaths: external_exports.array(external_exports.object({
     path: external_exports.string(),
@@ -33333,9 +33580,9 @@ async function start(dependencies = {}) {
     "reviewCandidate",
     {
       title: "Review a verified candidate",
-      description: "Regenerate and return the exact candidate patch and verification evidence.",
+      description: "Return the exact candidate manifest hash, patch, and verification evidence.",
       inputSchema: reviewCandidateInputSchema,
-      outputSchema: reviewOutput
+      outputSchema: reviewCandidateOutputSchema
     },
     async ({ checkoutPath, runId }) => toolOutput(await handleReviewCandidate(
       checkoutPath,

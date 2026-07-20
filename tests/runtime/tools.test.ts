@@ -787,6 +787,7 @@ describe("MCP tool handlers", () => {
     const output = await handleReviewCandidate("/canonical/repo", "run-tools", deps);
 
     expect(output).toEqual({
+      manifestHash: candidate.manifestHash,
       patch: "exact unredacted patch\n",
       changedPaths: candidate.changedPaths,
       evidence: result.evidence,
