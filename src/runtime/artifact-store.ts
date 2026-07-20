@@ -21,7 +21,6 @@ import type {
 } from "../protocol/attempt-result.js";
 import type {
   AutopilotCandidateDecisionV2,
-  AutopilotDecisionEligibilityV1,
   CandidateDecision,
   CandidateDecisionV2,
   CandidateDecisionValue,
@@ -49,6 +48,17 @@ import {
 import { resolveStateDir } from "./state-dir.js";
 import { getPlatformServices } from "../platform/select-platform.js";
 import type { CheckoutLock, PlatformServices } from "../platform/platform-services.js";
+import {
+  advisorReportHash,
+  autopilotDecisionEligibilityProjection,
+  canonicalArtifactHash,
+  eligibilityInputFromArtifacts,
+  evaluateAutopilotEligibility,
+  pipelineResultHash,
+  type AutopilotEligibilityRecord,
+} from "../autopilot/autopilot-eligibility.js";
+import type { PipelineResult } from "../pipeline/pipeline-runtime.js";
+import type { AdvisorReport } from "../pipeline/report-types.js";
 
 const SAFE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const WINDOWS_RESERVED_COMPONENT = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
@@ -60,6 +70,8 @@ const MAX_ARCHIVE_FILE_BYTES = 8_000_000;
 const schemas = loadSchemas();
 const attemptResultSchema = schemas.attemptResult;
 const candidateDecisionSchema = schemas.candidateDecision;
+const advisorReportSchema = schemas.advisorReport;
+const autopilotEligibilitySchema = schemas.autopilotEligibility;
 
 export interface PrunePolicy {
   maxAgeMs: number;
@@ -81,8 +93,6 @@ type HumanCandidateDecisionV2Input = Omit<
   HumanCandidateDecisionV2,
   "decisionVersion" | "authority"
 >;
-
-const SHA256 = /^[0-9a-f]{64}$/u;
 
 interface PersistedLegacyCandidateDecisionV1 {
   decision: CandidateDecisionValue;
@@ -596,25 +606,69 @@ function hasIdenticalDecisionProvenance(
     && existing.policyVersion === attempted.policyVersion;
 }
 
-function verifyAutopilotEligibility(
-  candidate: CandidateArtifact,
-  eligibility: AutopilotDecisionEligibilityV1,
-): void {
-  const keys = Object.keys(eligibility);
-  if (keys.length !== 5
-    || !keys.includes("eligibilityVersion")
-    || !keys.includes("eligible")
-    || !keys.includes("candidateManifestHash")
-    || !keys.includes("evidenceHash")
-    || !keys.includes("policyVersion")
-    || eligibility.eligibilityVersion !== "1"
-    || eligibility.eligible !== true
-    || eligibility.policyVersion !== "1"
-    || !SHA256.test(eligibility.evidenceHash)
-    || eligibility.candidateManifestHash !== candidate.manifestHash
-    || candidate.manifestHash !== manifestHashOf(candidate.changedPaths)) {
-    throw new RuntimeError("autopilot decision eligibility is invalid");
+function validateAdvisorReport(value: unknown): AdvisorReport {
+  if (!advisorReportSchema(value)) {
+    throw new RuntimeError("archived advisor report is invalid");
   }
+  return value as AdvisorReport;
+}
+
+function validateAutopilotEligibilityRecord(
+  value: unknown,
+  runId: string,
+): AutopilotEligibilityRecord {
+  if (!autopilotEligibilitySchema(value)) {
+    throw new RuntimeError("archived autopilot eligibility record is invalid");
+  }
+  const record = value as AutopilotEligibilityRecord;
+  if (record.runId !== runId || record.eligible !== (record.reasons.length === 0)) {
+    throw new RuntimeError("archived autopilot eligibility record is inconsistent");
+  }
+  return record;
+}
+
+interface PostPipelineAutopilotArtifacts {
+  artifactVersion: "1";
+  advisorReport: AdvisorReport;
+  eligibility: AutopilotEligibilityRecord;
+  advisorReportHash: string;
+  eligibilityRecordHash: string;
+}
+
+function validatePostPipelineAutopilotArtifacts(
+  value: unknown,
+  runId: string,
+): PostPipelineAutopilotArtifacts {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RuntimeError("archived post-pipeline autopilot artifacts are invalid");
+  }
+  const candidate = value as Partial<PostPipelineAutopilotArtifacts>;
+  const keys = Object.keys(value);
+  if (keys.length !== 5
+    || !keys.includes("artifactVersion")
+    || !keys.includes("advisorReport")
+    || !keys.includes("eligibility")
+    || !keys.includes("advisorReportHash")
+    || !keys.includes("eligibilityRecordHash")
+    || candidate.artifactVersion !== "1") {
+    throw new RuntimeError("archived post-pipeline autopilot artifacts are invalid");
+  }
+  const advisorReport = validateAdvisorReport(candidate.advisorReport);
+  const eligibility = validateAutopilotEligibilityRecord(candidate.eligibility, runId);
+  const expectedAdvisorHash = advisorReportHash(advisorReport);
+  const expectedEligibilityHash = canonicalArtifactHash(eligibility);
+  if (candidate.advisorReportHash !== expectedAdvisorHash
+    || candidate.eligibilityRecordHash !== expectedEligibilityHash
+    || eligibility.advisorReportHash !== expectedAdvisorHash) {
+    throw new RuntimeError("archived post-pipeline autopilot artifact hashes do not agree");
+  }
+  return {
+    artifactVersion: "1",
+    advisorReport,
+    eligibility,
+    advisorReportHash: expectedAdvisorHash,
+    eligibilityRecordHash: expectedEligibilityHash,
+  };
 }
 
 export class ArtifactStore {
@@ -945,6 +999,95 @@ export class ArtifactStore {
     }
   }
 
+  async readAdvisorReport(runId: string): Promise<AdvisorReport | null> {
+    const value = await this.readPipelineArtifact<unknown>(runId, "post-pipeline-autopilot");
+    return value === null
+      ? null
+      : validatePostPipelineAutopilotArtifacts(value, runId).advisorReport;
+  }
+
+  private async recomputeArchivedEligibility(
+    record: AutopilotEligibilityRecord,
+  ): Promise<AutopilotEligibilityRecord | null> {
+    const [pipelineResult, reviewSnapshot, advisorReport] = await Promise.all([
+      this.readPipelineArtifact<PipelineResult>(this.runId, "pipeline-result"),
+      this.readReviewSnapshot(this.runId),
+      this.readAdvisorReport(this.runId),
+    ]);
+    if (pipelineResult === null || reviewSnapshot === null || advisorReport === null) return null;
+    return evaluateAutopilotEligibility(eligibilityInputFromArtifacts({
+      pipelineResult,
+      reviewSnapshot,
+      advisor: advisorReport,
+      evaluatedAt: record.evaluatedAt,
+    }));
+  }
+
+  async readAutopilotEligibility(runId: string): Promise<AutopilotEligibilityRecord | null> {
+    validateComponent(runId, "run id");
+    const value = await this.readPipelineArtifact<unknown>(runId, "post-pipeline-autopilot");
+    if (value === null) return null;
+    const record = validatePostPipelineAutopilotArtifacts(value, runId).eligibility;
+    if (runId !== this.runId) {
+      return new ArtifactStore(runId).readAutopilotEligibility(runId);
+    }
+    const expected = await this.recomputeArchivedEligibility(record);
+    if (expected === null) return null;
+    if (canonicalArtifactHash(expected) !== canonicalArtifactHash(record)) {
+      throw new RuntimeError("archived autopilot eligibility does not match its evidence");
+    }
+    return record;
+  }
+
+  async writePostPipelineAutopilotArtifacts(args: {
+    pipelineResult: PipelineResult;
+    reviewSnapshot: ReviewSnapshot;
+    advisorReport: AdvisorReport;
+    eligibility: AutopilotEligibilityRecord;
+  }): Promise<{ advisorReportHash: string; eligibilityRecordHash: string }> {
+    const [archivedPipelineResult, archivedReviewSnapshot] = await Promise.all([
+      this.readPipelineArtifact<PipelineResult>(this.runId, "pipeline-result"),
+      this.readReviewSnapshot(this.runId),
+    ]);
+    if (archivedPipelineResult === null || archivedReviewSnapshot === null) {
+      throw new RuntimeError("post-pipeline artifacts require a durable pipeline result and review snapshot");
+    }
+    if (pipelineResultHash(args.pipelineResult) !== pipelineResultHash(archivedPipelineResult)
+      || reviewSnapshotHash(args.reviewSnapshot) !== reviewSnapshotHash(archivedReviewSnapshot)) {
+      throw new RuntimeError("post-pipeline artifacts do not match the immutable archive");
+    }
+    const report = validateAdvisorReport(structuredClone(args.advisorReport));
+    const sanitizedReport = validateAdvisorReport(redactRecord(report));
+    if (advisorReportHash(sanitizedReport) !== advisorReportHash(report)) {
+      throw new RuntimeError("advisor report cannot be safely persisted after redaction");
+    }
+    const record = validateAutopilotEligibilityRecord(structuredClone(args.eligibility), this.runId);
+    const expected = evaluateAutopilotEligibility(eligibilityInputFromArtifacts({
+      pipelineResult: archivedPipelineResult,
+      reviewSnapshot: archivedReviewSnapshot,
+      advisor: sanitizedReport,
+      evaluatedAt: record.evaluatedAt,
+    }));
+    if (canonicalArtifactHash(expected) !== canonicalArtifactHash(record)) {
+      throw new RuntimeError("post-pipeline eligibility was not derived from the supplied frozen evidence");
+    }
+
+    const persistedAdvisorHash = advisorReportHash(sanitizedReport);
+    const eligibilityRecordHash = canonicalArtifactHash(record);
+    const artifacts: PostPipelineAutopilotArtifacts = {
+      artifactVersion: "1",
+      advisorReport: sanitizedReport,
+      eligibility: record,
+      advisorReportHash: persistedAdvisorHash,
+      eligibilityRecordHash,
+    };
+    await this.writeJson(
+      path.posix.join("pipeline", "post-pipeline-autopilot.json"),
+      artifacts,
+    );
+    return { advisorReportHash: persistedAdvisorHash, eligibilityRecordHash };
+  }
+
   async writeHumanDecision(record: HumanCandidateDecisionV2Input): Promise<void> {
     const decision = verifyCandidateDecisionV2({
       ...record,
@@ -956,17 +1099,33 @@ export class ArtifactStore {
 
   async writeAutopilotDecision(
     candidate: CandidateArtifact,
-    eligibility: AutopilotDecisionEligibilityV1,
+    eligibility: AutopilotEligibilityRecord,
     recordedAt: string,
   ): Promise<void> {
-    verifyAutopilotEligibility(candidate, eligibility);
+    let validated: AutopilotEligibilityRecord;
+    try {
+      validated = validateAutopilotEligibilityRecord(eligibility, this.runId);
+    } catch {
+      throw new RuntimeError("autopilot decision eligibility is invalid");
+    }
+    const archived = await this.readAutopilotEligibility(this.runId);
+    if (archived === null
+      || canonicalArtifactHash(archived) !== canonicalArtifactHash(validated)
+      || candidate.baseCommitOid !== validated.baseCommitOid
+      || candidate.candidateCommitOid !== validated.candidateCommitOid
+      || candidate.candidateTreeOid !== validated.candidateTreeOid
+      || candidate.manifestHash !== validated.candidateManifestHash
+      || candidate.manifestHash !== manifestHashOf(candidate.changedPaths)) {
+      throw new RuntimeError("autopilot decision eligibility is invalid");
+    }
+    const decisionEligibility = autopilotDecisionEligibilityProjection(validated);
     const decision = verifyCandidateDecisionV2({
       decisionVersion: "2",
       decision: "accepted",
       authority: "autopilot-policy",
       candidateManifestHash: candidate.manifestHash,
-      evidenceHash: eligibility.evidenceHash,
-      policyVersion: eligibility.policyVersion,
+      evidenceHash: decisionEligibility.evidenceHash,
+      policyVersion: decisionEligibility.policyVersion,
       recordedAt,
     }) as AutopilotCandidateDecisionV2;
     await this.writeCandidateDecision(decision, decision);

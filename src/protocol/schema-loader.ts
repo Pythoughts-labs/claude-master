@@ -7,6 +7,8 @@ import reviewSchema from "../../runtime/schemas/review-report.v1.json" with { ty
 import fixSchema from "../../runtime/schemas/fix-report.v1.json" with { type: "json" };
 import incrementSchema from "../../runtime/schemas/increment-report.v1.json" with { type: "json" };
 import verificationSchema from "../../runtime/schemas/verification-report.v1.json" with { type: "json" };
+import advisorSchema from "../../runtime/schemas/advisor-report.v1.json" with { type: "json" };
+import autopilotEligibilitySchema from "../../runtime/schemas/autopilot-eligibility.v1.json" with { type: "json" };
 
 import { PROTOCOL_VERSION } from "./versions.js";
 
@@ -33,6 +35,8 @@ export interface CompiledSchemas {
   fixReport: ValidateFunction;
   incrementReport: ValidateFunction;
   verificationReport: ValidateFunction;
+  advisorReport: ValidateFunction;
+  autopilotEligibility: ValidateFunction;
 }
 
 export function loadSchemas(): CompiledSchemas {
@@ -55,6 +59,8 @@ export function loadSchemas(): CompiledSchemas {
     fixReport: ajv.compile(fixSchema as object),
     incrementReport: ajv.compile(incrementSchema as object),
     verificationReport: ajv.compile(verificationSchema as object),
+    advisorReport: ajv.compile(advisorSchema as object),
+    autopilotEligibility: ajv.compile(autopilotEligibilitySchema as object),
   };
 }
 

@@ -2670,6 +2670,7 @@ describe("runPipeline", () => {
     const repo = await initRepo();
     const runId = "pipeline-clean";
     const store = new ArtifactStore(runId);
+    const spec = validSpec();
     const markerPath = path.join(store.runDirectory, "pipeline-active.json");
     const baseRoleRunner = roundReviews(
       [{ correctness: approve, systems: approve }],
@@ -2689,7 +2690,7 @@ describe("runPipeline", () => {
 
     const result = await runPipeline(
       repo,
-      validSpec(),
+      spec,
       dependencies({ runId, roleRunner }),
     );
 
@@ -2704,6 +2705,7 @@ describe("runPipeline", () => {
       "logs/role-reviewer-correctness-round1.log",
       "logs/role-reviewer-systems-round1.log",
     ]);
+    await expect(store.readPipelineArtifact(runId, "delegation-spec")).resolves.toEqual(spec);
     await expect(readFile(
       path.join(store.runDirectory, "logs", "role-reviewer-correctness-round1.log"),
       "utf8",

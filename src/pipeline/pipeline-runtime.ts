@@ -127,7 +127,7 @@ type FixRunResult =
     roleLogRefs: string[];
   };
 
-type StructuredRoleRunResult<T> =
+export type StructuredRoleRunResult<T> =
   | { ok: true; report: T; roleLogRefs: string[] }
   | {
     ok: false;
@@ -275,7 +275,7 @@ function roleArgs(args: {
 async function runArchivedRole(
   runner: (args: RoleRunArgs) => Promise<RoleRunResult>,
   args: RoleRunArgs,
-  store: ArtifactStore,
+  store: Pick<ArtifactStore, "writeLog">,
   logName: string,
 ): Promise<{ result: RoleRunResult; logRef: string }> {
   const result = await runner(args);
@@ -286,7 +286,7 @@ async function runArchivedRole(
   return { result, logRef };
 }
 
-async function runStructuredRole<T>(args: {
+export async function runStructuredRole<T>(args: {
   role: PipelineRole;
   schema: Parameters<typeof parseStructuredReport>[1];
   logName: string;
@@ -295,7 +295,7 @@ async function runStructuredRole<T>(args: {
   worktreePath: string;
   deps: PipelineDependencies;
   runId: string;
-  store: ArtifactStore;
+  store: Pick<ArtifactStore, "writeLog">;
   runStart?: RunStartContext;
   gitObjectAccess?: LinkedWorktreeGitAccess;
 }): Promise<StructuredRoleRunResult<T>> {
@@ -1270,6 +1270,7 @@ async function runPipelineWithLease(
     },
   });
   const store = new ArtifactStore(attempt.runId);
+  await store.writePipelineArtifact("delegation-spec", spec);
   if (attempt.status !== "verified-candidate" || attempt.candidate === null) {
     if (slicedMarkerEstablished) await store.clearPipelineActiveMarker();
     // Propagate the attempt's own classification (e.g. verification-failure for a

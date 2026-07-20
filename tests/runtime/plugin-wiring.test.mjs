@@ -19,6 +19,11 @@ describe("P0-A plugin wiring", () => {
     }, "Claude plugin must register the packaged runtime bootstrap without a shell");
     assert.ok(fs.statSync(`${root}/runtime/bootstrap.mjs`).isFile(), "bootstrap must ship");
     assert.ok(fs.statSync(`${root}/runtime/server.mjs`).isFile(), "server bundle must ship");
+    const serverBundle = read("runtime/server.mjs");
+    assert.equal(serverBundle.includes("/Projects/active/"), false,
+      "server bundle must not embed a checkout-specific dependency path");
+    assert.equal(serverBundle.includes("/.claude/plugins/"), false,
+      "server bundle must not embed a plugin-worktree path");
     if (process.platform !== "win32") {
       assert.ok(fs.statSync(`${root}/scripts/build-runtime.sh`).mode & 0o111, "build wrapper must be executable");
     }

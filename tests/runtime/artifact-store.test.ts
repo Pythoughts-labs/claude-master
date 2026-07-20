@@ -21,7 +21,6 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttemptResult, CandidateArtifact } from "../../src/protocol/attempt-result.js";
-import type { AutopilotDecisionEligibilityV1 } from "../../src/protocol/candidate-decision.js";
 import { ArtifactStore } from "../../src/runtime/artifact-store.js";
 import {
   buildRunManifest,
@@ -33,6 +32,15 @@ import {
   registerSecretValue,
 } from "../../src/runtime/redaction.js";
 import { scrubbedGitEnv } from "./helpers/git-fixture-env.js";
+import {
+  eligibilityInputFromArtifacts,
+  evaluateAutopilotEligibility,
+} from "../../src/autopilot/autopilot-eligibility.js";
+import {
+  advisorReport,
+  pipelineResult,
+  reviewSnapshot,
+} from "./pipeline/autopilot-fixtures.js";
 
 const filesystemHooks = vi.hoisted(() => ({
   beforeOpen: undefined as undefined | ((filename: string) => Promise<void>),
@@ -193,6 +201,128 @@ afterEach(async () => {
 });
 
 describe("ArtifactStore", () => {
+  it("atomically persists hash-bound advisor and eligibility artifacts without rewriting PipelineResult", async () => {
+    const runId = "run-post-pipeline-autopilot";
+    const store = new ArtifactStore(runId);
+    const pipeline = pipelineResult(runId);
+    const snapshot = reviewSnapshot(runId);
+    await store.writePipelineArtifact("pipeline-result", pipeline);
+    await store.writeReviewSnapshot(snapshot);
+    const pipelinePath = join(store.runDirectory, "pipeline", "pipeline-result.json");
+    const pipelineBefore = await readFile(pipelinePath, "utf8");
+    const eligibility = evaluateAutopilotEligibility(eligibilityInputFromArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisor: advisorReport,
+      evaluatedAt: "2026-07-20T12:00:00.000Z",
+    }));
+
+    const hashes = await store.writePostPipelineAutopilotArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisorReport,
+      eligibility,
+    });
+
+    expect(hashes.advisorReportHash).toBe(eligibility.advisorReportHash);
+    expect(hashes.eligibilityRecordHash).toMatch(/^[0-9a-f]{64}$/u);
+    await expect(store.readAdvisorReport(runId)).resolves.toEqual(advisorReport);
+    await expect(store.readAutopilotEligibility(runId)).resolves.toEqual(eligibility);
+    expect(await readFile(pipelinePath, "utf8")).toBe(pipelineBefore);
+
+    const candidate = pipeline.attempt.candidate!;
+    await store.writeAutopilotDecision(
+      candidate,
+      eligibility,
+      "2026-07-20T12:01:00.000Z",
+    );
+    await expect(store.readCandidateDecision(runId)).resolves.toMatchObject({
+      authority: "autopilot-policy",
+      candidateManifestHash: candidate.manifestHash,
+      evidenceHash: hashes.eligibilityRecordHash,
+    });
+
+    await rm(join(store.runDirectory, "pipeline", "post-pipeline-autopilot.json"));
+    await expect(store.readAdvisorReport(runId)).resolves.toBeNull();
+    await expect(store.readAutopilotEligibility(runId)).resolves.toBeNull();
+  });
+
+  it("publishes neither post-pipeline record when the single atomic publication fails", async () => {
+    const runId = "run-post-pipeline-atomic-failure";
+    const store = new ArtifactStore(runId);
+    const pipeline = pipelineResult(runId);
+    const snapshot = reviewSnapshot(runId);
+    await store.writePipelineArtifact("pipeline-result", pipeline);
+    await store.writeReviewSnapshot(snapshot);
+    const pipelinePath = join(store.runDirectory, "pipeline", "pipeline-result.json");
+    const pipelineBefore = await readFile(pipelinePath, "utf8");
+    const eligibility = evaluateAutopilotEligibility(eligibilityInputFromArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisor: advisorReport,
+      evaluatedAt: "2026-07-20T12:00:00.000Z",
+    }));
+    filesystemHooks.beforeLink = async (_source, destination) => {
+      if (!destination.endsWith("post-pipeline-autopilot.json")) return;
+      const error = new Error("injected atomic publication failure") as NodeJS.ErrnoException;
+      error.code = "EIO";
+      throw error;
+    };
+
+    await expect(store.writePostPipelineAutopilotArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisorReport,
+      eligibility,
+    })).rejects.toThrow(/injected atomic publication failure/u);
+    filesystemHooks.beforeLink = undefined;
+
+    await expect(store.readAdvisorReport(runId)).resolves.toBeNull();
+    await expect(store.readAutopilotEligibility(runId)).resolves.toBeNull();
+    expect(await readFile(pipelinePath, "utf8")).toBe(pipelineBefore);
+  });
+
+  it("never treats a partial post-pipeline envelope as eligible", async () => {
+    const runId = "run-post-pipeline-partial";
+    const store = new ArtifactStore(runId);
+    await store.writePipelineArtifact("post-pipeline-autopilot", {
+      artifactVersion: "1",
+      advisorReport,
+      advisorReportHash: "f".repeat(64),
+    });
+
+    await expect(store.readAdvisorReport(runId)).rejects.toThrow(/artifacts are invalid/u);
+    await expect(store.readAutopilotEligibility(runId)).rejects.toThrow(/artifacts are invalid/u);
+  });
+
+  it("rejects caller-forged or non-strict post-pipeline eligibility", async () => {
+    const runId = "run-forged-post-pipeline-autopilot";
+    const store = new ArtifactStore(runId);
+    const pipeline = pipelineResult(runId);
+    const snapshot = reviewSnapshot(runId);
+    await store.writePipelineArtifact("pipeline-result", pipeline);
+    await store.writeReviewSnapshot(snapshot);
+    const eligibility = evaluateAutopilotEligibility(eligibilityInputFromArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisor: advisorReport,
+      evaluatedAt: "2026-07-20T12:00:00.000Z",
+    }));
+
+    await expect(store.writePostPipelineAutopilotArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisorReport,
+      eligibility: { ...eligibility, eligible: false },
+    })).rejects.toThrow(/eligibility/u);
+    await expect(store.writePostPipelineAutopilotArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisorReport,
+      eligibility: { ...eligibility, extra: true } as unknown as typeof eligibility,
+    })).rejects.toThrow(/eligibility/u);
+  });
+
   it("redacts secrets in persisted pipeline artifacts", async () => {
     const runId = "run-pipeline-redaction";
     const secret = "sk-pipeline-secret-12345678";
@@ -610,32 +740,33 @@ describe("ArtifactStore", () => {
       .toEqual(expected);
   });
 
-  it("writes accepted autopilot decisions from validated candidate and eligibility records", async () => {
+  it("writes accepted autopilot decisions only from the current archived eligibility record", async () => {
     const runId = "run-autopilot-decision-v2";
     const store = new ArtifactStore(runId);
+    const pipeline = pipelineResult(runId);
+    const snapshot = reviewSnapshot(runId);
+    const candidate = pipeline.attempt.candidate!;
     await store.writeResult(sampleResult(runId));
-    const candidate: CandidateArtifact = {
-      baseCommitOid: "a".repeat(40),
-      candidateTreeOid: "b".repeat(40),
-      candidateCommitOid: "c".repeat(40),
-      anchorRef: `refs/claude-architect/candidates/${runId}`,
-      manifestHash: emptyCandidateManifestHash,
-      changedPaths: [],
-      patch: "",
-    };
-    const eligibility: AutopilotDecisionEligibilityV1 = {
-      eligibilityVersion: "1",
-      eligible: true,
-      candidateManifestHash: candidate.manifestHash,
-      evidenceHash: "b".repeat(64),
-      policyVersion: "1",
-    };
+    await store.writePipelineArtifact("pipeline-result", pipeline);
+    await store.writeReviewSnapshot(snapshot);
+    const eligibility = evaluateAutopilotEligibility(eligibilityInputFromArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisor: advisorReport,
+      evaluatedAt: "2026-07-14T12:00:00.000Z",
+    }));
+    const hashes = await store.writePostPipelineAutopilotArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisorReport,
+      eligibility,
+    });
     const persisted = {
       decisionVersion: "2",
       decision: "accepted",
       authority: "autopilot-policy",
       candidateManifestHash: candidate.manifestHash,
-      evidenceHash: eligibility.evidenceHash,
+      evidenceHash: hashes.eligibilityRecordHash,
       policyVersion: "1",
       recordedAt: "2026-07-14T12:00:00.000Z",
     };
@@ -650,33 +781,44 @@ describe("ArtifactStore", () => {
     expect(JSON.parse(await readFile(join(store.runDirectory, "decision.json"), "utf8")))
       .toEqual(persisted);
 
-    await expect(store.writeAutopilotDecision(candidate, {
-      ...eligibility,
+    await writeFile(join(store.runDirectory, "decision.json"), JSON.stringify({
+      ...persisted,
       evidenceHash: "c".repeat(64),
-    }, "2026-07-14T12:02:00.000Z")).rejects.toMatchObject({
-      detail: { toolError: "decision-conflict" },
-    });
+    }));
+    await expect(store.writeAutopilotDecision(
+      candidate,
+      eligibility,
+      "2026-07-14T12:02:00.000Z",
+    )).rejects.toMatchObject({ detail: { toolError: "decision-conflict" } });
+
+    await rm(join(store.runDirectory, "pipeline", "post-pipeline-autopilot.json"));
+    await expect(store.writeAutopilotDecision(
+      candidate,
+      eligibility,
+      "2026-07-14T12:03:00.000Z",
+    )).rejects.toThrow(/eligibility is invalid/u);
   });
 
   it("rejects forged or ineligible autopilot provenance", async () => {
     const runId = "run-autopilot-forgery";
     const store = new ArtifactStore(runId);
-    const candidate: CandidateArtifact = {
-      baseCommitOid: "a".repeat(40),
-      candidateTreeOid: "b".repeat(40),
-      candidateCommitOid: "c".repeat(40),
-      anchorRef: `refs/claude-architect/candidates/${runId}`,
-      manifestHash: emptyCandidateManifestHash,
-      changedPaths: [],
-      patch: "",
-    };
-    const eligibility: AutopilotDecisionEligibilityV1 = {
-      eligibilityVersion: "1",
-      eligible: true,
-      candidateManifestHash: candidate.manifestHash,
-      evidenceHash: "b".repeat(64),
-      policyVersion: "1",
-    };
+    const pipeline = pipelineResult(runId);
+    const snapshot = reviewSnapshot(runId);
+    const candidate = pipeline.attempt.candidate!;
+    await store.writePipelineArtifact("pipeline-result", pipeline);
+    await store.writeReviewSnapshot(snapshot);
+    const eligibility = evaluateAutopilotEligibility(eligibilityInputFromArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisor: advisorReport,
+      evaluatedAt: "2026-07-14T12:00:00.000Z",
+    }));
+    await store.writePostPipelineAutopilotArtifacts({
+      pipelineResult: pipeline,
+      reviewSnapshot: snapshot,
+      advisorReport,
+      eligibility,
+    });
 
     await expect(store.writeAutopilotDecision(candidate, {
       ...eligibility,
@@ -689,10 +831,14 @@ describe("ArtifactStore", () => {
       ...eligibility,
       candidateManifestHash: "f".repeat(64),
     }, "2026-07-14T12:00:00.000Z")).rejects.toThrow(/eligibility is invalid/u);
+    await expect(store.writeAutopilotDecision({
+      ...candidate,
+      candidateTreeOid: "f".repeat(40),
+    }, eligibility, "2026-07-14T12:00:00.000Z")).rejects.toThrow(/eligibility is invalid/u);
     await expect(store.writeAutopilotDecision(candidate, {
       ...eligibility,
       eligible: false,
-    } as unknown as AutopilotDecisionEligibilityV1, "2026-07-14T12:00:00.000Z"))
+    }, "2026-07-14T12:00:00.000Z"))
       .rejects.toThrow(/eligibility is invalid/u);
     await expect(store.readCandidateDecision(runId)).resolves.toBeNull();
   });
