@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttemptResult } from "../../src/protocol/attempt-result.js";
-import { ArtifactStore } from "../../src/runtime/artifact-store.js";
+import { ArtifactStore, pruneRuns } from "../../src/runtime/artifact-store.js";
 import {
   buildRunManifest,
   sanitizeRunManifest,
@@ -879,6 +879,19 @@ describe("ArtifactStore", () => {
     const result = await oldStore.prune({ maxAgeMs: 1_000, maxBytes: Number.MAX_SAFE_INTEGER });
 
     expect(result.removed).toContain("run-old");
+    await expect(stat(oldDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reclaims over-age runs through the cross-run pruneRuns wrapper", async () => {
+    const oldStore = new ArtifactStore("run-wrapper-old");
+    await writePrunableResult(oldStore, "run-wrapper-old", sampleResult("run-wrapper-old"));
+    const oldDirectory = join(process.env.CLAUDE_PLUGIN_DATA!, "runs", "run-wrapper-old");
+    const oldTime = new Date(Date.now() - 60_000);
+    await utimes(oldDirectory, oldTime, oldTime);
+
+    const result = await pruneRuns({ maxAgeMs: 1_000, maxBytes: Number.MAX_SAFE_INTEGER });
+
+    expect(result.removed).toContain("run-wrapper-old");
     await expect(stat(oldDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 

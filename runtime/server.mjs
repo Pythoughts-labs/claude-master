@@ -27577,6 +27577,13 @@ var ArtifactStore = class {
     return { removed: [...removed], retained };
   }
 };
+var DEFAULT_PRUNE_POLICY = {
+  maxAgeMs: 14 * 24 * 60 * 60 * 1e3,
+  maxBytes: 1024 * 1024 * 1024
+};
+async function pruneRuns(policy = DEFAULT_PRUNE_POLICY, dependencies = {}) {
+  return new ArtifactStore("prune-sweep").prune(policy, dependencies);
+}
 
 // src/runtime/reproducibility.ts
 import { readFile as readFile2 } from "node:fs/promises";
@@ -33242,6 +33249,11 @@ async function start(dependencies = {}) {
     return;
   }
   await (dependencies.recoverStaleRuns ?? recoverStaleRuns)();
+  try {
+    await (dependencies.pruneRuns ?? pruneRuns)();
+  } catch (error2) {
+    console.error(`Claude Architect run pruning skipped: ${error2 instanceof Error ? error2.message : String(error2)}`);
+  }
   const server = new McpServer({ name: "claude-architect", version: RUNTIME_VERSION });
   server.registerTool(
     "delegate",

@@ -1384,3 +1384,30 @@ export class ArtifactStore {
     return { removed: [...removed], retained };
   }
 }
+
+/**
+ * Default retention for the startup run-archive sweep. Terminal runs older than
+ * ~14 days, or the oldest terminal runs once the archive exceeds ~1 GiB, are
+ * reclaimed. `prune()` always retains active, incomplete, and undecided runs
+ * regardless of these limits. These are deliberate constants, not configuration:
+ * they are the minimal fix for unbounded run-log growth, and the runtime has no
+ * env-override convention to follow.
+ */
+export const DEFAULT_PRUNE_POLICY: PrunePolicy = {
+  maxAgeMs: 14 * 24 * 60 * 60 * 1000,
+  maxBytes: 1024 * 1024 * 1024,
+};
+
+/**
+ * Prune the shared run archive across every run. `ArtifactStore.prune` reads the
+ * runs root and ignores its instance run id, so this thin wrapper expresses the
+ * cross-run intent without fabricating a per-run store at the call site. The
+ * `prune-sweep` id is inert: it names no real run and prune never reads or writes
+ * its run directory.
+ */
+export async function pruneRuns(
+  policy: PrunePolicy = DEFAULT_PRUNE_POLICY,
+  dependencies: PruneDependencies = {},
+): Promise<PruneResult> {
+  return new ArtifactStore("prune-sweep").prune(policy, dependencies);
+}

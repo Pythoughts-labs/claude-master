@@ -31,7 +31,7 @@ Verification commands run locally in a clean worktree. A command whose spec allo
 
 ## Retention and deletion
 
-The artifact store supports age/size pruning and crash-safe cleanup, but the plugin documentation does not promise a universal automatic retention period. Local evidence remains until pruning or user removal; Git candidate refs may keep objects reachable. Provider-side retention is controlled by the chosen model provider and account plan, not by Claude Architect.
+The artifact store applies age/size pruning with crash-safe cleanup. The MCP server prunes the run archive once at startup, after crash recovery: it reclaims terminal runs older than 14 days, and the oldest terminal runs once the archive exceeds 1 GiB, while always retaining active, incomplete, and undecided runs. This bounds unattended growth but does not promise an exact retention period — a single long-lived session is not pruned until its next startup, and Git candidate refs may keep objects reachable. Local evidence otherwise remains until the next prune or user removal. Provider-side retention is controlled by the chosen model provider and account plan, not by Claude Architect.
 
 To remove local data, first stop Claude Code and ensure no delegation is active. Uninstall/disable the plugin through Claude Code, remove its plugin data directory, and inspect/delete remaining `refs/claude-architect/candidates/*` if no audit or recovery need remains. Remove provider CLI caches, sessions, and credentials using each CLI's instructions. Deleting local data does not delete provider-side prompts, logs, or model-service records; use the provider's controls for those requests.
 
