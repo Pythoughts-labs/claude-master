@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, link, lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import path from "node:path";
-import type { PlatformServices } from "../platform/platform-services.js";
+import type { CheckoutLock, PlatformServices } from "../platform/platform-services.js";
 import { getPlatformServices } from "../platform/select-platform.js";
 import { resolveStateDir } from "../runtime/state-dir.js";
 import { RuntimeError } from "../util/errors.js";
@@ -367,6 +367,48 @@ export class WorkflowBranchManager {
     }
   }
 
+  async load(workflowId: string): Promise<WorkflowBranchIdentity | null> {
+    if (!WORKFLOW_ID.test(workflowId)) fail("ownership-mismatch");
+    let handle;
+    try {
+      const ownershipPath = this.ownershipPath(workflowId);
+      handle = await open(ownershipPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      const metadata = await handle.stat();
+      const named = await lstat(ownershipPath);
+      if (!metadata.isFile()
+        || metadata.size > 32_768
+        || !named.isFile()
+        || named.isSymbolicLink()
+        || named.dev !== metadata.dev
+        || named.ino !== metadata.ino) return null;
+      const parsed = JSON.parse(await handle.readFile("utf8")) as Partial<WorkflowBranchIdentity>;
+      if (parsed.ownershipVersion !== OWNERSHIP_VERSION
+        || parsed.workflowId !== workflowId
+        || typeof parsed.checkoutPath !== "string"
+        || typeof parsed.gitCommonDir !== "string"
+        || typeof parsed.repositoryIdentity !== "string"
+        || typeof parsed.worktreePath !== "string"
+        || typeof parsed.worktreeGitDir !== "string"
+        || typeof parsed.branch !== "string"
+        || parsed.branchRef !== `refs/heads/${parsed.branch}`
+        || typeof parsed.baseRef !== "string"
+        || typeof parsed.baseBranch !== "string"
+        || !isOid(parsed.baseCommitOid ?? "")
+        || parsed.remote !== "origin"
+        || typeof parsed.remoteUrl !== "string"
+        || typeof parsed.ownerRepo !== "string") return null;
+      const identity = parsed as WorkflowBranchIdentity;
+      return await this.readOwnership(identity) ? identity : null;
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+        return null;
+      }
+      return null;
+    } finally {
+      await handle?.close();
+    }
+  }
+
   private async ownershipExists(workflowId: string): Promise<boolean> {
     try {
       await lstat(this.ownershipPath(workflowId));
@@ -636,6 +678,7 @@ export class WorkflowBranchManager {
   private async validateLocked(
     identity: WorkflowBranchIdentity,
     expectedHead: string,
+    allowStagedBytes = false,
   ): Promise<BranchRevalidationResult> {
     if (!await this.readOwnership(identity)) return { ok: false, classification: "ownership-mismatch" };
     let checkout;
@@ -694,7 +737,9 @@ export class WorkflowBranchManager {
       "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none",
     ]);
     if (!succeeded(status)) return { ok: false, classification: "git-command-failed" };
-    if (status.stdout !== "") return { ok: false, classification: "dirty-worktree" };
+    if (!allowStagedBytes && status.stdout !== "") {
+      return { ok: false, classification: "dirty-worktree" };
+    }
 
     const inProgress = await checkInProgressOperation(identity.worktreePath, this.runGit);
     if (inProgress === "in-progress") return { ok: false, classification: "in-progress-operation" };
@@ -777,6 +822,44 @@ export class WorkflowBranchManager {
       } catch {
         return { ok: false, classification: "git-command-failed" };
       }
+    }
+  }
+
+  async revalidateUnderLock(
+    identity: WorkflowBranchIdentity,
+    expectedHead: string,
+    borrowedCheckoutLock: CheckoutLock,
+  ): Promise<BranchRevalidationResult> {
+    if (!isOid(expectedHead)
+      || borrowedCheckoutLock.repositoryIdentity !== identity.repositoryIdentity) {
+      return { ok: false, classification: "repository-identity-changed" };
+    }
+    try {
+      return await this.validateLocked(identity, expectedHead);
+    } catch {
+      return { ok: false, classification: "git-command-failed" };
+    }
+  }
+
+  /**
+   * Revalidate every durable repository and branch identity while preserving a
+   * caller-proven staged candidate. The caller must prove the exact index,
+   * worktree, and status bytes separately while retaining the same checkout
+   * lease.
+   */
+  async revalidateForStagedPromotionUnderLock(
+    identity: WorkflowBranchIdentity,
+    expectedHead: string,
+    borrowedCheckoutLock: CheckoutLock,
+  ): Promise<BranchRevalidationResult> {
+    if (!isOid(expectedHead)
+      || borrowedCheckoutLock.repositoryIdentity !== identity.repositoryIdentity) {
+      return { ok: false, classification: "repository-identity-changed" };
+    }
+    try {
+      return await this.validateLocked(identity, expectedHead, true);
+    } catch {
+      return { ok: false, classification: "git-command-failed" };
     }
   }
 

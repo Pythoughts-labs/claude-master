@@ -679,6 +679,32 @@ export class WorkflowStore {
     return structuredClone(this.withJournalCheckpoint(state, journal));
   }
 
+  /**
+   * Hold the workflow writer lease while a caller performs an identity-sensitive
+   * operation. The callback receives the current, checkpointed state only after
+   * the expected revision has been revalidated under that lease.
+   */
+  async withLockedState<T>(
+    expectedRevision: number,
+    operation: (state: AutopilotWorkflowState) => Promise<T>,
+  ): Promise<T> {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw workflowError("expected revision is invalid", "workflow-revision-conflict");
+    }
+    const directory = await this.existingWorkflowDirectory();
+    return await this.withWriterLock(directory, async () => {
+      const persisted = await this.readFromDirectory(directory);
+      if (persisted === null || persisted.revision !== expectedRevision) {
+        throw workflowError("workflow revision does not match", "workflow-revision-conflict");
+      }
+      const current = this.withJournalCheckpoint(
+        persisted,
+        await this.readJournalFromDirectory(directory),
+      );
+      return await operation(structuredClone(current));
+    });
+  }
+
   async readIntentJournal(): Promise<WorkflowIntentJournal> {
     const directory = await this.existingWorkflowDirectory();
     const state = await this.readFromDirectory(directory);

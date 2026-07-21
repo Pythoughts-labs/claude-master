@@ -124,6 +124,26 @@ describe("WorkflowStore", () => {
       .rejects.toMatchObject({ detail: { toolError: "workflow-state-conflict" } });
   });
 
+  it("holds the workflow writer lease across an identity-sensitive operation", async () => {
+    const store = await createStore("locked-state-operation");
+    let enterOperation!: () => void;
+    let releaseOperation!: () => void;
+    const entered = new Promise<void>(resolve => { enterOperation = resolve; });
+    const release = new Promise<void>(resolve => { releaseOperation = resolve; });
+    const operation = store.withLockedState(0, async state => {
+      expect(state).toMatchObject({ revision: 0, phase: "preflighting" });
+      enterOperation();
+      await release;
+      return state.workflowId;
+    });
+    await entered;
+
+    await expect(store.transition({ expectedRevision: 0, to: "running-task" }))
+      .rejects.toMatchObject({ detail: { toolError: "workflow-revision-conflict" } });
+    releaseOperation();
+    await expect(operation).resolves.toBe("locked-state-operation");
+  });
+
   it("rejects an illegal edge without changing persisted state", async () => {
     const store = await createStore("illegal-edge");
 

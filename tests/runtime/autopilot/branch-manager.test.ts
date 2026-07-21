@@ -633,6 +633,35 @@ describe("WorkflowBranchManager", () => {
     });
   });
 
+  it("revalidates ownership and remote identity without discarding staged recovery bytes", async () => {
+    const fixture = (await initFixture())!;
+    const created = await fixture.manager.create(fixture.request);
+    await writeFile(path.join(created.worktreePath, "tracked.txt"), "staged candidate bytes\n");
+    await runGit(created.worktreePath, ["add", "tracked.txt"]);
+    const lock = await getPlatformServices().acquireCheckoutLock(created.worktreePath);
+    try {
+      await expect(fixture.manager.revalidateForStagedPromotionUnderLock(
+        created,
+        created.baseCommitOid,
+        lock,
+      )).resolves.toEqual({ ok: true });
+
+      await advanceRemote(fixture);
+      await expect(fixture.manager.revalidateForStagedPromotionUnderLock(
+        created,
+        created.baseCommitOid,
+        lock,
+      )).resolves.toEqual({ ok: false, classification: "remote-base-changed" });
+
+      expect(await readFile(path.join(created.worktreePath, "tracked.txt"), "utf8"))
+        .toBe("staged candidate bytes\n");
+      expect(await runGit(created.worktreePath, ["diff", "--cached", "--name-only"]))
+        .toBe("tracked.txt");
+    } finally {
+      await lock.release();
+    }
+  });
+
   it("refuses cleanup when ownership identity is changed", async () => {
     const fixture = (await initFixture())!;
     const created = await fixture.manager.create(fixture.request);
