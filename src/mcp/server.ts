@@ -19,6 +19,8 @@ import {
   type ToolDependencies,
 } from "./tools.js";
 import { recoverStaleRuns } from "../runtime/recovery-manager.js";
+import { pruneRuns } from "../runtime/artifact-store.js";
+import { boundedRedactedDiagnostic } from "../runtime/redaction.js";
 
 const errorOutputFields = {
   ok: z.literal(false).optional(),
@@ -139,6 +141,7 @@ export const integrateCandidateInputSchema = z.object({
 
 export type ServerDependencies = ToolDependencies & DoctorDependencies & GitReadDependencies & {
   recoverStaleRuns?: typeof recoverStaleRuns;
+  pruneRuns?: typeof pruneRuns;
 };
 
 function toolOutput(value: object) {
@@ -157,6 +160,18 @@ export async function start(dependencies: ServerDependencies = {}): Promise<void
   }
 
   await (dependencies.recoverStaleRuns ?? recoverStaleRuns)();
+
+  // Reclaim aged/oversized run archives once per boot, after recovery has
+  // settled interrupted prunes. Fail-safe: a prune failure (including a lease
+  // held by a concurrent session) must never block or crash startup, so it can
+  // only log. Bounded lease waits (2.5s each) match the recovery step that
+  // already runs under leases above. Startup-only pruning does not bound a
+  // single long-lived session; that is an accepted limitation.
+  try {
+    await (dependencies.pruneRuns ?? pruneRuns)();
+  } catch (error) {
+    console.error(`Claude Architect run pruning skipped: ${boundedRedactedDiagnostic(error, 2_000)}`);
+  }
 
   const server = new McpServer({ name: "claude-architect", version: RUNTIME_VERSION });
   server.registerTool(

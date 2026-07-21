@@ -2507,8 +2507,41 @@ describe("MCP startup recovery", () => {
         serverEvents.push("recover");
         return { recovered: [], quarantined: [] };
       },
+      async pruneRuns() {
+        return { removed: [], retained: [] };
+      },
     });
 
     expect(serverEvents).toEqual(["recover", "connect"]);
+  });
+
+  it("prunes run archives after recovery and before connecting", async () => {
+    await start({
+      async recoverStaleRuns() {
+        serverEvents.push("recover");
+        return { recovered: [], quarantined: [] };
+      },
+      async pruneRuns() {
+        serverEvents.push("prune");
+        return { removed: [], retained: [] };
+      },
+    });
+
+    expect(serverEvents).toEqual(["recover", "prune", "connect"]);
+  });
+
+  it("connects even when startup pruning fails", async () => {
+    await expect(start({
+      async recoverStaleRuns() {
+        serverEvents.push("recover");
+        return { recovered: [], quarantined: [] };
+      },
+      async pruneRuns() {
+        serverEvents.push("prune");
+        throw new Error("prune failed at startup");
+      },
+    })).resolves.toBeUndefined();
+
+    expect(serverEvents).toEqual(["recover", "prune", "connect"]);
   });
 });
