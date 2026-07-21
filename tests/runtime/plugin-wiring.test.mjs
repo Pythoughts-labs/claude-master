@@ -24,6 +24,12 @@ describe("P0-A plugin wiring", () => {
       "server bundle must not embed a checkout-specific dependency path");
     assert.equal(serverBundle.includes("/.claude/plugins/"), false,
       "server bundle must not embed a plugin-worktree path");
+    for (const autopilotTool of ["autopilotStart", "autopilotStatus", "autopilotResume"]) {
+      assert.ok(
+        serverBundle.includes(`\"${autopilotTool}\"`),
+        `server bundle must register ${autopilotTool}`,
+      );
+    }
     if (process.platform !== "win32") {
       assert.ok(fs.statSync(`${root}/scripts/build-runtime.sh`).mode & 0o111, "build wrapper must be executable");
     }
@@ -146,5 +152,28 @@ describe("P0-A plugin wiring", () => {
     ]) {
       assert.ok(releaseValidator.includes(required), `release validator must check ${required}`);
     }
+  });
+
+  it("tracks only the exact shared autopilot MCP permissions", () => {
+    const settings = JSON.parse(read(".claude/settings.json"));
+    assert.deepEqual(settings, {
+      $schema: "https://json.schemastore.org/claude-code-settings.json",
+      permissions: {
+        allow: [
+          "mcp__plugin_claude-architect_runtime__autopilotStart",
+          "mcp__plugin_claude-architect_runtime__autopilotStatus",
+          "mcp__plugin_claude-architect_runtime__autopilotResume",
+        ],
+      },
+    });
+    assert.deepEqual(
+      read(".gitignore").split(/\r?\n/u).filter(line => line.startsWith(".claude")),
+      [
+        ".claude/*",
+        ".claude/settings.local.json",
+        ".claude/worktrees/",
+      ],
+    );
+    assert.match(read(".gitignore"), /^!\.claude\/settings\.json$/mu);
   });
 });

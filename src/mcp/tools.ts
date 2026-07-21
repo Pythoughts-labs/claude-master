@@ -1,4 +1,15 @@
 import { createHash } from "node:crypto";
+import {
+  AutopilotController,
+  AutopilotControllerError,
+  type AutopilotControllerEvent,
+  type AutopilotStartResult,
+  type AutopilotStatusResult,
+} from "../autopilot/autopilot-controller.js";
+import { WorkflowBranchManager } from "../autopilot/branch-manager.js";
+import { CandidatePromoter } from "../autopilot/candidate-promoter.js";
+import { FinalBranchReviewer } from "../autopilot/final-branch-reviewer.js";
+import { WorkflowStore } from "../autopilot/workflow-store.js";
 import { git as runGit } from "../git/git-exec.js";
 import { applyCandidateTree as applyTree } from "../integrate/controlled-integrator.js";
 import type { CheckoutLock, PlatformServices } from "../platform/platform-services.js";
@@ -16,7 +27,7 @@ import type {
 } from "../protocol/candidate-decision.js";
 import type { DelegationSpec } from "../protocol/delegation-spec.js";
 import { checkVersionCompat } from "../protocol/schema-loader.js";
-import { validateSpec } from "../protocol/spec-validator.js";
+import { validateAutopilotSpec, validateSpec } from "../protocol/spec-validator.js";
 import {
   DELEGATION_SPEC_VERSION,
   PROTOCOL_VERSION,
@@ -39,6 +50,8 @@ import type { RunManifest } from "../runtime/run-manifest.js";
 import { redact } from "../runtime/redaction.js";
 import { NestedDelegationError, RuntimeError } from "../util/errors.js";
 import { AcceptanceVerifier } from "../verify/acceptance-verifier.js";
+import { runAdvisorStage } from "../pipeline/advisor-stage.js";
+import { GitHubCliAdapter } from "../ship/github-cli-adapter.js";
 import { boundIgnoredPathEvidence, withRepoLock } from "./serialize.js";
 
 export type RunDecision = CandidateDecision;
@@ -70,6 +83,13 @@ export interface ToolDependencies {
   now?: () => Date;
   /** Host progress reporting for long-running delegate calls. */
   onProgress?: (message: string) => void;
+  /** Host cancellation for long-running calls. */
+  abortSignal?: AbortSignal;
+  /** Injectable controller seam for hermetic MCP protocol tests. */
+  autopilotControllerFactory?: (context: {
+    onProgress?: (message: string) => void;
+    abortSignal?: AbortSignal;
+  }) => Pick<AutopilotController, "start" | "status" | "resume">;
 }
 
 export interface ToolErrorResult {
@@ -116,6 +136,166 @@ function errorResult(error: unknown): ToolErrorResult {
     : "runtime-error";
   const diagnostic = error instanceof Error ? error.message : String(error);
   return { ok: false, error: code, diagnostic: redact(diagnostic) };
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw runtimeError("autopilot request was cancelled", "cancelled");
+}
+
+function createAutopilotController(deps: ToolDependencies): Pick<
+  AutopilotController,
+  "start" | "status" | "resume"
+> {
+  const context = {
+    ...(deps.onProgress === undefined ? {} : { onProgress: deps.onProgress }),
+    ...(deps.abortSignal === undefined ? {} : { abortSignal: deps.abortSignal }),
+  };
+  if (deps.autopilotControllerFactory !== undefined) {
+    return deps.autopilotControllerFactory(context);
+  }
+
+  const ps = services(deps);
+  const branchManager = new WorkflowBranchManager({ platformServices: ps });
+  const workflowStore = (workflowId: string) => new WorkflowStore(workflowId);
+  const configured = deps.attemptDependencies ?? { verifier: new AcceptanceVerifier() };
+  const attemptDependencies: AttemptRuntimeDependencies = {
+    ...configured,
+    ps,
+    verifier: configured.verifier ?? new AcceptanceVerifier(),
+    ...(deps.abortSignal === undefined ? {} : { abortSignal: deps.abortSignal }),
+    ...(deps.onProgress === undefined ? {} : { onPhase: deps.onProgress }),
+  };
+  const pipelineDependencies: PipelineDependencies = {
+    ...attemptDependencies,
+    registry,
+    ...(deps.runAttempt === undefined ? {} : { runAttempt: deps.runAttempt }),
+  };
+
+  return new AutopilotController({
+    workflowLock: {
+      runExclusive: (workflowId, operation) => withRepoLock(`autopilot:${workflowId}`, operation),
+    },
+    workflowStore,
+    repositoryIdentity: async checkoutPath => {
+      const canonical = await ps.canonicalizePath(checkoutPath);
+      return canonical.gitCommonDir ?? canonical.canonical;
+    },
+    branchManager,
+    pipelineRunner: {
+      run: (checkoutPath, spec) => (deps.runPipeline ?? executePipeline)(
+        checkoutPath,
+        spec,
+        pipelineDependencies,
+      ),
+    },
+    reviewSnapshotter: {
+      async create({ branch, pipelineResult }) {
+        const store = new ArtifactStore(pipelineResult.runId);
+        const snapshot = await createReviewSnapshot({
+          runId: pipelineResult.runId,
+          repoRoot: branch.worktreePath,
+          repositoryIdentity: branch.repositoryIdentity,
+          store,
+          platformServices: ps,
+          git: deps.git ?? runGit,
+        });
+        await store.writeReviewSnapshot(snapshot);
+        return snapshot;
+      },
+    },
+    eligibilityEvaluator: {
+      async evaluate({ branch, task, pipelineResult, reviewSnapshot }) {
+        const result = await runAdvisorStage({
+          runId: pipelineResult.runId,
+          spec: task.delegation,
+          worktreePath: branch.worktreePath,
+          deps: pipelineDependencies,
+          evaluatedAt: (deps.now ?? (() => new Date()))().toISOString(),
+          pipelineResult,
+          reviewSnapshot,
+        });
+        return result.eligibility;
+      },
+    },
+    promoter: new CandidatePromoter({
+      platformServices: ps,
+      branchManager,
+      workflowStore,
+    }),
+    finalBranchReviewer: new FinalBranchReviewer({
+      platformServices: ps,
+      branchManager,
+      workflowStore,
+    }),
+    hostingAdapter: new GitHubCliAdapter(),
+    emit: (event: AutopilotControllerEvent) => deps.onProgress?.(event),
+  });
+}
+
+function autopilotErrorResult(error: unknown): ToolErrorResult {
+  const classification = error instanceof AutopilotControllerError
+    ? error.classification
+    : error instanceof RuntimeError && typeof error.detail?.classification === "string"
+      ? error.detail.classification
+      : undefined;
+  if (classification === undefined) return errorResult(error);
+  const diagnostic = error instanceof Error ? error.message : String(error);
+  return { ok: false, error: classification, diagnostic: redact(diagnostic) };
+}
+
+export async function handleAutopilotStart(
+  checkoutPath: string,
+  input: unknown,
+  deps: ToolDependencies = {},
+): Promise<
+  | { ok: true; result: AutopilotStartResult }
+  | { ok: false; error: "invalid-spec"; validationErrors: Array<{ path: string; message: string }> }
+  | ToolErrorResult
+> {
+  const validation = validateAutopilotSpec(input);
+  if (!validation.ok) {
+    return { ok: false, error: "invalid-spec", validationErrors: validation.errors };
+  }
+  try {
+    throwIfAborted(deps.abortSignal);
+    const result = await createAutopilotController(deps).start(checkoutPath, validation.spec);
+    throwIfAborted(deps.abortSignal);
+    return { ok: true, result };
+  } catch (error) {
+    return autopilotErrorResult(error);
+  }
+}
+
+export async function handleAutopilotStatus(
+  checkoutPath: string,
+  workflowId: string,
+  deps: ToolDependencies = {},
+): Promise<{ ok: true; result: AutopilotStatusResult } | ToolErrorResult> {
+  try {
+    throwIfAborted(deps.abortSignal);
+    return {
+      ok: true,
+      result: await createAutopilotController(deps).status(checkoutPath, workflowId),
+    };
+  } catch (error) {
+    return autopilotErrorResult(error);
+  }
+}
+
+export async function handleAutopilotResume(
+  checkoutPath: string,
+  workflowId: string,
+  deps: ToolDependencies = {},
+): Promise<{ ok: true; result: AutopilotStatusResult } | ToolErrorResult> {
+  try {
+    throwIfAborted(deps.abortSignal);
+    const result = await createAutopilotController(deps).resume(checkoutPath, workflowId);
+    throwIfAborted(deps.abortSignal);
+    return { ok: true, result };
+  } catch (error) {
+    return autopilotErrorResult(error);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

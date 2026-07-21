@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { createServer } from "../../src/mcp/server.js";
 import { PROTOCOL_VERSION } from "../../src/protocol/versions.js";
 
 const bootstrapPath = fileURLToPath(new URL("../../runtime/bootstrap.mjs", import.meta.url));
@@ -40,6 +43,34 @@ afterEach(async () => {
 });
 
 describe("MCP server handshake", () => {
+  it("advertises the source autopilot lifecycle schemas", async () => {
+    const server = await createServer({
+      recoverStaleRuns: async () => ({ recovered: [], skipped: [] }),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: "claude-architect-handshake-test", version: "1.0.0" },
+      { capabilities: {} },
+    );
+    await client.connect(clientTransport);
+    try {
+      const listed = await client.listTools();
+      const autopilot = listed.tools.filter(tool => tool.name.startsWith("autopilot"));
+      expect(autopilot.map(tool => tool.name).sort()).toEqual([
+        "autopilotResume",
+        "autopilotStart",
+        "autopilotStatus",
+      ]);
+      expect(autopilot.every(tool => tool.inputSchema.type === "object")).toBe(true);
+      expect(autopilot.find(tool => tool.name === "autopilotStatus")?.annotations?.readOnlyHint)
+        .toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("lists lifecycle tools without non-protocol stdout", async () => {
     const stateRoot = await mkdtemp(path.join(tmpdir(), "ca-handshake-"));
     temporaryPaths.push(stateRoot);
@@ -135,6 +166,9 @@ describe("MCP server handshake", () => {
       const mismatchDiagnostic = JSON.stringify(mismatched);
 
       expect(names).toEqual([
+        "autopilotResume",
+        "autopilotStart",
+        "autopilotStatus",
         "decideCandidate",
         "delegate",
         "delegatePipeline",
