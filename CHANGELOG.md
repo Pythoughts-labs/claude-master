@@ -6,6 +6,8 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-21
+
 ### Added
 
 - The MCP server now prunes the run archive once per boot, after crash
@@ -13,6 +15,12 @@ All notable changes to Claude Architect are recorded here. The format follows
   the archive exceeds 1 GiB, are reclaimed; active, incomplete, and undecided
   runs are always retained. A prune failure only logs a redacted diagnostic and
   never blocks startup.
+
+### Changed
+
+- Prune-failure and recovery quarantine diagnostics now share a single bounded
+  redaction helper (`boundedRedactedDiagnostic`) so filesystem and Git error
+  messages are stripped of repository paths before any runtime log.
 
 ## [0.26.0] - 2026-07-19
 
