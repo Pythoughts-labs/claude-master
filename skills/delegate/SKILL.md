@@ -256,3 +256,5 @@ After backgrounding the host returns control once; emit a single Live status
 line (the FleetView-style format above) then. Continuous status requires scheduled wakeups (about 75s apart, each a full
 turn) — only do this when the human explicitly asks for live status, tell them it
 costs a turn per update, and never poll tighter than the round cadence.
+
+Prefer the `delegation-lane` subagent path over run-dir polling; polling remains the fallback for direct calls and for lane-report recovery via `specSha256`.
