@@ -6,6 +6,18 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+- fix: a role that cannot produce parseable structured output no longer destroys
+  an independently verified candidate. The pipeline promotes and re-verifies the
+  bytes that exist and returns `human-decision-required` carrying that candidate,
+  recording in the archived result that its own review never completed. A
+  candidate whose re-verification is red is demoted so the accept gate refuses it,
+  while its bytes are retained. Previously a review or fix role failure archived
+  `status: failed` with `candidate: null`, deleted the candidate anchor, and forced
+  a full re-dispatch of work that had already passed (dogfood findings 6, 9, 10, 12).
+- fix: a review round is recorded as soon as its reviews are consolidated, so a
+  later fix failure no longer erases review work already written to
+  `pipeline/round-*.json`.
+
 - fix: the Codex Producer shell no longer starts without a `PATH`. Codex applies
   `include_only` as a filter over the inherited set, so `inherit="none"` yielded
   an empty shell environment: Producers could not resolve `node`, `npx`, or

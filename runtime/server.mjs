@@ -30297,6 +30297,116 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
         args.haltedSliceIndex ?? null
       );
     };
+    const salvagePipelineFailure = async (args) => {
+      const fallback = async () => archivePipelineFailure({
+        finalCandidateCommit: args.finalCandidateCommit,
+        reason: args.reason,
+        failure: args.failure
+      });
+      if (finalAttempt.candidate === null) return await fallback();
+      let salvagedAttempt = finalAttempt;
+      let salvagedCommit = args.finalCandidateCommit;
+      if (salvagedCommit !== finalAttempt.candidate.candidateCommitOid) {
+        const promoted = await promoteFinalCandidate({
+          checkoutPath,
+          attempt: finalAttempt,
+          initialCandidate: finalAttempt.candidate,
+          baselineCommit,
+          candidateCommit: salvagedCommit,
+          store,
+          ...args.gitObjectAccess === null ? {} : { privateObjectAccess: args.gitObjectAccess }
+        });
+        if (promoted === null) return await fallback();
+        salvagedAttempt = promoted.attempt;
+        salvagedCommit = promoted.candidateCommit;
+      }
+      if (slices.length > 0) authoritySafeToRelease = true;
+      let verified2;
+      try {
+        verified2 = await verifyCandidate({
+          checkoutPath,
+          spec,
+          deps,
+          attempt: salvagedAttempt,
+          baselineCommit,
+          candidateCommit: salvagedCommit,
+          store,
+          namespace: "salvage"
+        });
+      } catch {
+        return await fallback();
+      }
+      const manifestForArchive = await store.readManifest(attempt.runId);
+      if (!verified2.verification.pass) {
+        if (manifestForArchive === null) return await fallback();
+        const demoted = {
+          ...salvagedAttempt,
+          status: "failed",
+          failure: "verification-failure",
+          summary: args.reason,
+          unresolvedIssues: [
+            ...salvagedAttempt.unresolvedIssues,
+            args.reason,
+            "salvage re-verification failed"
+          ],
+          evidence: {
+            ...salvagedAttempt.evidence,
+            pipelineFailure: { failure: args.failure, reason: args.reason }
+          }
+        };
+        await store.promoteTerminalArtifacts({ result: demoted, manifest: manifestForArchive });
+        if (slices.length > 0) authoritySafeToRelease = true;
+        finalAttempt = demoted;
+        await store.writePipelineArtifact("verification", verified2.verification);
+        const failed = failedResult(
+          demoted,
+          rounds,
+          salvagedCommit,
+          args.reason,
+          args.failure,
+          increments,
+          pipelineSlices
+        );
+        await store.writePipelineArtifact("pipeline-result", failed);
+        return failed;
+      }
+      if (manifestForArchive === null) return await fallback();
+      salvagedAttempt = {
+        ...salvagedAttempt,
+        evidence: {
+          ...salvagedAttempt.evidence,
+          pipelineReviewIncomplete: { failure: args.failure, reason: args.reason }
+        }
+      };
+      await store.promoteTerminalArtifacts({
+        result: salvagedAttempt,
+        manifest: manifestForArchive
+      });
+      finalAttempt = salvagedAttempt;
+      await store.writePipelineArtifact("verification", verified2.verification);
+      const salvaged = {
+        runId: attempt.runId,
+        status: "human-decision-required",
+        attempt: salvagedAttempt,
+        increments,
+        slices: pipelineSlices,
+        haltedSliceIndex: null,
+        rounds,
+        verification: verified2.verification,
+        gate: {
+          decisionReady: false,
+          requiresHumanDecision: true,
+          reasons: [
+            args.reason,
+            "the candidate passed independent verification; the pipeline could not complete its own review, so the whole-branch review is the human's"
+          ]
+        },
+        finalCandidateCommit: salvagedCommit,
+        failure: null
+      };
+      await store.writePipelineArtifact("pipeline-result", salvaged);
+      return salvaged;
+    };
     if (slices.length > 0) {
       const initialNamespace = "slice-1-attempt-0";
       const initialVerification = await verifyCandidate({
@@ -30782,10 +30892,11 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
         });
         if (!reviewRun.ok) {
           const reason = `review phase did not produce valid structured output (see ${reviewRun.failedRoleLogRef})`;
-          return await archivePipelineFailure({
+          return await salvagePipelineFailure({
             finalCandidateCommit: currentCandidateCommit,
             reason,
-            failure: "producer-failure"
+            failure: "producer-failure",
+            gitObjectAccess
           });
         }
         const reviews = reviewRun.reviews.map((review) => ({
@@ -30802,10 +30913,15 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
           (finding) => finding.severity === "blocker" || finding.severity === "major"
         );
         const approved = reviewRun.reviews.every((review) => review.report.verdict === "approve");
-        if (!blocking && approved) {
-          rounds.push({ round, reviews, consolidated, fix: null, roleLogRefs: reviewRun.roleLogRefs });
-          break;
-        }
+        const roundRecord = {
+          round,
+          reviews,
+          consolidated,
+          fix: null,
+          roleLogRefs: reviewRun.roleLogRefs
+        };
+        rounds.push(roundRecord);
+        if (!blocking && approved) break;
         try {
           gitObjectAccess ??= await resolveLinkedWorktreeWritableRoots(candidateWorktree.path);
         } catch {
@@ -30828,10 +30944,11 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
           ...runStart === void 0 ? {} : { runStart }
         });
         if (!fixRun.ok) {
-          return await archivePipelineFailure({
+          return await salvagePipelineFailure({
             finalCandidateCommit: currentCandidateCommit,
             reason: `fix phase did not produce valid structured output (see ${fixRun.failedRoleLogRef})`,
-            failure: fixRun.failure
+            failure: fixRun.failure,
+            gitObjectAccess
           });
         }
         const { fix } = fixRun;
@@ -30850,13 +30967,8 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
           });
         }
         currentCandidateCommit = fix.candidateCommit;
-        rounds.push({
-          round,
-          reviews,
-          consolidated,
-          fix,
-          roleLogRefs: [...reviewRun.roleLogRefs, ...fixRun.roleLogRefs]
-        });
+        roundRecord.fix = fix;
+        roundRecord.roleLogRefs = [...reviewRun.roleLogRefs, ...fixRun.roleLogRefs];
       }
       if (currentCandidateCommit !== attempt.candidate.candidateCommitOid) {
         if (gitObjectAccess === null && slices.length === 0) {

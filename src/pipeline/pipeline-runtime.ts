@@ -1333,6 +1333,144 @@ async function runPipelineWithLease(
       );
     };
 
+    /**
+     * A role that cannot produce parseable structured output is an orchestration
+     * failure, not a verdict on the candidate. Discarding independently verified
+     * bytes for it forces a full re-dispatch of work that already passed — the
+     * single most expensive recurring loss in the delegation loop. Promote and
+     * re-verify what exists; present it for the human decision the pipeline could
+     * not complete itself. Only a candidate that fails verification is discarded.
+     */
+    const salvagePipelineFailure = async (args: {
+      finalCandidateCommit: string;
+      reason: string;
+      failure: FailureClassification;
+      gitObjectAccess: LinkedWorktreeGitAccess | null;
+    }): Promise<PipelineResult> => {
+      const fallback = async (): Promise<PipelineResult> => archivePipelineFailure({
+        finalCandidateCommit: args.finalCandidateCommit,
+        reason: args.reason,
+        failure: args.failure,
+      });
+      if (finalAttempt.candidate === null) return await fallback();
+
+      let salvagedAttempt = finalAttempt;
+      let salvagedCommit = args.finalCandidateCommit;
+      if (salvagedCommit !== finalAttempt.candidate.candidateCommitOid) {
+        const promoted = await promoteFinalCandidate({
+          checkoutPath,
+          attempt: finalAttempt,
+          initialCandidate: finalAttempt.candidate,
+          baselineCommit,
+          candidateCommit: salvagedCommit,
+          store,
+          ...(args.gitObjectAccess === null
+            ? {}
+            : { privateObjectAccess: args.gitObjectAccess }),
+        });
+        if (promoted === null) return await fallback();
+        salvagedAttempt = promoted.attempt;
+        salvagedCommit = promoted.candidateCommit;
+      }
+      if (slices.length > 0) authoritySafeToRelease = true;
+
+      let verified;
+      try {
+        verified = await verifyCandidate({
+          checkoutPath,
+          spec,
+          deps,
+          attempt: salvagedAttempt,
+          baselineCommit,
+          candidateCommit: salvagedCommit,
+          store,
+          namespace: "salvage",
+        });
+      } catch {
+        return await fallback();
+      }
+      const manifestForArchive = await store.readManifest(attempt.runId);
+      if (!verified.verification.pass) {
+        // The freshest evidence says these bytes do not verify. Record that where
+        // the accept gate reads it, or the archived run keeps advertising the
+        // stale verified-candidate status and stays acceptable. The bytes are
+        // retained; only their acceptability is withdrawn.
+        if (manifestForArchive === null) return await fallback();
+        const demoted: AttemptResult = {
+          ...salvagedAttempt,
+          status: "failed",
+          failure: "verification-failure",
+          summary: args.reason,
+          unresolvedIssues: [
+            ...salvagedAttempt.unresolvedIssues,
+            args.reason,
+            "salvage re-verification failed",
+          ],
+          evidence: {
+            ...salvagedAttempt.evidence,
+            pipelineFailure: { failure: args.failure, reason: args.reason },
+          },
+        };
+        await store.promoteTerminalArtifacts({ result: demoted, manifest: manifestForArchive });
+        if (slices.length > 0) authoritySafeToRelease = true;
+        finalAttempt = demoted;
+        await store.writePipelineArtifact("verification", verified.verification);
+        const failed = failedResult(
+          demoted,
+          rounds,
+          salvagedCommit,
+          args.reason,
+          args.failure,
+          increments,
+          pipelineSlices,
+        );
+        await store.writePipelineArtifact("pipeline-result", failed);
+        return failed;
+      }
+
+      // A human reading the archived run later must be able to see that the
+      // pipeline never reviewed this candidate. Record that durably in the
+      // result the accept path reads, not only in the transient gate.
+      if (manifestForArchive === null) return await fallback();
+      salvagedAttempt = {
+        ...salvagedAttempt,
+        evidence: {
+          ...salvagedAttempt.evidence,
+          pipelineReviewIncomplete: { failure: args.failure, reason: args.reason },
+        },
+      };
+      await store.promoteTerminalArtifacts({
+        result: salvagedAttempt,
+        manifest: manifestForArchive,
+      });
+
+      finalAttempt = salvagedAttempt;
+      await store.writePipelineArtifact("verification", verified.verification);
+      const salvaged: PipelineResult = {
+        runId: attempt.runId,
+        status: "human-decision-required",
+        attempt: salvagedAttempt,
+        increments,
+        slices: pipelineSlices,
+        haltedSliceIndex: null,
+        rounds,
+        verification: verified.verification,
+        gate: {
+          decisionReady: false,
+          requiresHumanDecision: true,
+          reasons: [
+            args.reason,
+            "the candidate passed independent verification; the pipeline could not"
+            + " complete its own review, so the whole-branch review is the human's",
+          ],
+        },
+        finalCandidateCommit: salvagedCommit,
+        failure: null,
+      };
+      await store.writePipelineArtifact("pipeline-result", salvaged);
+      return salvaged;
+    };
+
     if (slices.length > 0) {
       const initialNamespace = "slice-1-attempt-0";
       const initialVerification = await verifyCandidate({
@@ -1840,10 +1978,11 @@ async function runPipelineWithLease(
         });
         if (!reviewRun.ok) {
           const reason = `review phase did not produce valid structured output (see ${reviewRun.failedRoleLogRef})`;
-          return await archivePipelineFailure({
+          return await salvagePipelineFailure({
             finalCandidateCommit: currentCandidateCommit,
             reason,
             failure: "producer-failure",
+            gitObjectAccess,
           });
         }
 
@@ -1862,10 +2001,18 @@ async function runPipelineWithLease(
           finding => finding.severity === "blocker" || finding.severity === "major",
         );
         const approved = reviewRun.reviews.every(review => review.report.verdict === "approve");
-        if (!blocking && approved) {
-          rounds.push({ round, reviews, consolidated, fix: null, roleLogRefs: reviewRun.roleLogRefs });
-          break;
-        }
+        // Record the round as soon as its reviews are consolidated. A later fix
+        // failure must not erase review work that is already on disk; the entry
+        // is completed in place once a fix lands.
+        const roundRecord: PipelineRound = {
+          round,
+          reviews,
+          consolidated,
+          fix: null,
+          roleLogRefs: reviewRun.roleLogRefs,
+        };
+        rounds.push(roundRecord);
+        if (!blocking && approved) break;
 
         try {
           gitObjectAccess ??= await resolveLinkedWorktreeWritableRoots(candidateWorktree.path);
@@ -1890,10 +2037,13 @@ async function runPipelineWithLease(
           ...(runStart === undefined ? {} : { runStart }),
         });
         if (!fixRun.ok) {
-          return await archivePipelineFailure({
+          // The fix never landed, so the bytes here are the last reviewed
+          // candidate — salvage them rather than losing the whole round.
+          return await salvagePipelineFailure({
             finalCandidateCommit: currentCandidateCommit,
             reason: `fix phase did not produce valid structured output (see ${fixRun.failedRoleLogRef})`,
             failure: fixRun.failure,
+            gitObjectAccess,
           });
         }
         const { fix } = fixRun;
@@ -1912,13 +2062,8 @@ async function runPipelineWithLease(
           });
         }
         currentCandidateCommit = fix.candidateCommit;
-        rounds.push({
-          round,
-          reviews,
-          consolidated,
-          fix,
-          roleLogRefs: [...reviewRun.roleLogRefs, ...fixRun.roleLogRefs],
-        });
+        roundRecord.fix = fix;
+        roundRecord.roleLogRefs = [...reviewRun.roleLogRefs, ...fixRun.roleLogRefs];
       }
 
       if (currentCandidateCommit !== attempt.candidate.candidateCommitOid) {

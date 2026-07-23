@@ -88,6 +88,11 @@ async function expectRefMissing(repo: string, ref: string): Promise<void> {
   expect(result.exitCode).not.toBe(0);
 }
 
+async function expectRefPresent(repo: string, ref: string): Promise<void> {
+  const result = await git(repo, ["rev-parse", "--verify", "--quiet", ref]);
+  expect(result.exitCode).toBe(0);
+}
+
 async function initRepo(): Promise<string> {
   const directory = await realpath(await temporaryDirectory("ca-pipeline-repo-"));
   await runGit(directory, ["init", "-q"]);
@@ -1930,7 +1935,7 @@ describe("runPipeline", () => {
     await expectRefMissing(repo, `refs/claude-architect/candidates/${runId}`);
   }, 120_000);
 
-  it("archives a composed-review failure as the returned non-integrable attempt", async () => {
+  it("salvages a verified composed candidate when the review role fails", async () => {
     const repo = await initSlicedRepo();
     const runId = "pipeline-slices-composed-review-failure";
     const spec = slicedSpec();
@@ -1968,16 +1973,32 @@ describe("runPipeline", () => {
 
     const result = await runPipeline(repo, spec, deps);
 
+    // A reviewer that cannot run is an orchestration failure, not a verdict.
+    // The composed bytes still passed independent verification, so they are
+    // presented for the human review the pipeline could not perform itself.
     expect(result).toMatchObject({
-      status: "failed",
-      failure: "producer-failure",
-      attempt: {
-        status: "failed",
-        failure: "producer-failure",
-      },
+      status: "human-decision-required",
+      failure: null,
+      attempt: { status: "verified-candidate", failure: null },
     });
-    expect(result.attempt.candidate).toBeNull();
-    await expect(new ArtifactStore(runId).readResult(runId)).resolves.toEqual(result.attempt);
+    expect(result.attempt.candidate).not.toBeNull();
+    expect(result.verification?.pass).toBe(true);
+    expect(result.gate.requiresHumanDecision).toBe(true);
+    expect(result.gate.reasons[0]).toContain("review phase");
+
+    // Salvage is only worth anything if the trusted accept path can load these
+    // bytes: the archived result — not the in-memory one — is what it reads.
+    const archived = await new ArtifactStore(runId).readResult(runId);
+    expect(archived).toMatchObject({ status: "verified-candidate", failure: null });
+    expect(archived?.candidate?.candidateCommitOid).toBe(result.finalCandidateCommit);
+    const archivedManifest = await new ArtifactStore(runId).readManifest(runId);
+    expect(archivedManifest?.candidateManifestHash).toBe(archived?.candidate?.manifestHash);
+    expect(archived?.evidence.pipelineReviewIncomplete).toMatchObject({
+      failure: "producer-failure",
+    });
+    // The definitive check: the real accept gate must admit these bytes.
+    await expect(handleDecideCandidate(repo, runId, "accepted"))
+      .resolves.toEqual({ recorded: true });
   }, 120_000);
 
   it("archives an unexpected final-verification error before clearing lifecycle authority", async () => {
@@ -2033,7 +2054,7 @@ describe("runPipeline", () => {
     )).rejects.toMatchObject({ code: "ENOENT" });
   }, 120_000);
 
-  it("archives a composed-fixer failure as the returned non-integrable attempt", async () => {
+  it("salvages the reviewed composed candidate when the fixer role fails", async () => {
     const repo = await initSlicedRepo();
     const runId = "pipeline-slices-composed-fixer-failure";
     const spec = slicedSpec();
@@ -2072,17 +2093,16 @@ describe("runPipeline", () => {
 
     const result = await runPipeline(repo, spec, deps);
 
+    // The fix never landed, so these are the last reviewed bytes; the blocking
+    // finding is what the human decides on, not a reason to destroy the work.
     expect(result).toMatchObject({
-      status: "failed",
-      failure: "timeout",
-      attempt: {
-        status: "failed",
-        failure: "timeout",
-        candidate: null,
-      },
+      status: "human-decision-required",
+      failure: null,
+      attempt: { status: "verified-candidate", failure: null },
     });
-    await expect(new ArtifactStore(runId).readResult(runId)).resolves.toEqual(result.attempt);
-    await expectRefMissing(repo, `refs/claude-architect/candidates/${runId}`);
+    expect(result.attempt.candidate).not.toBeNull();
+    expect(result.gate.reasons[0]).toContain("fix phase");
+    await expectRefPresent(repo, `refs/claude-architect/candidates/${runId}`);
   }, 120_000);
 
   it("runs a completed increment, redacts and archives it, then reviews its diff", async () => {
@@ -3110,7 +3130,64 @@ describe("runPipeline", () => {
     expect(result.rounds.at(-1)?.fix).not.toBeNull();
   });
 
-  it("fails after invalid reviewer output and one invalid repair", async () => {
+  it("keeps a round whose reviews completed when its fix phase then fails", async () => {
+    const repo = await initRepo();
+    let reviewed = false;
+    const roleRunner = async (args: RoleRunArgs): Promise<RoleRunResult> => {
+      if (args.role === "reviewer-correctness") {
+        reviewed = true;
+        return success(fenced(blocker));
+      }
+      if (args.role === "fixer") {
+        return { ok: false, rawOutput: "", failure: "timeout", producerId: "stub" };
+      }
+      throw new Error(`unexpected role ${args.role}`);
+    };
+
+    const result = await runPipeline(
+      repo,
+      validSpec({ reviewers: ["correctness"], maxRounds: 1 }),
+      dependencies({ runId: "pipeline-round-retained", roleRunner }),
+    );
+
+    // Review work already on disk must appear in the result even though the
+    // round never reached a fix.
+    expect(reviewed).toBe(true);
+    expect(result.rounds).toHaveLength(1);
+    expect(result.rounds[0]?.round).toBe(1);
+    expect(result.rounds[0]?.fix).toBeNull();
+    expect(result.rounds[0]?.consolidated.findings).not.toHaveLength(0);
+  }, 120_000);
+
+  it("discards the candidate when salvage verification fails", async () => {
+    const repo = await initRepo();
+    let calls = 0;
+    const roleRunner = async (): Promise<RoleRunResult> => {
+      calls += 1;
+      return success(calls === 1 ? "not json" : "not json either");
+    };
+    // Salvage must never turn an unverifiable candidate into a decision the
+    // human can act on: a red clean room still archives and discards.
+    const verify = AcceptanceVerifier.prototype.verify;
+    vi.spyOn(AcceptanceVerifier.prototype, "verify").mockImplementation(async function (args) {
+      const report = await verify.call(this, args);
+      return { ...report, ok: false, failures: ["salvage clean room is red"] };
+    });
+
+    const result = await runPipeline(
+      repo,
+      validSpec({ reviewers: ["correctness"], maxRounds: 1 }),
+      dependencies({ runId: "pipeline-salvage-red", roleRunner }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.failure).toBe("producer-failure");
+    expect(result.gate.requiresHumanDecision).toBe(false);
+    await expect(handleDecideCandidate(repo, "pipeline-salvage-red", "accepted"))
+      .resolves.toMatchObject({ ok: false, error: "candidate-not-verified" });
+  }, 120_000);
+
+  it("salvages the candidate after invalid reviewer output and one invalid repair", async () => {
     const repo = await initRepo();
     let calls = 0;
     const roleRunner = async (): Promise<RoleRunResult> => {
@@ -3124,10 +3201,11 @@ describe("runPipeline", () => {
       dependencies({ runId: "pipeline-invalid", roleRunner }),
     );
 
-    expect(result.status).toBe("failed");
-    expect(result.gate.reasons).toEqual([
+    expect(result.status).toBe("human-decision-required");
+    expect(result.attempt.candidate).not.toBeNull();
+    expect(result.gate.reasons[0]).toBe(
       "review phase did not produce valid structured output (see logs/role-reviewer-correctness-round1.log)",
-    ]);
+    );
     expect(calls).toBe(2);
     const store = new ArtifactStore("pipeline-invalid");
     await expect(readFile(
