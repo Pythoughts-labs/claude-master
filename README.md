@@ -68,6 +68,15 @@ Open Claude Code in a Git repository and name the Producer you want:
 
 If no Producer is named, the skill asks you to choose Codex, OpenCode, Pi, or Pythinker. Pi, OpenCode, and Pythinker are harnesses that accept optional model and thinking/variant overrides; model selection within a harness lane is optional and otherwise defers to that CLI's configured default. For non-trivial work it uses the fresh-context review pipeline. Read the exact patch, findings, and verification output before deciding whether to accept.
 
+### Lanes as native subagents
+
+Dispatch a delegation through the `delegation-lane` agent to watch it as a native Claude Code subagent row instead of a long-running MCP call:
+
+- The lane agent is a courier: its only tools are `delegate` and `delegatePipeline`. It cannot read the repository, run commands, review, decide, or integrate.
+- Lanes against independent repositories run genuinely in parallel. Lanes against the same repository are serialized by the runtime's repository lock — they surface as subagents for visibility, but execute one at a time.
+- The lane's JSON report is used only to correlate (`laneId`, `specSha256`, `runId`); all reviewable evidence comes from `reviewCandidate`, and every acceptance stays human-only. At most one accepted candidate per clean checkout.
+- Known limitation: the host injects project context (CLAUDE.md, git status) into custom subagents. The lane agent is instructed to ignore it; the enforced boundary is its tool allowlist, and the Producer itself only ever sees the spec through the trusted runtime.
+
 ## Available skills, agents, and MCP tools
 
 | Kind | Name | Purpose |
