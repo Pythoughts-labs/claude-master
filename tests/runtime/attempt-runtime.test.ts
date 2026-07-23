@@ -234,6 +234,10 @@ function dependencies(
       commands: args.commands.map(command => ({ id: command.id, exitCode: 0, ok: true })),
       dependencyLink: "none",
     }),
+    // The Producer environment probe spawns the adapter a second time; tests
+    // that exercise producer behaviour with stub adapters opt out, and the
+    // probe has its own dedicated coverage.
+    producerPreflight: false,
     runId: () => runId,
     env: {},
     repositoryInstructions: [],
@@ -1089,6 +1093,71 @@ describe("runAttempt", () => {
     expect(result.failure).toBe("invalid-output");
     expect(result.producerSummary).toBeNull();
     expect(result.candidate).toBeNull();
+  });
+
+  it("stops before the producer runs when the probe cannot resolve the toolchain", async () => {
+    const repoRoot = await initRepo();
+
+    const result = await runAttempt(repoRoot, validSpec(), dependencies(new FakeAdapter(), "run-preflight-red", {
+      producerPreflight: async () => ({
+        status: "environment-defect",
+        reason: "the Producer shell cannot resolve: node",
+        missing: ["node"],
+        probe: "node MISSING\n",
+      }),
+    }));
+
+    expect(result.status).toBe("failed");
+    expect(result.failure).toBe("environment-defect");
+    expect(result.unresolvedIssues).toContain("producer-preflight-failed");
+    expect(result.candidate).toBeNull();
+    await expect(readFile(
+      join(process.env.CLAUDE_PLUGIN_DATA!, "runs", "run-preflight-red", "logs", "producer.log"),
+      "utf8",
+    )).resolves.toContain("No producer process was started");
+    // Finding 7: an environment failure nobody can diagnose is its own problem.
+    expect(result.evidence.producerPreflight).toMatchObject({ missing: ["node"] });
+  });
+
+  it("proceeds when the probe is inconclusive rather than inventing a failure", async () => {
+    const repoRoot = await initRepo();
+
+    const result = await runAttempt(repoRoot, validSpec(), dependencies(
+      new FakeAdapter(),
+      "run-preflight-inconclusive",
+      {
+        producerPreflight: async () => ({
+          status: "inconclusive",
+          reason: "the Producer did not write the probe file",
+          missing: [],
+          probe: null,
+        }),
+      },
+    ));
+
+    // A false positive here costs an entire delegation, so only an unambiguous
+    // miss is allowed to stop the attempt.
+    expect(result.status).toBe("verified-candidate");
+    expect(result.evidence.producerPreflight).toMatchObject({ status: "inconclusive" });
+  });
+
+  it("skips the probe for a read-only specification", async () => {
+    const repoRoot = await initRepo();
+    let probed = false;
+
+    const result = await runAttempt(repoRoot, { ...validSpec(), executionMode: "read-only" }, dependencies(
+      new FakeAdapter(),
+      "run-preflight-readonly",
+      {
+        producerPreflight: async () => {
+          probed = true;
+          return { status: "ok" as const, reason: null, missing: [], probe: null };
+        },
+      },
+    ));
+
+    expect(probed).toBe(false);
+    expect(result.evidence.producerPreflight).toBeUndefined();
   });
 
   it("classifies a wall-clock timeout and cleans up the attempt", async () => {

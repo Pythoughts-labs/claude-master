@@ -6,6 +6,16 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+- feat: before an edit attempt spawns its Producer, the runtime probes the
+  Producer's own shell and sandbox for the executables the spec's verification
+  commands name, in a disposable worktree with the same temporary home, sandbox
+  wrap, and environment the attempt will use. An unresolvable executable ends the
+  attempt as `environment-defect` in seconds instead of at the attempt timeout.
+  The runtime reads the probe file the Producer wrote rather than trusting a
+  summary, and only an unambiguous miss blocks — a false positive would cost a
+  whole delegation (dogfood findings 13, 23). Opt-in gate:
+  `RUN_CODEX_PREFLIGHT_GATE=1`.
+
 - fix: a role that cannot produce parseable structured output no longer destroys
   an independently verified candidate. The pipeline promotes and re-verifies the
   bytes that exist and returns `human-decision-required` carrying that candidate,

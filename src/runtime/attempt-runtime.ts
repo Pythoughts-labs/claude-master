@@ -44,6 +44,7 @@ import {
   type BuiltEnvironment,
   type EnvProvenance,
 } from "./environment-policy.js";
+import { runProducerPreflight } from "./producer-preflight.js";
 import { redact, redactValues } from "./redaction.js";
 import {
   collectReproducibilityInputs,
@@ -112,6 +113,8 @@ export interface AcceptanceVerifierLike {
 export interface AttemptRuntimeDependencies {
   verifier: AcceptanceVerifierLike;
   baselineVerifier?: typeof verifyBaseline;
+  /** false disables the Producer environment probe; a function replaces it. */
+  producerPreflight?: typeof runProducerPreflight | false;
   ps?: PlatformServices;
   producerRegistry?: ProducerRegistry;
   runId?: () => string;
@@ -189,7 +192,7 @@ function summaryForFailure(failure: FailureClassification | null): string {
     case "producer-failure": return "producer process reported failure";
     case "verification-failure": return "candidate did not pass independent verification";
     case "invalid-specification": return "delegation specification is invalid";
-    case "environment-defect": return "clean repository baseline did not pass verification";
+    case "environment-defect": return "the execution environment did not pass its preconditions";
   }
 }
 
@@ -552,6 +555,48 @@ export async function runAttempt(
           worktreePath: worktree.path,
           tempHome,
           allowNetwork: invocation.network === "allowed",
+        });
+      }
+    }
+    if (spec.executionMode === "edit" && deps.producerPreflight !== false) {
+      reportPhase(deps, "probing producer environment");
+      const preflight = await (typeof deps.producerPreflight === "function"
+        ? deps.producerPreflight
+        : runProducerPreflight)({
+        adapter,
+        capabilityReport: report,
+        spec,
+        repoRoot: canonical.canonical,
+        baseCommitOid: preconditions.baseCommitOid,
+        runId,
+        ps,
+        tempHome,
+        ...(deps.abortSignal === undefined ? {} : { abortSignal: deps.abortSignal }),
+      });
+      baselineEvidence = { ...baselineEvidence, producerPreflight: preflight };
+      if (preflight.status === "environment-defect") {
+        return await archiveTerminal({
+          store,
+          spec,
+          runId,
+          startedAtMs,
+          now,
+          repoRoot: canonical.canonical,
+          baseCommitOid: preconditions.baseCommitOid,
+          signals: { "environment-defect": true },
+          report,
+          profile,
+          invocation,
+          environment: [],
+          temporaryHomeApplied: tempHome !== null,
+          producerSummary: null,
+          candidate: null,
+          commandOutcomes: [],
+          unresolvedIssues: ["producer-preflight-failed", preflight.reason ?? ""],
+          evidence: baselineEvidence,
+          producerLog: producerLog(null),
+          repositoryInstructions,
+          packagedVerifier,
         });
       }
     }

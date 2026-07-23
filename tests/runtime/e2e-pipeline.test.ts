@@ -362,7 +362,12 @@ describe.runIf(process.platform === "darwin")("end-to-end review pipeline", () =
     });
     if (!result.ok) throw new Error("pipeline delegation unexpectedly failed");
     expect(result.result.rounds).toHaveLength(2);
-    expect(adapter.calls).toEqual({ implement: 1, correctness: 2, systems: 2, fixer: 1 });
+    // implement: 2 = one Producer environment probe + one real implementation.
+    // The stub never writes the probe file, so the probe is inconclusive and
+    // correctly declines to block the attempt.
+    expect(adapter.calls).toEqual({ implement: 2, correctness: 2, systems: 2, fixer: 1 });
+    expect(result.result.attempt.evidence.producerPreflight)
+      .toMatchObject({ status: "inconclusive" });
 
     await expect(handleDecideCandidate(repo, runId, "accepted", deps)).resolves.toEqual({
       recorded: true,
@@ -396,6 +401,6 @@ describe.runIf(process.platform === "darwin")("end-to-end review pipeline", () =
     });
     if (!result.ok) throw new Error("pipeline delegation unexpectedly failed");
     expect(result.result.rounds).toHaveLength(2);
-    expect(adapter.calls).toEqual({ implement: 1, correctness: 2, systems: 2, fixer: 2 });
+    expect(adapter.calls).toEqual({ implement: 2, correctness: 2, systems: 2, fixer: 2 });
   });
 });
