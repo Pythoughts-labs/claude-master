@@ -6,7 +6,7 @@ description: Let Claude Architect route a versioned implementation spec through 
 # Delegate
 
 ```claude-architect-protocol
-PROTOCOL_VERSION: 1.3.0
+PROTOCOL_VERSION: 1.4.0
 ```
 
 The current session is the architect. It owns requirements, the Delegation Spec, Producer selection, review, and acceptance. Producers are untrusted: their output is only a candidate until the runtime freezes it, independently verifies it, and the architect reviews the exact anchored bytes.
@@ -80,7 +80,7 @@ When running multiple delegations, normalize reported blockers by phase, command
 
 The `delegate` and `delegatePipeline` MCP calls are synchronous. Keep each call in the foreground until it returns; never hand it to Monitor or background execution.
 
-1. Call `delegate` through `mcp__plugin_claude-architect_runtime__delegate` with `checkoutPath`, the candidate spec, and `protocolVersion: "1.3.0"` copied from this skill's `PROTOCOL_VERSION` marker.
+1. Call `delegate` through `mcp__plugin_claude-architect_runtime__delegate` with `checkoutPath`, the candidate spec, and `protocolVersion: "1.4.0"` copied from this skill's `PROTOCOL_VERSION` marker.
 2. When it returns `ok:false` with `validationErrors`, repair only the reported spec defects and resubmit. This repair loop must not touch a Producer.
 3. When it returns a protocol/schema diagnostic, stop and tell the user to update the installed marketplace copy and reload Claude Code. Never guess across a version mismatch.
 4. When the result is `unavailable`, `failed`, or `cancelled`, report the structured classification and evidence. Do not claim a candidate exists. A report with `laneEligibility.edit=false`, or any other ineligible or unconfined Lane, fails closed with the structured diagnostic.
@@ -162,7 +162,7 @@ edits).
    ```
 
 2. Call `mcp__plugin_claude-architect_runtime__delegatePipeline` with
-   `checkoutPath`, `spec`, `protocolVersion: "1.3.0"`.
+   `checkoutPath`, `spec`, `protocolVersion: "1.4.0"`.
 3. Read the returned evidence bundle: attempt result, per-round review
    reports and consolidated findings, fix dispositions, verification report,
    and gate reasons.
@@ -217,8 +217,23 @@ Slice rules and guarantees:
   never from model judgment or a Producer's self-report. A slice that passes
   advances; a slice that fails is repaired within its round budget; a slice that
   cannot be made to pass halts the run.
+- Slices run **sequentially by default**. A slice may declare `dependsOn` — the
+  1-based indices of the slices it must observe — and the spec may raise
+  `sliceConcurrency`. Slices then run together only when their dependencies
+  allow it *and* their write allowlists are pairwise disjoint, which is what
+  makes composing their results a conflict-free union. Omitting `dependsOn`
+  means "after every preceding slice", so an existing spec behaves exactly as
+  before.
+- Declaring `dependsOn` is a claim about what a slice needs to *see*, not only
+  about what it writes. A slice that reads another slice's output depends on it
+  even with disjoint allowlists. Nothing detects an under-declared dependency:
+  a slice that runs too early is verified against a base without the work it
+  needed, and the error surfaces at the composed verification below. Declare
+  `dependsOn: []` only when a slice is genuinely independent.
 - Review and the advisor judge the **composed candidate** at the end, over the
-  whole slice branch. Per-slice review is off by default; opt in with
+  whole slice branch, and that composed candidate always faces the spec's full
+  `verification` regardless of how the slices were scheduled. Per-slice results
+  never substitute for it. Per-slice review is off by default; opt in with
   `review.perSlice: true` to review each slice as it lands.
 - A mid-run halt **after at least one slice has advanced** yields a **partial**
   candidate with `status: "human-decision-required"`, the halted slice index in

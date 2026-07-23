@@ -3130,6 +3130,87 @@ describe("runPipeline", () => {
     expect(result.rounds.at(-1)?.fix).not.toBeNull();
   });
 
+  function parallelSpec(overrides: {
+    sliceTwoCheck: Record<string, string>;
+    finalCheck: Record<string, string>;
+  }): DelegationSpec {
+    const spec = slicedSpec();
+    return {
+      ...spec,
+      sliceConcurrency: 2,
+      slices: [
+        { ...spec.slices![0]!, dependsOn: [] },
+        {
+          ...spec.slices![1]!,
+          dependsOn: [],
+          verification: [fileVerification("slice-two-check", overrides.sliceTwoCheck)],
+        },
+      ],
+      verification: [fileVerification("final-check", overrides.finalCheck)],
+    };
+  }
+
+  function parallelDeps(runId: string) {
+    const deps = dependencies({
+      runId,
+      roleRunner: async args => {
+        if (args.role === "implementer") {
+          const commit = await commitRoleFile(args, "slice-two.txt", "slice two candidate\n");
+          return success(fenced({
+            reportVersion: "1",
+            candidateCommit: commit,
+            status: "complete",
+            summary: "slice complete",
+          }));
+        }
+        if (args.role === "reviewer-correctness") return success(fenced(approve));
+        throw new Error(`unexpected role ${args.role}`);
+      },
+    });
+    deps.runAttempt = fakeAttempt(runId, async checkout => {
+      await writeFile(path.join(checkout, "slice-one.txt"), "slice one candidate\n");
+    });
+    return deps;
+  }
+
+  it("composes slices that ran in the same wave into one candidate", async () => {
+    const repo = await initSlicedRepo();
+    const runId = "pipeline-parallel-compose";
+
+    const result = await runPipeline(repo, parallelSpec({
+      // Slice two is verified without slice one present, which is exactly what
+      // declaring independence means.
+      sliceTwoCheck: { "slice-two.txt": "slice two candidate\n" },
+      finalCheck: {
+        "slice-one.txt": "slice one candidate\n",
+        "slice-two.txt": "slice two candidate\n",
+      },
+    }), parallelDeps(runId));
+
+    expect(result.status).toBe("decision-ready");
+    expect(result.slices.map(slice => slice.index)).toEqual([1, 2]);
+    const changed = result.attempt.candidate?.changedPaths.map(entry => entry.path) ?? [];
+    expect(changed.sort()).toEqual(["slice-one.txt", "slice-two.txt"]);
+  }, 180_000);
+
+  it("fails closed when a slice under-declared what it depended on", async () => {
+    const repo = await initSlicedRepo();
+    const runId = "pipeline-parallel-underdeclared";
+
+    // Both slices pass their own checks against a base that lacks the other's
+    // work. Nothing in scheduling can detect an under-declared dependency, so
+    // the mandatory verification of the composed tree is the only thing standing
+    // between a wrong `dependsOn` and a shipped candidate.
+    const result = await runPipeline(repo, parallelSpec({
+      sliceTwoCheck: { "slice-two.txt": "slice two candidate\n" },
+      finalCheck: { "slice-one.txt": "the composed tree must satisfy this\n" },
+    }), parallelDeps(runId));
+
+    expect(result.status).not.toBe("decision-ready");
+    expect(result.gate.decisionReady).toBe(false);
+    expect(result.gate.reasons.join("\n")).toContain("clean-room verification failed");
+  }, 180_000);
+
   it("keeps the slice outcome when its worktree cannot be cleaned up", async () => {
     const repo = await initSlicedRepo();
     const runId = "pipeline-slice-cleanup-failure";

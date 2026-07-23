@@ -194,6 +194,12 @@
           },
           "verification": {
             "$ref": "#/properties/verification"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 },
+            "uniqueItems": true,
+            "description": "1-based indices of the slices this slice must observe before it runs. Omit to depend on every preceding slice, which reproduces sequential execution."
           }
         }
       }
@@ -276,6 +282,13 @@
           "maximum": 8
         }
       }
+    },
+    "sliceConcurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8,
+      "default": 1,
+      "description": "Maximum slices executed at once. Slices run together only when their declared dependencies allow it and their write allowlists are pairwise disjoint."
     }
   },
   "allOf": [

@@ -6,6 +6,19 @@ All notable changes to Claude Architect are recorded here. The format follows
 
 ## [Unreleased]
 
+- feat (protocol 1.4.0): slices may declare `dependsOn` — the 1-based indices of
+  the slices they must observe — and a spec may raise `sliceConcurrency`. Slices
+  run together only when their dependencies allow it *and* their write
+  allowlists are pairwise disjoint; structural verification already confines each
+  slice to its own allowlist, so disjoint allowlists mean disjoint changed paths
+  and composing a wave is a conflict-free union with no merge to get wrong.
+  Omitting `dependsOn` means "after every preceding slice", so existing specs
+  behave exactly as before and parallelism stays opt-in.
+  Composition is proven byte-identical to sequential application, and the
+  composed candidate still faces the spec's full verification regardless of
+  scheduling: an under-declared dependency fails at that gate rather than
+  shipping. Worktree creation is serialized even while Producers run in parallel.
+
 - fix: a worktree that cannot be cleaned up no longer erases the outcome of the
   work it held. A slice timeout previously came back as a hard runtime error with
   the graceful result lost and an orphan directory left behind (dogfood finding

@@ -191,3 +191,57 @@ describe("validateSpec", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe("slice dependencies", () => {
+  function sliced(dependsOn: number[] | undefined, sliceCount = 2): unknown {
+    const slice = (index: number) => ({
+      objective: `slice ${index}`,
+      context: "context",
+      writeAllowlist: [`s${index}/**`],
+      forbiddenScope: [],
+      successCriteria: ["done"],
+      verification: [{
+        id: `check-${index}`,
+        executable: "node",
+        args: ["-e", "process.exit(0)"],
+        cwd: ".",
+        timeoutMs: 60_000,
+        network: "denied",
+        expectedExitCodes: [0],
+      }],
+      ...(index === sliceCount && dependsOn !== undefined ? { dependsOn } : {}),
+    });
+    return {
+      ...base,
+      writeAllowlist: Array.from({ length: sliceCount }, (_, i) => `s${i + 1}/**`),
+      slices: Array.from({ length: sliceCount }, (_, i) => slice(i + 1)),
+    };
+  }
+
+  it("accepts a dependency on an earlier slice", () => {
+    expect(validateSpec(sliced([1])).ok).toBe(true);
+  });
+
+  it("accepts an explicitly independent slice", () => {
+    expect(validateSpec(sliced([])).ok).toBe(true);
+  });
+
+  it("rejects a slice that depends on itself", () => {
+    const result = validateSpec(sliced([2]));
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.errors[0]?.path).toBe("/slices/1/dependsOn/0");
+  });
+
+  it("rejects a dependency on a slice that does not exist", () => {
+    const result = validateSpec(sliced([7]));
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.errors[0]?.message)
+      .toContain("must name an existing slice");
+  });
+
+  it("rejects a duplicated dependency", () => {
+    expect(validateSpec(sliced([1, 1])).ok).toBe(false);
+  });
+});

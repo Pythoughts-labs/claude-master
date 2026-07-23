@@ -26,6 +26,17 @@ function isSafeRepositoryGlob(glob: string): boolean {
     && !glob.split(/[\\/]/).includes("..");
 }
 
+function sliceDependencyError(
+  sliceIndex: number,
+  dependencyIndex: number,
+  message: string,
+): ValidateResult {
+  return {
+    ok: false,
+    errors: [{ path: `/slices/${sliceIndex}/dependsOn/${dependencyIndex}`, message }],
+  };
+}
+
 function validateAllowedTestDeletions(
   globs: string[] | undefined,
   basePath: string,
@@ -141,6 +152,21 @@ export function validateSpec(input: unknown): ValidateResult {
               message: "must be a repository-relative path that does not escape the checkout",
             }],
           };
+        }
+      }
+      for (const [dependencyIndex, dependency] of (slice.dependsOn ?? []).entries()) {
+        // A dependency on itself or on a later slice cannot be satisfied, and a
+        // dependency on a slice that does not exist is a typo the architect must
+        // see before a run spends its budget.
+        if (dependency > (spec.slices ?? []).length) {
+          return sliceDependencyError(sliceIndex, dependencyIndex, "must name an existing slice");
+        }
+        if (dependency > sliceIndex) {
+          return sliceDependencyError(
+            sliceIndex,
+            dependencyIndex,
+            "must name an earlier slice; slices cannot depend on themselves or on later slices",
+          );
         }
       }
     }

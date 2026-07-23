@@ -3230,8 +3230,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path18) {
-      let input = path18;
+    function removeDotSegments(path19) {
+      let input = path19;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3483,8 +3483,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path18, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path18 && path18 !== "/" ? path18 : void 0;
+        const [path19, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path19 && path19 !== "/" ? path19 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -8195,8 +8195,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path18, errorMaps, issueData } = params;
-  const fullPath = [...path18, ...issueData.path || []];
+  const { data, path: path19, errorMaps, issueData } = params;
+  const fullPath = [...path19, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -8312,11 +8312,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path18, key) {
+  constructor(parent, value, path19, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path18;
+    this._path = path19;
     this._key = key;
   }
   get path() {
@@ -11953,10 +11953,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path18) {
-  if (!path18)
+function getElementAtPath(obj, path19) {
+  if (!path19)
     return obj;
-  return path18.reduce((acc, key) => acc?.[key], obj);
+  return path19.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12276,11 +12276,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path18, issues) {
+function prefixIssues(path19, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path18);
+    iss.path.unshift(path19);
     return iss;
   });
 }
@@ -21930,7 +21930,7 @@ var StdioServerTransport = class {
 };
 
 // src/protocol/versions.ts
-var PROTOCOL_VERSION = "1.3.0";
+var PROTOCOL_VERSION = "1.4.0";
 var DELEGATION_SPEC_VERSION = "1";
 var ATTEMPT_RESULT_VERSION = "1";
 var RUNTIME_VERSION = "0.28.0";
@@ -22573,6 +22573,17 @@ function resolveImplementationConfig(spec) {
 }
 function resolveSlices(spec) {
   return spec.slices ?? [];
+}
+var DEFAULT_SLICE_CONCURRENCY = 1;
+function resolveSliceConcurrency(spec) {
+  return spec.sliceConcurrency ?? DEFAULT_SLICE_CONCURRENCY;
+}
+function resolveSliceDependencies(slices, index) {
+  const declared = slices[index - 1]?.dependsOn;
+  if (declared === void 0) {
+    return Array.from({ length: index - 1 }, (_, offset) => offset + 1);
+  }
+  return [...declared].sort((left, right) => left - right);
 }
 var RUNTIME_MAX_TIMEOUT_MS = 18e5;
 var RUNTIME_MIN_EDIT_TIMEOUT_MS = 6e5;
@@ -24433,9 +24444,9 @@ function manifestHashOf(changedPaths) {
 function computeChangedPathManifest(inputs) {
   const rawEntries = new Map(inputs.rawDiff.map((entry) => [entry.path, entry]));
   const treeEntries = parseTree(inputs.treeOutput);
-  const changedPaths = sortChangedPaths(parseNameStatus(inputs.nameStatusOutput).map(({ path: path18, status }) => {
-    const treeEntry = treeEntries.get(path18);
-    const rawEntry = rawEntries.get(path18);
+  const changedPaths = sortChangedPaths(parseNameStatus(inputs.nameStatusOutput).map(({ path: path19, status }) => {
+    const treeEntry = treeEntries.get(path19);
+    const rawEntry = rawEntries.get(path19);
     if (treeEntry === void 0 && status !== "D") {
       throw new RuntimeError("candidate tree is missing a changed path");
     }
@@ -24443,7 +24454,7 @@ function computeChangedPathManifest(inputs) {
       throw new RuntimeError("git diff-tree outputs disagree");
     }
     return {
-      path: path18,
+      path: path19,
       changeType: changeType(status),
       mode: treeEntry?.mode ?? rawEntry.oldMode,
       contentHash: treeEntry?.oid ?? null
@@ -24727,7 +24738,7 @@ async function applyCandidateTree(args) {
 }
 
 // src/pipeline/pipeline-runtime.ts
-import path14 from "node:path";
+import path15 from "node:path";
 
 // src/git/worktree-manager.ts
 import { mkdir as mkdir2, realpath as realpath2, rm as rm2 } from "node:fs/promises";
@@ -25019,6 +25030,12 @@ var delegation_spec_v1_default = {
           },
           verification: {
             $ref: "#/properties/verification"
+          },
+          dependsOn: {
+            type: "array",
+            items: { type: "integer", minimum: 1 },
+            uniqueItems: true,
+            description: "1-based indices of the slices this slice must observe before it runs. Omit to depend on every preceding slice, which reproduces sequential execution."
           }
         }
       }
@@ -25101,6 +25118,13 @@ var delegation_spec_v1_default = {
           maximum: 8
         }
       }
+    },
+    sliceConcurrency: {
+      type: "integer",
+      minimum: 1,
+      maximum: 8,
+      default: 1,
+      description: "Maximum slices executed at once. Slices run together only when their declared dependencies allow it and their write allowlists are pairwise disjoint."
     }
   },
   allOf: [
@@ -25699,14 +25723,14 @@ function buildWriteSeatbeltPolicy(args) {
     extraWritableRoots: [...args.extraWritableRoots]
   };
 }
-function sbPath(path18) {
-  for (const character of path18) {
+function sbPath(path19) {
+  for (const character of path19) {
     const codePoint = character.codePointAt(0);
     if (codePoint !== void 0 && (codePoint < 32 || codePoint === 127)) {
-      throw new Error(`seatbelt: control character in path: ${JSON.stringify(path18)}`);
+      throw new Error(`seatbelt: control character in path: ${JSON.stringify(path19)}`);
     }
   }
-  return `"${path18.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"')}"`;
+  return `"${path19.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"')}"`;
 }
 function openCodeWritablePaths(invocation, policy) {
   if (policy.tempHome !== null || !invocation.requiredEnv.includes("OPENCODE_CONFIG_DIR")) return [];
@@ -25745,18 +25769,18 @@ function buildProfile(policy, additionalWritable) {
     "/dev",
     ...policy.extraWritableRoots ?? [],
     ...additionalWritable
-  ].filter((path18) => typeof path18 === "string" && path18.length > 0).flatMap((path18) => {
+  ].filter((path19) => typeof path19 === "string" && path19.length > 0).flatMap((path19) => {
     try {
-      return [path18, realpathSync(path18)];
+      return [path19, realpathSync(path19)];
     } catch {
-      return [path18];
+      return [path19];
     }
   }))];
   const lines = [
     "(version 1)",
     "(allow default)",
     "(deny file-write*)",
-    ...writable.map((path18) => `(allow file-write* (subpath ${sbPath(path18)}))`),
+    ...writable.map((path19) => `(allow file-write* (subpath ${sbPath(path19)}))`),
     '(allow file-write* (literal "/dev/null") (literal "/dev/tty"))'
   ];
   if (!policy.allowNetwork) lines.push("(deny network*)");
@@ -28104,14 +28128,14 @@ function hasEnvironmentMarker(environment) {
 function hasFailureSignal(signals) {
   return Object.values(signals).some(Boolean);
 }
-function statusForFailure(failure2) {
-  if (failure2 === null) return "verified-candidate";
-  if (failure2 === "unavailable" || failure2 === "authentication-required") return "unavailable";
-  if (failure2 === "cancelled") return "cancelled";
+function statusForFailure(failure3) {
+  if (failure3 === null) return "verified-candidate";
+  if (failure3 === "unavailable" || failure3 === "authentication-required") return "unavailable";
+  if (failure3 === "cancelled") return "cancelled";
   return "failed";
 }
-function summaryForFailure(failure2) {
-  switch (failure2) {
+function summaryForFailure(failure3) {
+  switch (failure3) {
     case null:
       return "candidate produced and independently verified";
     case "unavailable":
@@ -28168,14 +28192,14 @@ async function archiveTerminal(context) {
     for (const command of context.spec.verification) {
       verificationSecretRegistrations.push(registerSensitiveEnvironment(command.environment ?? {}));
     }
-    const failure2 = classifyFailure(context.signals);
+    const failure3 = classifyFailure(context.signals);
     const logsRef = await context.store.writeLog("producer", context.producerLog);
     const result = {
       resultVersion: "1",
       runId: context.runId,
-      status: statusForFailure(failure2),
-      failure: failure2,
-      summary: summaryForFailure(failure2),
+      status: statusForFailure(failure3),
+      failure: failure3,
+      summary: summaryForFailure(failure3),
       producerSummary: context.producerSummary === null ? null : redact(context.producerSummary),
       candidate: context.candidate === null ? null : {
         ...context.candidate,
@@ -28204,7 +28228,7 @@ async function archiveTerminal(context) {
         model: context.spec.producerOverrides?.model ?? null
       },
       effectivePolicy: {
-        ...context.profile === null ? { routingFailure: failure2 } : {
+        ...context.profile === null ? { routingFailure: failure3 } : {
           configurationProfile: context.profile,
           temporaryHomeApplied: context.temporaryHomeApplied
         },
@@ -28909,6 +28933,122 @@ function evaluateGates(input) {
   return { decisionReady: reasons.length === 0, requiresHumanDecision, reasons };
 }
 
+// src/pipeline/slice-composer.ts
+import { mkdtemp as mkdtemp3, rm as rm8 } from "node:fs/promises";
+import { tmpdir as tmpdir6 } from "node:os";
+import path13 from "node:path";
+var NULL_OID = "0000000000000000000000000000000000000000";
+function parseRawDiffEntries(raw) {
+  const fields = raw.split("\0");
+  const changes = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    const meta = fields[index];
+    if (meta === void 0 || !meta.startsWith(":")) continue;
+    const parts = meta.slice(1).split(/\s+/u);
+    const changed = fields[index + 1];
+    if (parts.length < 5 || changed === void 0 || changed.length === 0) continue;
+    index += 1;
+    const [, dstMode, , dstOid, status] = parts;
+    changes.push({
+      path: changed,
+      mode: dstMode,
+      oid: dstOid,
+      deleted: status.startsWith("D") || dstOid === NULL_OID
+    });
+  }
+  return changes;
+}
+function failure2(action, result) {
+  const diagnostic = (result.stderr || result.stdout).trim();
+  return new RuntimeError(`${action} failed${diagnostic ? `: ${diagnostic}` : ""}`);
+}
+async function checked(cwd, args, options, runGit = git) {
+  const result = await runGit(cwd, args, options);
+  if (result.exitCode !== 0) throw failure2(`git ${args[0] ?? ""}`, result);
+  return result.stdout;
+}
+async function composeSliceOntoHead(args) {
+  const runGit = args.git ?? git;
+  if (args.head === args.base) return args.sliceCommit;
+  const changes = parseRawDiffEntries(await checked(
+    args.checkoutPath,
+    // Raw output abbreviates object ids by default; update-index needs them whole.
+    ["diff", "--raw", "-z", "--no-abbrev", "--no-renames", `${args.base}..${args.sliceCommit}`],
+    args.objectReadOptions,
+    runGit
+  ));
+  if (changes.length === 0) return args.head;
+  const occupied = new Set((await checked(
+    args.checkoutPath,
+    ["diff", "--name-only", "-z", "--no-renames", `${args.base}..${args.head}`],
+    args.objectReadOptions,
+    runGit
+  )).split("\0").filter((entry) => entry.length > 0));
+  const collisions = changes.filter((change) => occupied.has(change.path)).map((change) => change.path);
+  if (collisions.length > 0) {
+    throw new RuntimeError(
+      `slice ${args.sliceIndex} changed paths already written by its wave: ${collisions.join(", ")}`
+    );
+  }
+  const indexRoot = await mkdtemp3(path13.join(tmpdir6(), "ca-compose-"));
+  const indexFile = path13.join(indexRoot, "index");
+  try {
+    const options = { ...args.objectReadOptions, indexFile };
+    await checked(args.checkoutPath, ["read-tree", args.head], options, runGit);
+    const instructions = changes.map((change) => change.deleted ? `0 ${NULL_OID}	${change.path}` : `${change.mode} ${change.oid}	${change.path}`).join("\n");
+    await checked(
+      args.checkoutPath,
+      ["update-index", "--index-info"],
+      { ...options, stdin: `${instructions}
+` },
+      runGit
+    );
+    const tree = (await checked(args.checkoutPath, ["write-tree"], options, runGit)).trim();
+    return (await checked(
+      args.checkoutPath,
+      ["commit-tree", tree, "-p", args.head, "-m", `slice ${args.sliceIndex} ${args.runId}`],
+      args.objectReadOptions,
+      runGit
+    )).trim();
+  } finally {
+    await rm8(indexRoot, { recursive: true, force: true });
+  }
+}
+
+// src/pipeline/slice-scheduler.ts
+function allowlistsOverlap(left, right) {
+  return left.writeAllowlist.some((leftGlob) => right.writeAllowlist.some((rightGlob) => leftGlob === rightGlob || globMatches(leftGlob, literalPrefix(rightGlob)) || globMatches(rightGlob, literalPrefix(leftGlob)) || literalPrefix(leftGlob).startsWith(literalPrefix(rightGlob)) || literalPrefix(rightGlob).startsWith(literalPrefix(leftGlob))));
+}
+function literalPrefix(glob) {
+  const wildcard = glob.search(/[*?[]/u);
+  return wildcard === -1 ? glob : glob.slice(0, wildcard);
+}
+function planSliceWaves(slices, concurrency) {
+  const waves = [];
+  const completed = /* @__PURE__ */ new Set();
+  const pending = slices.map((_, offset) => offset + 1);
+  while (pending.length > 0) {
+    const wave = [];
+    for (const index of pending) {
+      if (wave.length >= Math.max(1, concurrency)) break;
+      const dependencies = resolveSliceDependencies(slices, index);
+      if (!dependencies.every((dependency) => completed.has(dependency))) continue;
+      const slice = slices[index - 1];
+      if (wave.some((member) => allowlistsOverlap(slices[member - 1], slice))) continue;
+      wave.push(index);
+    }
+    if (wave.length === 0) {
+      wave.push(pending[0]);
+    }
+    for (const index of wave) {
+      completed.add(index);
+      pending.splice(pending.indexOf(index), 1);
+    }
+    waves.push({ indices: wave });
+  }
+  return waves;
+}
+
 // src/pipeline/wayfinder.ts
 function routeSlice(input) {
   if (input.hardBlocker) {
@@ -28949,75 +29089,89 @@ function routeSlice(input) {
 }
 
 // src/pipeline/slice-runner.ts
+async function runSliceToCompletion(slice, index, base, deps, initialAttempt) {
+  let roundsUsed = 0;
+  const attempts = [];
+  while (true) {
+    const sourceAttempt = roundsUsed === 0 && initialAttempt !== void 0 ? initialAttempt : await deps.runSlice(slice, index, base, roundsUsed);
+    const attempt = structuredClone(sourceAttempt);
+    const perSliceReview = attempt.perSliceReview ?? null;
+    const route2 = routeSlice({
+      verification: attempt.verification,
+      perSliceReview,
+      roundsUsed,
+      maxRounds: deps.maxRounds,
+      hardBlocker: attempt.hardBlocker ?? false
+    });
+    const evidence = {
+      sliceIndex: index,
+      attempt: roundsUsed,
+      candidateCommit: attempt.candidateCommit,
+      verification: attempt.verification,
+      perSliceReview,
+      route: route2.route,
+      reasons: [...route2.reasons],
+      roleLogRefs: [...attempt.roleLogRefs ?? []]
+    };
+    if (deps.onAttempt) {
+      await deps.onAttempt(structuredClone(evidence));
+    }
+    attempts.push(evidence);
+    const pipelineSlice = {
+      index,
+      objective: slice.objective,
+      route: route2.route,
+      candidateCommit: attempt.candidateCommit,
+      roundsUsed,
+      verification: attempt.verification,
+      perSliceReview,
+      reasons: [...route2.reasons],
+      attempts: attempts.map((entry) => ({
+        ...entry,
+        reasons: [...entry.reasons],
+        roleLogRefs: [...entry.roleLogRefs]
+      })),
+      roleLogRefs: attempts.flatMap((entry) => entry.roleLogRefs)
+    };
+    if (route2.route === "repair") {
+      roundsUsed += 1;
+      continue;
+    }
+    return { slice: pipelineSlice, advanced: route2.route === "advance" };
+  }
+}
 async function runSlicePhase(slices, startCommit, deps) {
   let currentCommit = startCommit;
   const results = [];
-  for (const [offset, slice] of slices.entries()) {
-    const index = offset + 1;
-    let roundsUsed = 0;
-    const attempts = [];
-    while (true) {
-      const sourceAttempt = index === 1 && roundsUsed === 0 && deps.initialAttempt !== void 0 ? deps.initialAttempt : await deps.runSlice(slice, index, currentCommit, roundsUsed);
-      const attempt = structuredClone(sourceAttempt);
-      const perSliceReview = attempt.perSliceReview ?? null;
-      const route2 = routeSlice({
-        verification: attempt.verification,
-        perSliceReview,
-        roundsUsed,
-        maxRounds: deps.maxRounds,
-        hardBlocker: attempt.hardBlocker ?? false
+  for (const wave of planSliceWaves(slices, deps.concurrency ?? 1)) {
+    const base = currentCommit;
+    const outcomes = await Promise.all(wave.indices.map((index) => runSliceToCompletion(
+      slices[index - 1],
+      index,
+      base,
+      deps,
+      index === 1 ? deps.initialAttempt : void 0
+    )));
+    for (const outcome of outcomes) {
+      const composed = wave.indices.length === 1 || deps.composeSlice === void 0 ? outcome.slice.candidateCommit : await deps.composeSlice({
+        head: currentCommit,
+        base,
+        sliceCommit: outcome.slice.candidateCommit,
+        sliceIndex: outcome.slice.index
       });
-      const evidence = {
-        sliceIndex: index,
-        attempt: roundsUsed,
-        candidateCommit: attempt.candidateCommit,
-        verification: attempt.verification,
-        perSliceReview,
-        route: route2.route,
-        reasons: [...route2.reasons],
-        roleLogRefs: [...attempt.roleLogRefs ?? []]
-      };
-      if (deps.onAttempt) {
-        await deps.onAttempt(structuredClone(evidence));
-      }
-      attempts.push(evidence);
-      const pipelineSlice = {
-        index,
-        objective: slice.objective,
-        route: route2.route,
-        candidateCommit: attempt.candidateCommit,
-        roundsUsed,
-        verification: attempt.verification,
-        perSliceReview,
-        reasons: [...route2.reasons],
-        attempts: attempts.map((entry) => ({
-          ...entry,
-          reasons: [...entry.reasons],
-          roleLogRefs: [...entry.roleLogRefs]
-        })),
-        roleLogRefs: attempts.flatMap((entry) => entry.roleLogRefs)
-      };
-      if (route2.route === "advance") {
-        results.push(pipelineSlice);
-        if (deps.onSlice) {
-          await deps.onSlice(structuredClone(pipelineSlice));
-        }
-        currentCommit = attempt.candidateCommit;
-        break;
-      }
-      if (route2.route === "repair") {
-        roundsUsed += 1;
-        continue;
-      }
-      results.push(pipelineSlice);
+      const recorded = { ...outcome.slice, candidateCommit: composed };
+      results.push(recorded);
       if (deps.onSlice) {
-        await deps.onSlice(structuredClone(pipelineSlice));
+        await deps.onSlice(structuredClone(recorded));
       }
-      return {
-        slices: results,
-        finalCandidateCommit: currentCommit,
-        haltedSliceIndex: index
-      };
+      if (!outcome.advanced) {
+        return {
+          slices: results,
+          finalCandidateCommit: currentCommit,
+          haltedSliceIndex: recorded.index
+        };
+      }
+      currentCommit = composed;
     }
   }
   return {
@@ -29028,7 +29182,7 @@ async function runSlicePhase(slices, startCommit, deps) {
 }
 
 // src/pipeline/role-runner.ts
-import { rm as rm8 } from "node:fs/promises";
+import { rm as rm9 } from "node:fs/promises";
 
 // src/pipeline/role-prompts.ts
 import { readFileSync as readFileSync2 } from "node:fs";
@@ -29208,7 +29362,7 @@ function buildRoleSpec(role, base, pkg) {
 
 // src/pipeline/git-writable-roots.ts
 import { lstat as lstat5, mkdir as mkdir4, readFile as readFile5, realpath as realpath6 } from "node:fs/promises";
-import path13 from "node:path";
+import path14 from "node:path";
 function invalidWritableRoots(message, cause) {
   return new RuntimeError(message, {
     classification: "sandbox-violation",
@@ -29229,8 +29383,8 @@ async function requirePlainDirectory(directory, label) {
   }
 }
 function isContainedBy(parent, candidate) {
-  const relative = path13.relative(parent, candidate);
-  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path13.sep}`) && !path13.isAbsolute(relative);
+  const relative = path14.relative(parent, candidate);
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path14.sep}`) && !path14.isAbsolute(relative);
 }
 function sameFileIdentity(before, after) {
   return before.dev === after.dev && before.ino === after.ino;
@@ -29245,16 +29399,16 @@ async function readStablePlainFile(filename, label) {
   return value;
 }
 async function resolveLinkedWorktreeWritableRoots(worktreePath) {
-  const dotGit = path13.join(worktreePath, ".git");
+  const dotGit = path14.join(worktreePath, ".git");
   try {
     const pointer = await readStablePlainFile(dotGit, "linked worktree .git entry");
     const match = /^gitdir: (.+)\r?\n?$/.exec(pointer);
     if (match === null) {
       throw invalidWritableRoots("linked worktree .git pointer is malformed");
     }
-    const gitDir = await realpath6(path13.resolve(worktreePath, match[1]));
+    const gitDir = await realpath6(path14.resolve(worktreePath, match[1]));
     await requirePlainDirectory(gitDir, "linked worktree private git directory");
-    const commonDirPointer = path13.join(gitDir, "commondir");
+    const commonDirPointer = path14.join(gitDir, "commondir");
     const commonDirValue = (await readStablePlainFile(
       commonDirPointer,
       "linked worktree commondir entry"
@@ -29262,16 +29416,16 @@ async function resolveLinkedWorktreeWritableRoots(worktreePath) {
     if (commonDirValue === "" || commonDirValue.includes("\0")) {
       throw invalidWritableRoots("linked worktree commondir pointer is malformed");
     }
-    const commonDir = await realpath6(path13.resolve(gitDir, commonDirValue));
+    const commonDir = await realpath6(path14.resolve(gitDir, commonDirValue));
     await requirePlainDirectory(commonDir, "common git directory");
-    const worktreesDir = await realpath6(path13.join(commonDir, "worktrees"));
+    const worktreesDir = await realpath6(path14.join(commonDir, "worktrees"));
     await requirePlainDirectory(worktreesDir, "common git worktrees directory");
     if (!isContainedBy(worktreesDir, gitDir)) {
       throw invalidWritableRoots("linked worktree private git directory escapes common git worktrees");
     }
-    const sharedObjectsDir = await realpath6(path13.join(commonDir, "objects"));
+    const sharedObjectsDir = await realpath6(path14.join(commonDir, "objects"));
     await requirePlainDirectory(sharedObjectsDir, "common git objects directory");
-    const privateObjectsPath = path13.join(gitDir, "private-objects");
+    const privateObjectsPath = path14.join(gitDir, "private-objects");
     await mkdir4(privateObjectsPath, { recursive: true, mode: 448 });
     await requirePlainDirectory(privateObjectsPath, "private git objects directory");
     const privateObjectsDir = await realpath6(privateObjectsPath);
@@ -29340,7 +29494,7 @@ async function cleanupProcessAttempt(tempHome, builtEnvironment) {
   }
   if (tempHome !== null) {
     try {
-      await rm8(tempHome, { recursive: true, force: true });
+      await rm9(tempHome, { recursive: true, force: true });
     } catch (error2) {
       failures.push(error2);
     }
@@ -29498,13 +29652,13 @@ async function runRole(args) {
         if (!normalized.ok) signals["invalid-output"] = true;
         if (exit.exitCode !== 0) signals["producer-failure"] = true;
       }
-      const failure2 = classifyFailure(signals);
+      const failure3 = classifyFailure(signals);
       const archiveSafeRawOutput = rawOutput === "" ? {} : { archiveSafeRawOutput: redact(rawOutput) };
-      if (failure2 === null) {
+      if (failure3 === null) {
         return { ok: true, rawOutput, ...archiveSafeRawOutput, failure: null, producerId };
       }
       if (exit.cancelled || attempt === 2) {
-        return { ok: false, rawOutput, ...archiveSafeRawOutput, failure: failure2, producerId };
+        return { ok: false, rawOutput, ...archiveSafeRawOutput, failure: failure3, producerId };
       }
     } catch (error2) {
       primaryError = error2;
@@ -29616,7 +29770,7 @@ function privateObjectReadOptions(access4) {
 }
 async function importPromotedObjects(args) {
   const privateObjects = privateObjectReadOptions(args.access);
-  const packPrefix = path14.join(args.access.sharedObjectsDir, "pack", "pack");
+  const packPrefix = path15.join(args.access.sharedObjectsDir, "pack", "pack");
   await checkedGit4(
     args.checkoutPath,
     ["pack-objects", "--revs", packPrefix],
@@ -29704,7 +29858,7 @@ async function runStructuredRole(args) {
     roleLogRefs
   };
 }
-function failedResult(attempt, rounds, finalCandidateCommit, reason, failure2 = "producer-failure", increments = [], slices = [], haltedSliceIndex = null) {
+function failedResult(attempt, rounds, finalCandidateCommit, reason, failure3 = "producer-failure", increments = [], slices = [], haltedSliceIndex = null) {
   return {
     runId: attempt.runId,
     status: "failed",
@@ -29720,7 +29874,7 @@ function failedResult(attempt, rounds, finalCandidateCommit, reason, failure2 = 
       reasons: [reason]
     },
     finalCandidateCommit,
-    failure: failure2
+    failure: failure3
   };
 }
 var MAX_PROGRESS_NOTES_LENGTH = 8e3;
@@ -29774,9 +29928,9 @@ function sliceTestEvidence(slices) {
   })));
 }
 var SliceExecutionError = class extends RuntimeError {
-  constructor(message, failure2) {
+  constructor(message, failure3) {
     super(message);
-    this.failure = failure2;
+    this.failure = failure3;
     this.name = "SliceExecutionError";
   }
   failure;
@@ -29803,9 +29957,9 @@ function containsSlicedFailureArchiveError(error2) {
   if (!(error2 instanceof AggregateError)) return false;
   return error2.errors.some(containsSlicedFailureArchiveError);
 }
-function failedAttemptStatus(failure2) {
-  if (failure2 === "unavailable" || failure2 === "authentication-required") return "unavailable";
-  if (failure2 === "cancelled") return "cancelled";
+function failedAttemptStatus(failure3) {
+  if (failure3 === "unavailable" || failure3 === "authentication-required") return "unavailable";
+  if (failure3 === "cancelled") return "cancelled";
   return "failed";
 }
 async function archiveSlicedFailure(args) {
@@ -29878,8 +30032,16 @@ async function cleanupWorktree(worktree) {
     return error2;
   }
 }
+var worktreeCreation = Promise.resolve();
+function createWorktreeSerially(manager, commit) {
+  const created = worktreeCreation.catch(() => {
+  }).then(async () => manager.create(commit));
+  worktreeCreation = created.catch(() => {
+  });
+  return created;
+}
 async function withManagedWorktree(args) {
-  const worktree = await args.manager.create(args.commit);
+  const worktree = await createWorktreeSerially(args.manager, args.commit);
   try {
     return await args.run(worktree.path);
   } finally {
@@ -30282,7 +30444,7 @@ async function verifyCandidate(args) {
       structural: async (structuralArgs) => {
         const result = await structuralVerify(structuralArgs);
         const failures = result.failures.filter(
-          (failure2) => !IGNORED_STRUCTURAL_FAILURES.has(failure2)
+          (failure3) => !IGNORED_STRUCTURAL_FAILURES.has(failure3)
         );
         return { ...result, ok: failures.length === 0, failures };
       }
@@ -30622,6 +30784,12 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
       try {
         phase = await runSlicePhase(slices, baselineCommit, {
           maxRounds,
+          concurrency: resolveSliceConcurrency(spec),
+          composeSlice: async (composeArgs) => composeSliceOntoHead({
+            checkoutPath,
+            runId: attempt.runId,
+            ...composeArgs
+          }),
           initialAttempt: {
             candidateCommit: currentCandidateCommit,
             verification: initialVerification.verification,
@@ -31259,7 +31427,7 @@ async function runPipelineWithLease(checkoutPath, spec, deps, ps, borrowedChecko
 }
 
 // src/protocol/spec-validator.ts
-import path15 from "node:path";
+import path16 from "node:path";
 var schemas2 = loadSchemas();
 function allowlistCovers(top, glob) {
   return top.some((pattern) => {
@@ -31270,7 +31438,13 @@ function allowlistCovers(top, glob) {
   });
 }
 function isSafeRepositoryGlob(glob) {
-  return glob.length > 0 && !path15.posix.isAbsolute(glob) && !path15.win32.isAbsolute(glob) && !glob.split(/[\\/]/).includes("..");
+  return glob.length > 0 && !path16.posix.isAbsolute(glob) && !path16.win32.isAbsolute(glob) && !glob.split(/[\\/]/).includes("..");
+}
+function sliceDependencyError(sliceIndex, dependencyIndex, message) {
+  return {
+    ok: false,
+    errors: [{ path: `/slices/${sliceIndex}/dependsOn/${dependencyIndex}`, message }]
+  };
 }
 function validateAllowedTestDeletions(globs, basePath) {
   for (const [index, glob] of (globs ?? []).entries()) {
@@ -31316,8 +31490,8 @@ function validateSpec(input) {
     );
     if (topLevelDeletionError !== null) return topLevelDeletionError;
     for (const [index, command] of spec.verification.entries()) {
-      const normalizedCwd = path15.posix.normalize(command.cwd);
-      if (path15.isAbsolute(command.cwd) || normalizedCwd === ".." || normalizedCwd.startsWith("../")) {
+      const normalizedCwd = path16.posix.normalize(command.cwd);
+      if (path16.isAbsolute(command.cwd) || normalizedCwd === ".." || normalizedCwd.startsWith("../")) {
         return {
           ok: false,
           errors: [{
@@ -31345,8 +31519,8 @@ function validateSpec(input) {
         }
       }
       for (const [commandIndex, command] of slice.verification.entries()) {
-        const normalizedCwd = path15.posix.normalize(command.cwd);
-        if (path15.isAbsolute(command.cwd) || normalizedCwd === ".." || normalizedCwd.startsWith("../")) {
+        const normalizedCwd = path16.posix.normalize(command.cwd);
+        if (path16.isAbsolute(command.cwd) || normalizedCwd === ".." || normalizedCwd.startsWith("../")) {
           return {
             ok: false,
             errors: [{
@@ -31354,6 +31528,18 @@ function validateSpec(input) {
               message: "must be a repository-relative path that does not escape the checkout"
             }]
           };
+        }
+      }
+      for (const [dependencyIndex, dependency] of (slice.dependsOn ?? []).entries()) {
+        if (dependency > (spec.slices ?? []).length) {
+          return sliceDependencyError(sliceIndex, dependencyIndex, "must name an existing slice");
+        }
+        if (dependency > sliceIndex) {
+          return sliceDependencyError(
+            sliceIndex,
+            dependencyIndex,
+            "must name an earlier slice; slices cannot depend on themselves or on later slices"
+          );
         }
       }
     }
@@ -31372,21 +31558,21 @@ function validateSpec(input) {
 
 // src/mcp/allowlist-sufficiency.ts
 import { readFile as readFile6 } from "node:fs/promises";
-import path16 from "node:path";
+import path17 from "node:path";
 var SOURCE_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
 var MAX_GAPS = 25;
 var MAX_FILE_BYTES = 512 * 1024;
 var IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["']([^"']+)["']/gu;
 function toPosix(candidate) {
-  return candidate.split(path16.sep).join("/");
+  return candidate.split(path17.sep).join("/");
 }
 function isTestPath(candidate) {
   return /(?:^|\/)tests?\//u.test(candidate) || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(candidate);
 }
 function resolveImport(fromPath, specifier, tracked) {
   if (!specifier.startsWith(".")) return null;
-  const base = toPosix(path16.posix.normalize(
-    path16.posix.join(path16.posix.dirname(toPosix(fromPath)), specifier)
+  const base = toPosix(path17.posix.normalize(
+    path17.posix.join(path17.posix.dirname(toPosix(fromPath)), specifier)
   ));
   if (base.startsWith("..")) return null;
   const rewrites = [
@@ -31416,10 +31602,10 @@ async function checkAllowlistSufficiency(repoRoot, spec, deps = {}) {
   const gaps = [];
   for (const candidate of tracked) {
     if (allowlisted.has(candidate)) continue;
-    if (!SOURCE_EXTENSIONS.has(path16.posix.extname(candidate))) continue;
+    if (!SOURCE_EXTENSIONS.has(path17.posix.extname(candidate))) continue;
     let contents;
     try {
-      contents = (await read(path16.join(repoRoot, candidate))).slice(0, MAX_FILE_BYTES);
+      contents = (await read(path17.join(repoRoot, candidate))).slice(0, MAX_FILE_BYTES);
     } catch {
       continue;
     }
@@ -31859,9 +32045,9 @@ import {
   readdir as readdir2,
   realpath as realpath7,
   rename as rename3,
-  rm as rm9
+  rm as rm10
 } from "node:fs/promises";
-import path17 from "node:path";
+import path18 from "node:path";
 import nodeProcess4 from "node:process";
 var NO_FOLLOW3 = constants4.O_NOFOLLOW ?? 0;
 var MAX_STATE_FILE_BYTES = 8e6;
@@ -31893,7 +32079,7 @@ function validateRunId(runId) {
 async function stateRoot() {
   const configured = nodeProcess4.env.CLAUDE_PLUGIN_DATA ?? (nodeProcess4.env.NODE_ENV === "test" ? nodeProcess4.env.CLAUDE_ARCHITECT_STATE_DIR : void 0);
   if (configured === void 0) return null;
-  const root = path17.resolve(resolveStateDir());
+  const root = path18.resolve(resolveStateDir());
   try {
     const metadata = await lstat6(root);
     if (!isPlainDirectory(metadata)) {
@@ -31998,7 +32184,7 @@ function parseRunStart(text, expectedRunId) {
   }
   const record2 = value;
   validateRunId(record2.runId);
-  if (record2.runId !== expectedRunId || typeof record2.lockKey !== "string" || !/^[0-9a-f]{64}$/.test(record2.lockKey) || typeof record2.canonicalCommonDir !== "string" || !path17.isAbsolute(record2.canonicalCommonDir) || record2.pid !== null && (record2.pid === void 0 || !Number.isSafeInteger(record2.pid) || record2.pid <= 1) || record2.processToken !== void 0 && record2.processToken !== null && typeof record2.processToken !== "string" || typeof record2.startedAt !== "string" || !Number.isFinite(Date.parse(record2.startedAt))) {
+  if (record2.runId !== expectedRunId || typeof record2.lockKey !== "string" || !/^[0-9a-f]{64}$/.test(record2.lockKey) || typeof record2.canonicalCommonDir !== "string" || !path18.isAbsolute(record2.canonicalCommonDir) || record2.pid !== null && (record2.pid === void 0 || !Number.isSafeInteger(record2.pid) || record2.pid <= 1) || record2.processToken !== void 0 && record2.processToken !== null && typeof record2.processToken !== "string" || typeof record2.startedAt !== "string" || !Number.isFinite(Date.parse(record2.startedAt))) {
     throw new RuntimeError("run-start recovery record is malformed");
   }
   const expectedLockKey = createHash7("sha256").update(record2.canonicalCommonDir).digest("hex");
@@ -32038,7 +32224,7 @@ async function validateGitCommonDir(commonDir) {
   return canonical;
 }
 async function validateRepositoryRoot(repoRoot) {
-  if (!path17.isAbsolute(repoRoot)) {
+  if (!path18.isAbsolute(repoRoot)) {
     throw new RuntimeError("cleanup journal repository root is not absolute");
   }
   const canonical = await realpath7(repoRoot);
@@ -32121,14 +32307,14 @@ function isManagedWorktreeId(runId, managedId) {
   ).test(managedId);
 }
 async function managedWorktreeIds(root, runId) {
-  const worktreesRoot = path17.join(root, "worktrees");
+  const worktreesRoot = path18.join(root, "worktrees");
   if (await plainDirectoryIdentity(worktreesRoot) === null) return [];
   const entries = await readdir2(worktreesRoot, { withFileTypes: true });
   return entries.map((entry) => entry.name).filter((managedId) => isManagedWorktreeId(runId, managedId)).sort((left, right) => left.localeCompare(right));
 }
 async function cleanupManagedWorktrees(commonDir, root, runId, ps) {
   for (const managedId of await managedWorktreeIds(root, runId)) {
-    const worktreePath = path17.join(root, "worktrees", managedId);
+    const worktreePath = path18.join(root, "worktrees", managedId);
     if (await plainDirectoryIdentity(worktreePath) !== null) {
       await new WorktreeManager(commonDir, managedId, ps).remove(worktreePath);
     }
@@ -32257,7 +32443,7 @@ async function readRecoveryQuarantineJournal(runsRoot) {
   if (rootIdentity === null) {
     throw new RuntimeError("recovery quarantine journal root disappeared");
   }
-  const filename = path17.join(runsRoot, "recovery-quarantine.ndjson");
+  const filename = path18.join(runsRoot, "recovery-quarantine.ndjson");
   let expectedMetadata;
   try {
     expectedMetadata = await lstat6(filename);
@@ -32365,7 +32551,7 @@ async function syncRecoveryDirectory(directory) {
   if (primaryError !== void 0) throw primaryError;
 }
 async function publishRecoveryQuarantineJournal(runsRoot, filename, snapshot, nextBytes) {
-  const temporaryPath = path17.join(
+  const temporaryPath = path18.join(
     runsRoot,
     `.recovery-quarantine-journal-${randomUUID5()}.tmp`
   );
@@ -32506,7 +32692,7 @@ async function appendRecoveryQuarantineRecord(runsRoot, record2) {
   if (lineBytes > MAX_QUARANTINE_RECORD_BYTES) {
     throw new RuntimeError("recovery quarantine record exceeds its size limit");
   }
-  const filename = path17.join(runsRoot, "recovery-quarantine.ndjson");
+  const filename = path18.join(runsRoot, "recovery-quarantine.ndjson");
   const snapshot = await readRecoveryQuarantineJournal(runsRoot);
   if (snapshot.runIds.has(record2.runId)) {
     await syncRecoveryDirectory(runsRoot);
@@ -32523,8 +32709,8 @@ async function appendRecoveryQuarantineRecord(runsRoot, record2) {
   await publishRecoveryQuarantineJournal(runsRoot, filename, snapshot, nextBytes);
 }
 async function quarantineRun(runsRoot, runId, error2) {
-  const runDirectory = path17.join(runsRoot, runId);
-  const quarantinePath = path17.join(runsRoot, `.poisoned-${runId}`);
+  const runDirectory = path18.join(runsRoot, runId);
+  const quarantinePath = path18.join(runsRoot, `.poisoned-${runId}`);
   const runsIdentity = await plainDirectoryIdentity(runsRoot);
   if (runsIdentity === null) throw new RuntimeError("recovery runs root disappeared");
   let runIdentity = null;
@@ -32588,7 +32774,7 @@ async function removePlainDirectory(directory, expected) {
   if (!isPlainDirectory(metadata) || !sameIdentity(metadata, expected)) {
     throw new RuntimeError("recovery directory identity changed before removal");
   }
-  await rm9(directory, { recursive: true, force: false });
+  await rm10(directory, { recursive: true, force: false });
 }
 async function createExactRef(repoRoot, ref, oid) {
   const result = await git(repoRoot, [
@@ -32605,7 +32791,7 @@ async function appendCleanupRecord(runsRoot, record2) {
   try {
     const identity = await plainDirectoryIdentity(runsRoot);
     if (identity === null) throw new RuntimeError("cleanup journal root disappeared");
-    const filename = path17.join(runsRoot, "cleanup.ndjson");
+    const filename = path18.join(runsRoot, "cleanup.ndjson");
     const handle = await open5(
       filename,
       constants4.O_WRONLY | constants4.O_CREAT | constants4.O_APPEND | NO_FOLLOW3,
@@ -32684,7 +32870,7 @@ async function commitCleanupRefs(record2) {
   await deleteExactRef(repoRoot, record2.backupRef, backupOid);
 }
 async function readPendingCleanupRecords(runsRoot) {
-  const { text, tornTail } = await readCleanupJournal(path17.join(runsRoot, "cleanup.ndjson"));
+  const { text, tornTail } = await readCleanupJournal(path18.join(runsRoot, "cleanup.ndjson"));
   const pending = /* @__PURE__ */ new Map();
   if (text === null || text === "") return { pending, tornTail };
   const completeText = text.endsWith("\n") ? text.slice(0, -1) : text;
@@ -32725,7 +32911,7 @@ async function truncateCleanupTornTail(filename) {
   }
 }
 async function repositoryRootExists(repoRoot) {
-  if (!path17.isAbsolute(repoRoot)) return true;
+  if (!path18.isAbsolute(repoRoot)) return true;
   try {
     await realpath7(repoRoot);
     return true;
@@ -32735,8 +32921,8 @@ async function repositoryRootExists(repoRoot) {
   }
 }
 async function reconcileRepoAbsentPrune(runsRoot, record2) {
-  const runDirectory = path17.join(runsRoot, record2.runId);
-  const quarantinePath = path17.join(runsRoot, record2.quarantineName);
+  const runDirectory = path18.join(runsRoot, record2.runId);
+  const quarantinePath = path18.join(runsRoot, record2.quarantineName);
   const runIdentity = await plainDirectoryIdentity(runDirectory);
   const quarantineIdentity = await plainDirectoryIdentity(quarantinePath);
   if (runIdentity !== null && quarantineIdentity !== null) {
@@ -32758,7 +32944,7 @@ async function replayInterruptedPrunes(runsRoot, ps) {
   const journalLock = await getPlatformServices().acquireCleanupJournalLock();
   try {
     const read = await readPendingCleanupRecords(runsRoot);
-    if (read.tornTail) await truncateCleanupTornTail(path17.join(runsRoot, "cleanup.ndjson"));
+    if (read.tornTail) await truncateCleanupTornTail(path18.join(runsRoot, "cleanup.ndjson"));
     pending = read.pending;
   } finally {
     await journalLock.release();
@@ -32785,8 +32971,8 @@ async function replayInterruptedPrunes(runsRoot, ps) {
       if (lease.repositoryIdentity !== repositoryIdentity) {
         throw new RuntimeError("checkout lease repository identity changed during prune recovery");
       }
-      const runDirectory = path17.join(runsRoot, record2.runId);
-      const quarantinePath = path17.join(runsRoot, record2.quarantineName);
+      const runDirectory = path18.join(runsRoot, record2.runId);
+      const quarantinePath = path18.join(runsRoot, record2.quarantineName);
       const runIdentity = await plainDirectoryIdentity(runDirectory);
       const quarantineIdentity = await plainDirectoryIdentity(quarantinePath);
       if (runIdentity !== null && quarantineIdentity !== null) {
@@ -32966,7 +33152,7 @@ async function removeLockIfUnchanged(lockPath, handle, expectedIdentity, expecte
     expectedLinks
   )) return false;
   try {
-    await rm9(lockPath, { force: false });
+    await rm10(lockPath, { force: false });
     return true;
   } catch (error2) {
     if (isMissing2(error2)) return false;
@@ -32992,7 +33178,7 @@ async function reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) {
     if (owner === null) {
       logger.warn("startup recovery preserved malformed lock", {
         event: "recovery-malformed-lock",
-        lockName: path17.basename(lockPath),
+        lockName: path18.basename(lockPath),
         reason: "invalid-owner-record"
       });
       return "malformed";
@@ -33006,7 +33192,7 @@ async function reclaimDeadLock(lockPath, isProcessAlive, getProcessStartToken) {
     if (ownerStatus === "unverifiable") {
       logger.warn("startup recovery preserved unverifiable lock", {
         event: "recovery-unverifiable-lock",
-        lockName: path17.basename(lockPath),
+        lockName: path18.basename(lockPath),
         reason: "process-token-unavailable"
       });
       return "unverifiable";
@@ -33180,12 +33366,12 @@ async function createOwnedLock(lockPath, contents) {
   if (contents.byteLength > MAX_STATE_FILE_BYTES) {
     throw new RuntimeError("new recovery lock exceeds its size limit");
   }
-  const parentPath = path17.dirname(lockPath);
+  const parentPath = path18.dirname(lockPath);
   const parentIdentity = await plainDirectoryIdentity(parentPath);
   if (parentIdentity === null) {
     throw new RuntimeError("recovery lock parent must remain a plain directory");
   }
-  const temporaryPath = path17.join(parentPath, `.recovery-lock-${randomUUID5()}.tmp`);
+  const temporaryPath = path18.join(parentPath, `.recovery-lock-${randomUUID5()}.tmp`);
   let handle;
   let temporaryIdentity;
   let temporaryCreated = false;
@@ -33354,7 +33540,7 @@ async function reclaimLocks(locksRoot, isProcessAlive, getProcessStartToken) {
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     const match = LOCK_NAME.exec(entry.name);
     if (match === null) continue;
-    const lockPath = path17.join(locksRoot, entry.name);
+    const lockPath = path18.join(locksRoot, entry.name);
     if (!entry.isFile() || entry.isSymbolicLink()) {
       throw new RuntimeError("checkout lock must be a regular file during recovery");
     }
@@ -33362,7 +33548,7 @@ async function reclaimLocks(locksRoot, isProcessAlive, getProcessStartToken) {
   }
 }
 async function lockIsOwnedByLiveProcess(locksRoot, lockKey, isProcessAlive, getProcessStartToken) {
-  const contents = await readBoundedRegularFile(path17.join(locksRoot, `${lockKey}.lock`));
+  const contents = await readBoundedRegularFile(path18.join(locksRoot, `${lockKey}.lock`));
   if (contents === null) return false;
   const owner = parseLockOwner(contents);
   if (owner === null) return true;
@@ -33384,7 +33570,7 @@ async function recoverStaleRuns(dependencies = {}) {
   const graceMs = dependencies.graceMs ?? 3e3;
   const runGit = dependencies.git ?? git;
   if (root === null) return { recovered: [], quarantined: [] };
-  const locksRoot = path17.join(root, "locks");
+  const locksRoot = path18.join(root, "locks");
   await mkdir5(locksRoot, { recursive: true });
   if (await plainDirectoryIdentity(locksRoot) === null) {
     throw new RuntimeError("recovery locks directory disappeared");
@@ -33394,7 +33580,7 @@ async function recoverStaleRuns(dependencies = {}) {
     processToken: await ps.getProcessStartToken(nodeProcess4.pid)
   }));
   const recoveryLock = await acquireOwnedLock(
-    path17.join(locksRoot, "recovery.lock"),
+    path18.join(locksRoot, "recovery.lock"),
     ownerContents,
     isProcessAlive,
     (pid) => ps.getProcessStartToken(pid)
@@ -33402,11 +33588,11 @@ async function recoverStaleRuns(dependencies = {}) {
   if (recoveryLock === null) return { recovered: [], quarantined: [] };
   let primaryError;
   try {
-    const runsRoot = path17.join(root, "runs");
+    const runsRoot = path18.join(root, "runs");
     const runsIdentity = await plainDirectoryIdentity(runsRoot);
     if (runsIdentity !== null) {
       await reclaimDeadLock(
-        path17.join(locksRoot, `${CLEANUP_JOURNAL_LOCK_KEY}.lock`),
+        path18.join(locksRoot, `${CLEANUP_JOURNAL_LOCK_KEY}.lock`),
         isProcessAlive,
         (pid) => ps.getProcessStartToken(pid)
       );
@@ -33429,8 +33615,8 @@ async function recoverStaleRuns(dependencies = {}) {
         }
         if (!entry.isDirectory() || entry.isSymbolicLink() || !SAFE_RUN_ID.test(entry.name)) continue;
         try {
-          const runDirectory = path17.join(runsRoot, entry.name);
-          const runStartText = await readBoundedRegularFile(path17.join(runDirectory, "run-start.json"));
+          const runDirectory = path18.join(runsRoot, entry.name);
+          const runStartText = await readBoundedRegularFile(path18.join(runDirectory, "run-start.json"));
           if (runStartText === null) continue;
           const record2 = parseRunStart(runStartText, entry.name);
           const store = new ArtifactStore(entry.name);
@@ -33444,7 +33630,7 @@ async function recoverStaleRuns(dependencies = {}) {
               (pid) => ps.getProcessStartToken(pid)
             ) === "dead") {
               const checkoutLock = await acquireOwnedLock(
-                path17.join(locksRoot, `${record2.lockKey}.lock`),
+                path18.join(locksRoot, `${record2.lockKey}.lock`),
                 ownerContents,
                 isProcessAlive,
                 (pid) => ps.getProcessStartToken(pid)
@@ -33454,7 +33640,7 @@ async function recoverStaleRuns(dependencies = {}) {
               let cleanupFailed = false;
               try {
                 const lockedRunStartText = await readBoundedRegularFile(
-                  path17.join(runDirectory, "run-start.json")
+                  path18.join(runDirectory, "run-start.json")
                 );
                 if (lockedRunStartText === null) {
                   throw new RuntimeError("run-start recovery record disappeared during recovery");
@@ -33513,7 +33699,7 @@ async function recoverStaleRuns(dependencies = {}) {
     }
     for (const { record: record2, runStartText } of stale) {
       const checkoutLock = await acquireOwnedLock(
-        path17.join(locksRoot, `${record2.lockKey}.lock`),
+        path18.join(locksRoot, `${record2.lockKey}.lock`),
         ownerContents,
         isProcessAlive,
         (pid) => ps.getProcessStartToken(pid)
@@ -33524,7 +33710,7 @@ async function recoverStaleRuns(dependencies = {}) {
       let becameTerminal = false;
       try {
         const lockedRunStartText = await readBoundedRegularFile(
-          path17.join(runsRoot, record2.runId, "run-start.json")
+          path18.join(runsRoot, record2.runId, "run-start.json")
         );
         if (lockedRunStartText === null) {
           throw new RuntimeError("run-start recovery record disappeared before stale recovery");

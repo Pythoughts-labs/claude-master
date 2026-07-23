@@ -21,6 +21,13 @@ export interface Slice {
   forbiddenScope: string[];
   successCriteria: string[];
   verification: VerificationCommand[];
+  /**
+   * 1-based indices of the slices this slice must observe before it runs.
+   * Omitted means every preceding slice, which reproduces sequential execution
+   * exactly — parallelism is opt-in and under-declaration fails at the final
+   * composed verification rather than shipping.
+   */
+  dependsOn?: number[];
 }
 
 export type ReviewerKind = "correctness" | "systems";
@@ -62,6 +69,7 @@ export interface DelegationSpec {
   review?: ReviewConfig;
   implementation?: ImplementationConfig;
   slices?: Slice[];
+  sliceConcurrency?: number;
 }
 
 export function resolveReviewConfig(spec: DelegationSpec): ReviewConfig {
@@ -74,6 +82,21 @@ export function resolveImplementationConfig(spec: DelegationSpec): Implementatio
 
 export function resolveSlices(spec: DelegationSpec): Slice[] {
   return spec.slices ?? [];
+}
+
+export const DEFAULT_SLICE_CONCURRENCY = 1;
+
+export function resolveSliceConcurrency(spec: DelegationSpec): number {
+  return spec.sliceConcurrency ?? DEFAULT_SLICE_CONCURRENCY;
+}
+
+/** Dependencies of slice `index` (1-based), defaulting to every preceding slice. */
+export function resolveSliceDependencies(slices: Slice[], index: number): number[] {
+  const declared = slices[index - 1]?.dependsOn;
+  if (declared === undefined) {
+    return Array.from({ length: index - 1 }, (_, offset) => offset + 1);
+  }
+  return [...declared].sort((left, right) => left - right);
 }
 
 export const RUNTIME_MAX_TIMEOUT_MS = 1_800_000; // 30 min hard ceiling

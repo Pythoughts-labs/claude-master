@@ -12,6 +12,7 @@ import type {
 import {
   resolveImplementationConfig,
   resolveReviewConfig,
+  resolveSliceConcurrency,
   resolveSlices,
   type DelegationSpec,
   type ReviewerKind,
@@ -40,6 +41,7 @@ import {
 } from "../verify/structural-verifier.js";
 import { consolidate, type ConsolidationResult } from "./consolidator.js";
 import { evaluateGates, type GateResult, type IncrementOutcome } from "./gates.js";
+import { composeSliceOntoHead } from "./slice-composer.js";
 import type {
   FixReport,
   IncrementReport,
@@ -566,6 +568,25 @@ async function cleanupWorktree(
   }
 }
 
+/**
+ * `git worktree add` mutates shared repository state, so concurrent slices are
+ * given their worktrees one at a time even though their Producers then run in
+ * parallel. Creation is a fraction of a slice's runtime; a lock collision costs
+ * the whole attempt.
+ */
+let worktreeCreation: Promise<unknown> = Promise.resolve();
+
+function createWorktreeSerially(
+  manager: WorktreeManager,
+  commit: string,
+): Promise<{ path: string; cleanup(): Promise<void> }> {
+  const created = worktreeCreation
+    .catch(() => {})
+    .then(async () => manager.create(commit));
+  worktreeCreation = created.catch(() => {});
+  return created;
+}
+
 async function withManagedWorktree<T>(args: {
   manager: WorktreeManager;
   commit: string;
@@ -573,7 +594,7 @@ async function withManagedWorktree<T>(args: {
   run: (worktreePath: string) => Promise<T>;
   onCleanupFailure?: (error: unknown) => void;
 }): Promise<T> {
-  const worktree = await args.manager.create(args.commit);
+  const worktree = await createWorktreeSerially(args.manager, args.commit);
   try {
     return await args.run(worktree.path);
   } finally {
@@ -1514,6 +1535,12 @@ async function runPipelineWithLease(
       try {
         phase = await runSlicePhase(slices, baselineCommit, {
           maxRounds,
+          concurrency: resolveSliceConcurrency(spec),
+          composeSlice: async composeArgs => composeSliceOntoHead({
+            checkoutPath,
+            runId: attempt.runId,
+            ...composeArgs,
+          }),
           initialAttempt: {
             candidateCommit: currentCandidateCommit,
             verification: initialVerification.verification,
