@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, it } from "vitest";
+import { describe, it, test } from "vitest";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const read = relative => fs.readFileSync(`${root}/${relative}`, "utf8");
@@ -138,4 +138,39 @@ describe("P0-A plugin wiring", () => {
       assert.ok(releaseValidator.includes(required), `release validator must check ${required}`);
     }
   });
+});
+
+test("delegation-lane agent ships the produce-only courier contract", () => {
+  const lane = read("agents/delegation-lane.md");
+  const frontmatterMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/u.exec(lane);
+  assert.ok(frontmatterMatch, "delegation-lane must have frontmatter");
+  const frontmatter = frontmatterMatch[1];
+  const keys = frontmatter.split(/\r?\n/u).map(line => {
+    const match = /^([A-Za-z][A-Za-z0-9]*):(?:\s.*)?$/u.exec(line);
+    assert.ok(match, `delegation-lane frontmatter must use plain top-level keys: ${line}`);
+    return match[1];
+  });
+  assert.deepEqual(keys.sort(), [
+    "name",
+    "description",
+    "tools",
+    "model",
+  ].sort(), "delegation-lane must have exactly the permitted frontmatter keys");
+  const toolsLine = /^tools:\s*(.+)$/mu.exec(frontmatter)?.[1] ?? "";
+  const tools = toolsLine.split(",").map(t => t.trim());
+  assert.deepEqual(tools.sort(), [
+    "mcp__plugin_claude-architect_runtime__delegate",
+    "mcp__plugin_claude-architect_runtime__delegatePipeline",
+  ].sort(), "delegation-lane must have exactly the two dispatch tools");
+  for (const forbidden of [
+    "reviewCandidate", "decideCandidate", "integrateCandidate",
+    "Bash", "Write", "Edit", "Read", "Grep", "Glob", "doctor",
+  ]) {
+    assert.ok(!toolsLine.includes(forbidden), `delegation-lane tools must not include ${forbidden}`);
+  }
+  for (const field of ["laneId", "specSha256", "\"failure\"", "validationErrors", "manifestHash"]) {
+    assert.ok(lane.includes(field), `delegation-lane contract must include ${field}`);
+  }
+  assert.match(lane, /[Nn]ever review/u);
+  assert.match(frontmatter, /^model:\s*haiku$/mu);
 });
