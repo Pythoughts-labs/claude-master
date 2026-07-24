@@ -225,6 +225,10 @@ function dependencies(
     ps,
     producerRegistry: new ProducerRegistry(adapter === null ? [] : [adapter]),
     verifier: options.verifier ?? passingVerifier,
+    // This suite drives every failure classification through the handler; the
+    // Producer environment probe would spawn a second time per attempt and has
+    // its own coverage, including an end-to-end pass in the pipeline suite.
+    producerPreflight: false,
     runId: () => runId,
     env: options.env ?? {},
     packagedVerifier: { version: "e2e", content: "trusted e2e verifier" },
